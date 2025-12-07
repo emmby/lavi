@@ -85,4 +85,51 @@ mod tests {
         machine.transition("TIMER");
         assert_eq!(machine.state(), "green");
     }
+
+    #[test]
+    fn test_unknown_event() {
+        let json = r#"{
+          "id": "test",
+          "initial": "idle",
+          "states": {
+            "idle": { "on": { "START": "running" } },
+            "running": {}
+          }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
+        assert_eq!(machine.state(), "idle");
+
+        // "STOP" is not valid for "idle"
+        let result = machine.transition("STOP");
+        assert!(result.is_none());
+        assert_eq!(machine.state(), "idle"); // State should remain unchanged
+    }
+
+    #[test]
+    fn test_invalid_json() {
+        let json = r#"{ "id": "broken", "initial": "idle", "states": ... }"#; // Invalid syntax
+        let result = RuntimeMachine::from_json(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_initial_state() {
+        // Initial state "phantom" does not exist in definitions
+        let json = r#"{
+          "id": "phantom_initial",
+          "initial": "phantom",
+          "states": {
+            "real": { "on": {} }
+          }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
+        // It initializes successfully with current_state = "phantom"
+        assert_eq!(machine.state(), "phantom");
+
+        // Attempting to transition from a missing state should gracefully fail (return None)
+        let result = machine.transition("ANY_EVENT");
+        assert!(result.is_none());
+    }
 }
