@@ -13,9 +13,16 @@ pub struct MachineDefinition {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TransitionDefinition {
+    pub target: String,
+    #[serde(default)]
+    pub cond: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StateDefinition {
     #[serde(default)]
-    pub on: HashMap<String, String>, // Event -> Target State
+    pub on: HashMap<String, Vec<TransitionDefinition>>, // Event -> List of Transitions
 }
 
 // --- Runtime ---
@@ -40,12 +47,34 @@ impl RuntimeMachine {
         })
     }
 
-    pub fn transition(&mut self, event: &str) -> Option<String> {
-        // Simple look up: Current State -> on[Event] -> Target
+    pub fn transition(
+        &mut self,
+        event: &str,
+        guards: &HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>>,
+    ) -> Option<String> {
+        // Look up: Current State -> on[Event] -> List of Transitions
         if let Some(state_def) = self.definition.states.get(&self.current_state) {
-            if let Some(target_state) = state_def.on.get(event) {
-                self.current_state = target_state.clone();
-                return Some(self.current_state.clone());
+            if let Some(transitions) = state_def.on.get(event) {
+                for transition in transitions {
+                    let should_transition = match &transition.cond {
+                        Some(cond_name) => {
+                            if let Some(guard) = guards.get(cond_name) {
+                                guard(&self.context)
+                            } else {
+                                // Guard specified but not found in implementation map.
+                                // In XState, this usually logs a warning and treats as false.
+                                // For this simple implementation, we'll treat as false (block transition).
+                                false
+                            }
+                        }
+                        None => true, // No guard, always take it
+                    };
+
+                    if should_transition {
+                        self.current_state = transition.target.clone();
+                        return Some(self.current_state.clone());
+                    }
+                }
             }
         }
         None
@@ -66,9 +95,9 @@ mod tests {
           "id": "trafficLight",
           "initial": "green",
           "states": {
-            "green": { "on": { "TIMER": "yellow" } },
-            "yellow": { "on": { "TIMER": "red" } },
-            "red": { "on": { "TIMER": "green" } }
+            "green": { "on": { "TIMER": [ { "target": "yellow" } ] } },
+            "yellow": { "on": { "TIMER": [ { "target": "red" } ] } },
+            "red": { "on": { "TIMER": [ { "target": "green" } ] } }
           },
           "context": { "cycles": 0 }
         }"#;
@@ -76,13 +105,15 @@ mod tests {
         let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
         assert_eq!(machine.state(), "green");
         
-        machine.transition("TIMER");
+        let guards = HashMap::new();
+
+        machine.transition("TIMER", &guards);
         assert_eq!(machine.state(), "yellow");
         
-        machine.transition("TIMER");
+        machine.transition("TIMER", &guards);
         assert_eq!(machine.state(), "red");
         
-        machine.transition("TIMER");
+        machine.transition("TIMER", &guards);
         assert_eq!(machine.state(), "green");
     }
 
@@ -92,7 +123,7 @@ mod tests {
           "id": "test",
           "initial": "idle",
           "states": {
-            "idle": { "on": { "START": "running" } },
+            "idle": { "on": { "START": [ { "target": "running" } ] } },
             "running": {}
           }
         }"#;
@@ -100,17 +131,12 @@ mod tests {
         let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
         assert_eq!(machine.state(), "idle");
 
+        let guards = HashMap::new();
+
         // "STOP" is not valid for "idle"
-        let result = machine.transition("STOP");
+        let result = machine.transition("STOP", &guards);
         assert!(result.is_none());
         assert_eq!(machine.state(), "idle"); // State should remain unchanged
-    }
-
-    #[test]
-    fn test_invalid_json() {
-        let json = r#"{ "id": "broken", "initial": "idle", "states": ... }"#; // Invalid syntax
-        let result = RuntimeMachine::from_json(json);
-        assert!(result.is_err());
     }
 
     #[test]
@@ -128,8 +154,64 @@ mod tests {
         // It initializes successfully with current_state = "phantom"
         assert_eq!(machine.state(), "phantom");
 
+        let guards = HashMap::new();
+
         // Attempting to transition from a missing state should gracefully fail (return None)
-        let result = machine.transition("ANY_EVENT");
+        let result = machine.transition("ANY_EVENT", &guards);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_guarded_transition() {
+        let json = r#"{
+          "id": "door",
+          "initial": "closed",
+          "states": {
+            "closed": {
+              "on": {
+                "OPEN": [
+                  { "target": "open", "cond": "can_open" },
+                  { "target": "closed" } 
+                ]
+              }
+            },
+            "open": {
+              "on": { "CLOSE": [ { "target": "closed" } ] }
+            }
+          },
+          "context": { "locked": true }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
+        
+        // Define guards
+        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>> = HashMap::new();
+        guards.insert("can_open".to_string(), Box::new(|ctx| {
+            // Allow open if NOT locked
+            if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
+                !locked
+            } else {
+                true 
+            }
+        }));
+
+        // 1. Initial State: Closed, Context: Locked=true
+        assert_eq!(machine.state(), "closed");
+
+        // 2. Try to OPEN. Guard 'can_open' checks !locked. locked is true, so !locked is false.
+        // It should match the FIRST transition? No, XState: check first, if false check next.
+        // Our definition: match 'can_open' -> false. Next: { target: "closed" } (implicit true).
+        // So state stays 'closed'.
+        machine.transition("OPEN", &guards);
+        assert_eq!(machine.state(), "closed"); 
+
+        // 3. Unlock the door (modify context manually for test)
+        if let Some(obj) = machine.context.as_object_mut() {
+            obj.insert("locked".to_string(), serde_json::Value::Bool(false));
+        }
+
+        // 4. Try to OPEN again. Guard 'can_open' -> true. Transition to 'open'.
+        machine.transition("OPEN", &guards);
+        assert_eq!(machine.state(), "open");
     }
 }

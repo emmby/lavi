@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSM Guards Demo</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #f0f2f5; margin: 0; }
+        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 400px; }
+        
+        .door-visual { width: 150px; height: 250px; border: 4px solid #333; margin: 20px auto; position: relative; background: #8B4513; transition: all 0.5s; }
+        .door-visual.open { transform: perspective(600px) rotateY(-45deg); border-color: #666; background-color: #A0522D; }
+        
+        .knob { width: 15px; height: 15px; background: gold; border-radius: 50%; position: absolute; right: 15px; top: 50%; box-shadow: 1px 1px 2px rgba(0,0,0,0.3); }
+        .lock-indicator { position: absolute; top: 10px; right: 10px; font-size: 20px; }
+
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+        button { padding: 10px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; background: #007bff; color: white; transition: background 0.2s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        
+        button.lock-btn { background: #dc3545; }
+        button.lock-btn:hover { background: #a71d2a; }
+
+        .status-box { background: #e9ecef; padding: 10px; border-radius: 6px; margin-top: 20px; text-align: left; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Door Machine</h1>
+        <p>Try opening the door. It won't open if locked.</p>
+        
+        <div id="door" class="door-visual">
+            <div class="knob"></div>
+            <div id="lockIcon" class="lock-indicator">🔒</div>
+        </div>
+
+        <div class="controls">
+            <button id="btnOpen">OPEN</button>
+            <button id="btnClose">CLOSE</button>
+            <button id="btnLock" class="lock-btn">LOCK</button>
+            <button id="btnUnlock" class="lock-btn">UNLOCK</button>
+        </div>
+
+        <div class="status-box">
+            <div>State: <span id="lblState">loading...</span></div>
+            <div>Context: <span id="lblContext">...</span></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { FsmRunner } from './fsm-wasm/pkg/fsm_wasm.js';
+
+        async function main() {
+            await init();
+
+            const machineDef = JSON.stringify({
+                id: "door",
+                initial: "closed",
+                states: {
+                    closed: {
+                        on: {
+                            OPEN: [
+                                { target: "open", cond: "can_open" },
+                                { target: "closed" }
+                            ]
+                        }
+                    },
+                    open: {
+                        on: {
+                            CLOSE: [ { target: "closed" } ]
+                        }
+                    }
+                },
+                context: { locked: true }
+            });
+
+            const machine = new FsmRunner(machineDef);
+            updateUI();
+
+            function updateUI() {
+                const state = machine.current_state();
+                const ctx = JSON.parse(machine.context_json());
+                
+                document.getElementById('lblState').innerText = state;
+                document.getElementById('lblContext').innerText = JSON.stringify(ctx);
+                
+                // Visuals
+                const doorEl = document.getElementById('door');
+                if (state === 'open') {
+                    doorEl.classList.add('open');
+                } else {
+                    doorEl.classList.remove('open');
+                }
+
+                document.getElementById('lockIcon').innerText = ctx.locked ? '🔒' : '🔓';
+            }
+
+            document.getElementById('btnOpen').onclick = () => {
+                machine.transition("OPEN");
+                updateUI();
+            };
+
+            document.getElementById('btnClose').onclick = () => {
+                machine.transition("CLOSE");
+                updateUI();
+            };
+
+            document.getElementById('btnLock').onclick = () => {
+                machine.set_context_bool("locked", true);
+                updateUI();
+            };
+
+            document.getElementById('btnUnlock').onclick = () => {
+                machine.set_context_bool("locked", false);
+                updateUI();
+            };
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>
