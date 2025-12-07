@@ -1,0 +1,18 @@
+{
+  "name": "Rust Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/rust:latest",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates"
+      ]
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {}
+  },
+  "forwardPorts": [8080, 8081],
+  "postCreateCommand": "curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "trafficLight",
+  "initial": "green",
+  "states": {
+    "green": {
+      "on": { "TIMER": "yellow" }
+    },
+    "yellow": {
+      "on": { "TIMER": "red" }
+    },
+    "red": {
+      "on": { "TIMER": "green" }
+    }
+  },
+  "context": {
+    "cycle_count": 0
+  }
+}
+

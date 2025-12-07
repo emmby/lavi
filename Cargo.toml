@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "fsm-core",
+
+    "fsm-wasm",
+]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wasm-bindgen = "0.2"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+proc-macro2 = "1.0"
+fsm-core = { path = "./fsm-core" }
+
