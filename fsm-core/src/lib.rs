@@ -16,7 +16,7 @@ pub struct MachineDefinition {
 pub struct TransitionDefinition {
     #[serde(default)]
     pub target: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "guard")]
     pub cond: Option<String>,
     #[serde(default)]
     pub actions: Vec<String>,
