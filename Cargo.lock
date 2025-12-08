@@ -27,6 +27,7 @@ name = "fsm-wasm"
 version = "0.1.0"
 dependencies = [
  "fsm-core",
+ "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

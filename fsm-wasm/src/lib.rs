@@ -4,6 +4,7 @@ use fsm_core::{RuntimeMachine, MachineDefinition};
 #[wasm_bindgen]
 pub struct FsmRunner {
     machine: RuntimeMachine,
+    inspector: Option<js_sys::Function>,
 }
 
 #[wasm_bindgen]
@@ -25,10 +26,39 @@ impl FsmRunner {
              }
         };
             
-        Ok(FsmRunner { machine })
+        Ok(FsmRunner { machine, inspector: None })
+    }
+
+    pub fn set_inspector(&mut self, callback: js_sys::Function) {
+        self.inspector = Some(callback);
+    }
+
+    pub fn start(&self) {
+        if let Some(inspector) = &self.inspector {
+             let snap_obj = serde_json::json!({
+                 "type": "@xstate.snapshot",
+                 "context": self.machine.context,
+                 "value": self.machine.state(),
+                 "status": "active"
+             });
+             if let Ok(s) = snap_obj.to_string().parse::<String>() {
+                 let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
+             }
+        }
     }
 
     pub fn transition(&mut self, event: &str) -> Option<String> {
+        // 1. Inspect Event
+        if let Some(inspector) = &self.inspector {
+             let evt_obj = serde_json::json!({
+                 "type": "@xstate.event",
+                 "event": { "type": event }
+             });
+             if let Ok(s) = evt_obj.to_string().parse::<String>() {
+                 let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
+             }
+        }
+
         // Guard Implementation for Demo
         use std::collections::HashMap;
         let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>> = HashMap::new();
@@ -80,7 +110,22 @@ impl FsmRunner {
             }
         }));
 
-        self.machine.transition(event, &guards, &actions)
+        let result = self.machine.transition(event, &guards, &actions);
+
+        // 2. Inspect Snapshot
+        if let Some(inspector) = &self.inspector {
+             let snap_obj = serde_json::json!({
+                 "type": "@xstate.snapshot",
+                 "context": self.machine.context,
+                 "value": self.machine.state(),
+                 "status": "active"
+             });
+             if let Ok(s) = snap_obj.to_string().parse::<String>() {
+                 let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
+             }
+        }
+
+        result
     }
 
     pub fn set_context_bool(&mut self, key: &str, value: bool) {

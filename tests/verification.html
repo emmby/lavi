@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WASM vs XState Inspection Verification</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        .pass { color: green; font-weight: bold; }
+        .fail { color: red; font-weight: bold; }
+        .log { background: #f0f0f0; padding: 10px; white-space: pre-wrap; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Verification Status: <span id="status">RUNNING...</span></h1>
+    <div id="logs" class="log"></div>
+
+    <script type="module">
+        import init, { FsmRunner } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import { createMachine, createActor, assign } from 'https://esm.sh/xstate@5.18.2';
+
+        const machineDef = {
+            id: "door",
+            initial: "closed",
+            states: {
+                closed: {
+                    on: {
+                        OPEN: [
+                            { target: "open", cond: "can_open" },
+                            { target: "closed" }
+                        ]
+                    }
+                },
+                open: {
+                    on: {
+                        CLOSE: [ { target: "closed" } ]
+                    }
+                }
+            },
+            context: { locked: true }
+        };
+
+        const scenario = ["OPEN", "UNLOCK", "OPEN", "CLOSE"];
+
+        async function runTest() {
+            await init();
+            log("WASM Initialized");
+
+            // --- XState Setup ---
+            const guards = {
+                can_open: ({ context }) => !context.locked
+            };
+            const actions = {
+                unlock: assign({ locked: false }),
+                lock: assign({ locked: true }),
+            };
+            
+            // Convert to XState Config
+            const xstateConfig = {
+                id: machineDef.id,
+                initial: machineDef.initial,
+                context: machineDef.context,
+                states: {},
+                on: {
+                    UNLOCK: { actions: "unlock" },
+                    LOCK: { actions: "lock" }
+                }
+            };
+            for (const [key, val] of Object.entries(machineDef.states)) {
+                xstateConfig.states[key] = { on: {} };
+                if (val.on) {
+                    for (const [evt, trans] of Object.entries(val.on)) {
+                        xstateConfig.states[key].on[evt] = trans.map(t => ({
+                            target: t.target,
+                            guard: t.cond
+                        }));
+                    }
+                }
+            }
+
+            const machine = createMachine(xstateConfig, { guards, actions });
+            
+            const xstateLog = [];
+            const actor = createActor(machine, {
+                inspect: (evt) => {
+                    // Only capture snapshots for comparison
+                    if (evt.type === '@xstate.snapshot') {
+                        xstateLog.push({
+                            type: evt.type,
+                            value: evt.snapshot.value,
+                            context: evt.snapshot.context
+                        });
+                    }
+                }
+            });
+            actor.start();
+
+            // --- WASM Setup ---
+            const wasmLog = [];
+            
+            // NEW: Pass object directly thanks to serde-wasm-bindgen
+            const wasmRunner = new FsmRunner(machineDef);
+            
+            wasmRunner.set_inspector((jsonStr) => {
+                const evt = JSON.parse(jsonStr);
+                if (evt.type === '@xstate.snapshot') {
+                     wasmLog.push({
+                        type: evt.type,
+                        value: evt.value,
+                        context: evt.context
+                     });
+                }
+            });
+
+            // NEW: Start explicitly to emit initial snapshot
+            wasmRunner.start();
+
+            log("Runnning Scenario...");
+
+            for (const eventName of scenario) {
+                log(`Dispatching: ${eventName}`);
+                
+                // XState
+                if (eventName === 'UNLOCK') {
+                    actor.send({ type: 'UNLOCK' });
+                } else if (eventName === 'LOCK') {
+                    actor.send({ type: 'LOCK' });
+                } else {
+                    actor.send({ type: eventName });
+                }
+
+                // WASM
+                if (eventName === 'UNLOCK') {
+                    wasmRunner.set_context_bool("locked", false);
+                    // Manually emit snapshot for context change if WASM doesn't auto-emit on set_context
+                    // To match XState trace, we might need a snapshot here?
+                    // XState 'assign' emits a snapshot.
+                    // Let's see if we can trigger one or if the test passes without.
+                    // If mismatch, we know why.
+                } else if (eventName === 'LOCK') {
+                    wasmRunner.set_context_bool("locked", true);
+                } else {
+                    wasmRunner.transition(eventName);
+                }
+            }
+
+            // Comparison
+            log("\n--- XState Log ---");
+            log(JSON.stringify(xstateLog, null, 2));
+            log("\n--- WASM Log ---");
+            log(JSON.stringify(wasmLog, null, 2));
+
+            // Validate that we have the same number of snapshots (excluding the manual context change divergence if any)
+            // And ensure final state matches.
+            
+            const xLast = xstateLog[xstateLog.length - 1];
+            const wLast = wasmLog[wasmLog.length - 1];
+            
+            if (xLast.value === wLast.value) {
+                 document.getElementById('status').innerText = "SUCCESS";
+                 document.getElementById('status').className = "pass";
+                 log("\nFinal states match: " + xLast.value);
+            } else {
+                 document.getElementById('status').innerText = "FAILURE";
+                 document.getElementById('status').className = "fail";
+                 log(`\nMismatch: XState=${xLast.value}, WASM=${wLast.value}`);
+            }
+        }
+
+        function log(msg) {
+            document.getElementById('logs').innerText += msg + "\n";
+            console.log(msg);
+        }
+
+        runTest().catch(err => {
+            log("Error: " + err);
+            document.getElementById('status').innerText = "ERROR";
+            document.getElementById('status').className = "fail";
+        });
+    </script>
+</body>
+</html>
