@@ -36,8 +36,8 @@ mod tests {
 
     #[test]
     fn test_guards_vs_reference() {
-        let machine_file = fixture_path("guards_machine.json");
-        let scenario_file = fixture_path("guards_scenario.json");
+        let machine_file = fixture_path("guards/guards_machine.json");
+        let scenario_file = fixture_path("guards/guards_scenario.json");
 
         // 1. Generate Reference Trace via Node.js
         let node_script_dir = reference_impl_path();
@@ -123,8 +123,8 @@ mod tests {
 
     #[test]
     fn test_actions_vs_reference() {
-        let machine_file = fixture_path("actions_machine.json");
-        let scenario_file = fixture_path("actions_scenario.json");
+        let machine_file = fixture_path("actions/actions_machine.json");
+        let scenario_file = fixture_path("actions/actions_scenario.json");
 
         // 1. Generate Reference Trace via Node.js
         let node_script_dir = reference_impl_path();
