@@ -28,14 +28,14 @@
                             { target: "open", cond: "can_open" },
                             { target: "closed" }
                         ],
-                        UNLOCK: [{ actions: ["unlock"] }],
-                        LOCK: [{ actions: ["lock"] }]
+                        UNLOCK: [{ target: "closed", actions: ["unlock"] }],
+                        LOCK: [{ target: "closed", actions: ["lock"] }]
                     }
                 },
                 open: {
                     on: {
                         CLOSE: [ { target: "closed" } ],
-                        LOCK: [{ actions: ["lock"] }] // Allowed to lock while open? Sure, logical action.
+                        LOCK: [{ target: "open", actions: ["lock"] }] // Allowed to lock while open? Sure, logical action.
                     }
                 }
             },
@@ -142,44 +142,65 @@
 
             const inspector = new ComparisonInspector();
 
-            // Direct inline Machine definition for XState to avoid resolution issues
-            const machine = createMachine({
+            // --- XState Setup ---
+            const guards = {
+                can_open: ({ context }) => !context.locked
+            };
+            const actions = {
+                unlock: assign({ locked: false }),
+                lock: assign({ locked: true }),
+            };
+            
+            // Build XState config from shared machineDef
+            const xConfig = {
                 id: machineDef.id,
                 initial: machineDef.initial,
                 context: machineDef.context,
-                states: {
-                    closed: {
-                        on: {
-                            OPEN: [
-                                { 
-                                    target: "open", 
-                                    guard: ({ context }) => !context.locked 
-                                },
-                                { target: "closed" }
-                            ],
-                            UNLOCK: { 
-                                target: "closed", 
-                                actions: assign({ locked: false }) 
-                            },
-                            LOCK: { 
-                                target: "closed", 
-                                actions: assign({ locked: true }) 
-                            }
-                        }
-                    },
-                    open: {
-                        on: {
-                            CLOSE: { target: "closed" },
-                            LOCK: { 
-                                target: "open", 
-                                actions: assign({ locked: true }) 
-                            }
-                        }
-                    }
-                }
-            });
+                states: {}
+            };
+            
+            for (const [key, val] of Object.entries(machineDef.states)) {
+                 xConfig.states[key] = { on: {} };
+                 if (val.on) {
+                     for (const [evt, trans] of Object.entries(val.on)) {
+                         const mapFn = (t) => {
+                             // Handle array of strings or single string for actions
+                             let actions = undefined;
+                             if (t.actions) {
+                                 // XState expects string or array of strings. 
+                                 // machineDef has [{ actions: ["unlock"] }] -> t.actions is ["unlock"]
+                                 // or if t.actions is string "unlock".
+                                 // We just pass it through, hoping it matches our 'actions' map keys.
+                                 actions = t.actions;
+                             }
+                             
+                             return {
+                                 target: t.target,
+                                 // Map 'cond' (WASM/V4) to 'guard' (V5)
+                                 guard: t.cond, 
+                                 actions: actions
+                             };
+                         };
 
-            console.log("XState Config: Inline");
+                         if (Array.isArray(trans)) {
+                             // Array of transitions
+                             xConfig.states[key].on[evt] = trans.map(mapFn);
+                         } else {
+                             // Object
+                             xConfig.states[key].on[evt] = mapFn(trans);
+                         }
+                     }
+                 }
+            }
+
+            console.log("XState Config Adapted:", JSON.stringify(xConfig, null, 2));
+
+            const machine = setup({
+                guards,
+                actions
+            }).createMachine(xConfig);
+
+
 
             const actor = createActor(machine, {
                 inspect: (evt) => inspector.onXState(evt)
