@@ -32,7 +32,8 @@
             await init();
 
             // The JSON Machine Definition
-            const machineDef = JSON.stringify({
+            // The JSON Machine Definition
+            const machineDef = {
                 id: "trafficLight",
                 initial: "green",
                 states: {
@@ -40,7 +41,7 @@
                     yellow: { on: { TIMER: "red" } },
                     red: { on: { TIMER: "green" } }
                 }
-            });
+            };
 
             // Initialize Wasm Machine
             const machine = new FsmRunner(machineDef);

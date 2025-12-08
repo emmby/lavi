@@ -54,7 +54,7 @@
         async function main() {
             await init();
 
-            const machineDef = JSON.stringify({
+            const machineDef = {
                 id: "door",
                 initial: "closed",
                 states: {
@@ -73,7 +73,7 @@
                     }
                 },
                 context: { locked: true }
-            });
+            };
 
             const machine = new FsmRunner(machineDef);
             updateUI();

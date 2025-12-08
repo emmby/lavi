@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use fsm_core::RuntimeMachine;
+use fsm_core::{RuntimeMachine, MachineDefinition};
 
 #[wasm_bindgen]
 pub struct FsmRunner {
@@ -9,9 +9,21 @@ pub struct FsmRunner {
 #[wasm_bindgen]
 impl FsmRunner {
     #[wasm_bindgen(constructor)]
-    pub fn new(json_definition: &str) -> Result<FsmRunner, JsValue> {
-        let machine = RuntimeMachine::from_json(json_definition)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
+    pub fn new(val: JsValue) -> Result<FsmRunner, JsValue> {
+        let machine = if val.is_string() {
+             let json_definition = val.as_string().unwrap();
+             RuntimeMachine::from_json(&json_definition)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?
+        } else {
+             let definition: MachineDefinition = serde_wasm_bindgen::from_value(val)?;
+             let current_state = definition.initial.clone();
+             let context = definition.context.clone().unwrap_or(serde_json::Value::Null);
+             RuntimeMachine {
+                definition,
+                current_state,
+                context
+             }
+        };
             
         Ok(FsmRunner { machine })
     }

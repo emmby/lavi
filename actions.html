@@ -78,7 +78,7 @@
             // Transition A->B: Action -> log_transition
             // State B: Entry -> set_entered_b, increment
             // Transition B->A: Action -> increment (so we can see count go up on reset too)
-            const machineDef = JSON.stringify({
+            const machineDef = {
                 id: "actions_machine",
                 initial: "a",
                 context: { count: 0 },
@@ -106,7 +106,7 @@
                         }
                     }
                 }
-            });
+            };
 
             const machine = new FsmRunner(machineDef);
             updateUI("Initialized");
