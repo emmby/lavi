@@ -41,9 +41,66 @@
 
         const scenario = ["OPEN", "UNLOCK", "OPEN", "CLOSE"];
 
+        class ComparisonInspector {
+            constructor() {
+                this.xstateSnapshot = null;
+                this.wasmSnapshot = null;
+            }
+
+            onXState(evt) {
+                if (evt.type === '@xstate.snapshot') {
+                    this.xstateSnapshot = {
+                        value: evt.snapshot.value,
+                        context: evt.snapshot.context
+                    };
+                }
+            }
+
+            onWasm(evt) {
+                 if (evt.type === '@xstate.snapshot') {
+                    this.wasmSnapshot = {
+                        value: evt.value,
+                        context: evt.context
+                    };
+                }
+            }
+
+            // Helper to manually update WASM state for operations that don't emit events (like set_context_bool)
+            manualWasmUpdate(runner) {
+                this.wasmSnapshot = {
+                    value: runner.current_state(),
+                    context: JSON.parse(runner.context_json())
+                };
+            }
+
+            verify(step) {
+                if (!this.xstateSnapshot || !this.wasmSnapshot) {
+                    throw new Error(`[${step}] Missing snapshot! XState: ${!!this.xstateSnapshot}, WASM: ${!!this.wasmSnapshot}`);
+                }
+
+                const xVal = this.xstateSnapshot.value;
+                const wVal = this.wasmSnapshot.value;
+                
+                if (xVal !== wVal) {
+                    throw new Error(`[${step}] State Mismatch! XState: '${xVal}', WASM: '${wVal}'`);
+                }
+
+                // Deep compare context
+                const xCtx = JSON.stringify(this.xstateSnapshot.context);
+                const wCtx = JSON.stringify(this.wasmSnapshot.context);
+                if (xCtx !== wCtx) {
+                    throw new Error(`[${step}] Context Mismatch! XState: ${xCtx}, WASM: ${wCtx}`);
+                }
+
+                log(`[${step}] OK: State='${xVal}', Context=${xCtx}`);
+            }
+        }
+
         async function runTest() {
             await init();
             log("WASM Initialized");
+
+            const inspector = new ComparisonInspector();
 
             // --- XState Setup ---
             const guards = {
@@ -54,7 +111,6 @@
                 lock: assign({ locked: true }),
             };
             
-            // Convert to XState Config
             const xstateConfig = {
                 id: machineDef.id,
                 initial: machineDef.initial,
@@ -78,48 +134,25 @@
             }
 
             const machine = createMachine(xstateConfig, { guards, actions });
-            
-            const xstateLog = [];
             const actor = createActor(machine, {
-                inspect: (evt) => {
-                    // Only capture snapshots for comparison
-                    if (evt.type === '@xstate.snapshot') {
-                        xstateLog.push({
-                            type: evt.type,
-                            value: evt.snapshot.value,
-                            context: evt.snapshot.context
-                        });
-                    }
-                }
+                inspect: (evt) => inspector.onXState(evt)
             });
             actor.start();
 
             // --- WASM Setup ---
-            const wasmLog = [];
-            
-            // NEW: Pass object directly thanks to serde-wasm-bindgen
             const wasmRunner = new FsmRunner(machineDef);
-            
             wasmRunner.set_inspector((jsonStr) => {
-                const evt = JSON.parse(jsonStr);
-                if (evt.type === '@xstate.snapshot') {
-                     wasmLog.push({
-                        type: evt.type,
-                        value: evt.value,
-                        context: evt.context
-                     });
-                }
+                inspector.onWasm(JSON.parse(jsonStr));
             });
-
-            // NEW: Start explicitly to emit initial snapshot
             wasmRunner.start();
 
-            log("Runnning Scenario...");
+            // Verify Initial State
+            inspector.verify("INITIAL");
+
+            log("\n--- Starting Scenario ---");
 
             for (const eventName of scenario) {
-                log(`Dispatching: ${eventName}`);
-                
-                // XState
+                // Dispatch XState
                 if (eventName === 'UNLOCK') {
                     actor.send({ type: 'UNLOCK' });
                 } else if (eventName === 'LOCK') {
@@ -128,42 +161,24 @@
                     actor.send({ type: eventName });
                 }
 
-                // WASM
+                // Dispatch WASM
                 if (eventName === 'UNLOCK') {
                     wasmRunner.set_context_bool("locked", false);
-                    // Manually emit snapshot for context change if WASM doesn't auto-emit on set_context
-                    // To match XState trace, we might need a snapshot here?
-                    // XState 'assign' emits a snapshot.
-                    // Let's see if we can trigger one or if the test passes without.
-                    // If mismatch, we know why.
+                    inspector.manualWasmUpdate(wasmRunner);
                 } else if (eventName === 'LOCK') {
                     wasmRunner.set_context_bool("locked", true);
+                    inspector.manualWasmUpdate(wasmRunner);
                 } else {
                     wasmRunner.transition(eventName);
                 }
+
+                // Verify Step
+                inspector.verify(eventName);
             }
 
-            // Comparison
-            log("\n--- XState Log ---");
-            log(JSON.stringify(xstateLog, null, 2));
-            log("\n--- WASM Log ---");
-            log(JSON.stringify(wasmLog, null, 2));
-
-            // Validate that we have the same number of snapshots (excluding the manual context change divergence if any)
-            // And ensure final state matches.
-            
-            const xLast = xstateLog[xstateLog.length - 1];
-            const wLast = wasmLog[wasmLog.length - 1];
-            
-            if (xLast.value === wLast.value) {
-                 document.getElementById('status').innerText = "SUCCESS";
-                 document.getElementById('status').className = "pass";
-                 log("\nFinal states match: " + xLast.value);
-            } else {
-                 document.getElementById('status').innerText = "FAILURE";
-                 document.getElementById('status').className = "fail";
-                 log(`\nMismatch: XState=${xLast.value}, WASM=${wLast.value}`);
-            }
+            document.getElementById('status').innerText = "SUCCESS";
+            document.getElementById('status').className = "pass";
+            log("\nAll checks passed!");
         }
 
         function log(msg) {
