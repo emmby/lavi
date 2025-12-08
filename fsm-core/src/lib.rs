@@ -17,12 +17,18 @@ pub struct TransitionDefinition {
     pub target: String,
     #[serde(default)]
     pub cond: Option<String>,
+    #[serde(default)]
+    pub actions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StateDefinition {
     #[serde(default)]
     pub on: HashMap<String, Vec<TransitionDefinition>>, // Event -> List of Transitions
+    #[serde(default)]
+    pub entry: Vec<String>,
+    #[serde(default)]
+    pub exit: Vec<String>,
 }
 
 // --- Runtime ---
@@ -51,6 +57,7 @@ impl RuntimeMachine {
         &mut self,
         event: &str,
         guards: &HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>>,
+        actions: &HashMap<String, Box<dyn Fn(&mut serde_json::Value)>>,
     ) -> Option<String> {
         // Look up: Current State -> on[Event] -> List of Transitions
         if let Some(state_def) = self.definition.states.get(&self.current_state) {
@@ -71,7 +78,34 @@ impl RuntimeMachine {
                     };
 
                     if should_transition {
+                        // 1. Execute Exit Actions for Current State
+                        if let Some(current_state_def) = self.definition.states.get(&self.current_state) {
+                            for action_name in &current_state_def.exit {
+                                if let Some(action_fn) = actions.get(action_name) {
+                                    action_fn(&mut self.context);
+                                }
+                            }
+                        }
+
+                        // 2. Execute Transition Actions
+                        for action_name in &transition.actions {
+                            if let Some(action_fn) = actions.get(action_name) {
+                                action_fn(&mut self.context);
+                            }
+                        }
+
+                        // 3. Update State
                         self.current_state = transition.target.clone();
+
+                        // 4. Execute Entry Actions for New State
+                        if let Some(new_state_def) = self.definition.states.get(&self.current_state) {
+                            for action_name in &new_state_def.entry {
+                                if let Some(action_fn) = actions.get(action_name) {
+                                    action_fn(&mut self.context);
+                                }
+                            }
+                        }
+
                         return Some(self.current_state.clone());
                     }
                 }
@@ -109,14 +143,15 @@ mod tests {
         assert_eq!(machine.state(), "green");
         
         let guards = HashMap::new();
+        let actions = HashMap::new();
 
-        machine.transition("TIMER", &guards);
+        machine.transition("TIMER", &guards, &actions);
         assert_eq!(machine.state(), "yellow");
         
-        machine.transition("TIMER", &guards);
+        machine.transition("TIMER", &guards, &actions);
         assert_eq!(machine.state(), "red");
         
-        machine.transition("TIMER", &guards);
+        machine.transition("TIMER", &guards, &actions);
         assert_eq!(machine.state(), "green");
     }
 
@@ -135,9 +170,10 @@ mod tests {
         assert_eq!(machine.state(), "idle");
 
         let guards = HashMap::new();
+        let actions = HashMap::new();
 
         // "STOP" is not valid for "idle"
-        let result = machine.transition("STOP", &guards);
+        let result = machine.transition("STOP", &guards, &actions);
         assert!(result.is_none());
         assert_eq!(machine.state(), "idle"); // State should remain unchanged
     }
@@ -158,9 +194,10 @@ mod tests {
         assert_eq!(machine.state(), "phantom");
 
         let guards = HashMap::new();
+        let actions = HashMap::new();
 
         // Attempting to transition from a missing state should gracefully fail (return None)
-        let result = machine.transition("ANY_EVENT", &guards);
+        let result = machine.transition("ANY_EVENT", &guards, &actions);
         assert!(result.is_none());
     }
 
@@ -197,6 +234,8 @@ mod tests {
                 true 
             }
         }));
+        
+        let actions = HashMap::new();
 
         // 1. Initial State: Closed, Context: Locked=true
         assert_eq!(machine.state(), "closed");
@@ -205,7 +244,7 @@ mod tests {
         // It should match the FIRST transition? No, XState: check first, if false check next.
         // Our definition: match 'can_open' -> false. Next: { target: "closed" } (implicit true).
         // So state stays 'closed'.
-        machine.transition("OPEN", &guards);
+        machine.transition("OPEN", &guards, &actions);
         assert_eq!(machine.state(), "closed"); 
 
         // 3. Unlock the door (modify context manually for test)
@@ -214,7 +253,7 @@ mod tests {
         }
 
         // 4. Try to OPEN again. Guard 'can_open' -> true. Transition to 'open'.
-        machine.transition("OPEN", &guards);
+        machine.transition("OPEN", &guards, &actions);
         assert_eq!(machine.state(), "open");
     }
 }

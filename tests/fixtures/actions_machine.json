@@ -1,0 +1,29 @@
+{
+  "id": "actions_machine",
+  "initial": "a",
+  "context": { "count": 0 },
+  "states": {
+    "a": {
+      "exit": ["set_exited_a"],
+      "on": {
+        "NEXT": [
+          {
+            "target": "b",
+            "actions": ["log_transition"]
+          }
+        ]
+      }
+    },
+    "b": {
+      "entry": ["set_entered_b", "increment"],
+      "on": {
+        "RESET": [
+          {
+            "target": "a",
+            "actions": ["increment"]
+          }
+        ]
+      }
+    }
+  }
+}

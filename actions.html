@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSM Actions Demo</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #f0f2f5; margin: 0; }
+        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 500px; }
+        
+        .state-display {
+            font-size: 48px;
+            font-weight: bold;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+            background: #eee;
+            transition: all 0.3s;
+        }
+
+        .state-a { background: #e3f2fd; color: #1976d2; }
+        .state-b { background: #e8f5e9; color: #2e7d32; }
+
+        .context-box {
+            text-align: left;
+            background: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            margin: 15px 0;
+            min-height: 80px;
+        }
+
+        button { padding: 12px 24px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; background: #007bff; color: white; transition: background 0.2s; font-size: 16px; margin: 5px; }
+        button:hover { background: #0056b3; }
+        
+        .log-box {
+            height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+            margin-top: 10px;
+            font-size: 14px;
+            background: #fafafa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Actions Demo</h1>
+        <p>State transitions trigger actions (entry, exit, transition).</p>
+        
+        <div id="stateDisplay" class="state-display">Loading...</div>
+        
+        <div class="context-box">
+            <div>Context:</div>
+            <div id="lblContext">...</div>
+        </div>
+
+        <div class="controls">
+            <button id="btnNext">NEXT (State A -> B)</button>
+            <button id="btnReset">RESET (State B -> A)</button>
+        </div>
+
+        <div class="log-box" id="logBox"></div>
+    </div>
+
+    <script type="module">
+        import init, { FsmRunner } from './fsm-wasm/pkg/fsm_wasm.js';
+
+        async function main() {
+            await init();
+
+            // Machine Definition
+            // State A: Exit -> set_exited_a
+            // Transition A->B: Action -> log_transition
+            // State B: Entry -> set_entered_b, increment
+            // Transition B->A: Action -> increment (so we can see count go up on reset too)
+            const machineDef = JSON.stringify({
+                id: "actions_machine",
+                initial: "a",
+                context: { count: 0 },
+                states: {
+                    a: {
+                        exit: ["set_exited_a"],
+                        on: {
+                            NEXT: [
+                                {
+                                    target: "b",
+                                    actions: ["log_transition"]
+                                }
+                            ]
+                        }
+                    },
+                    b: {
+                        entry: ["set_entered_b", "increment"],
+                        on: {
+                            RESET: [
+                                {
+                                    target: "a",
+                                    actions: ["increment"]
+                                }
+                            ]
+                        }
+                    }
+                }
+            });
+
+            const machine = new FsmRunner(machineDef);
+            updateUI("Initialized");
+
+            function updateUI(lastEvent) {
+                const state = machine.current_state();
+                const ctx = JSON.parse(machine.context_json());
+                
+                const stateEl = document.getElementById('stateDisplay');
+                stateEl.innerText = state.toUpperCase();
+                stateEl.className = 'state-display ' + (state === 'a' ? 'state-a' : 'state-b');
+                
+                document.getElementById('lblContext').innerText = JSON.stringify(ctx, null, 2);
+                
+                log(`[${lastEvent}] State: ${state}, Count: ${ctx.count}`);
+            }
+
+            function log(msg) {
+                const box = document.getElementById('logBox');
+                const line = document.createElement('div');
+                line.innerText = msg;
+                box.insertBefore(line, box.firstChild);
+            }
+
+            document.getElementById('btnNext').onclick = () => {
+                machine.transition("NEXT");
+                updateUI("NEXT");
+            };
+
+            document.getElementById('btnReset').onclick = () => {
+                machine.transition("RESET");
+                updateUI("RESET");
+            };
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

@@ -30,7 +30,45 @@ impl FsmRunner {
             }
         }));
 
-        self.machine.transition(event, &guards)
+        // Actions Implementation for Demo
+        let mut actions: HashMap<String, Box<dyn Fn(&mut serde_json::Value) -> ()>> = HashMap::new();
+        
+        actions.insert("increment".to_string(), Box::new(|ctx| {
+             let new_val = if let Some(count) = ctx.get("count").and_then(|v| v.as_i64()) {
+                count + 1
+            } else {
+                1
+            };
+            if let Some(obj) = ctx.as_object_mut() {
+                obj.insert("count".to_string(), serde_json::Value::Number(new_val.into()));
+            }
+        }));
+
+        actions.insert("reset".to_string(), Box::new(|ctx| {
+            if let Some(obj) = ctx.as_object_mut() {
+                obj.insert("count".to_string(), serde_json::Value::Number(0.into()));
+            }
+        }));
+        
+        actions.insert("log_transition".to_string(), Box::new(|ctx| {
+            if let Some(obj) = ctx.as_object_mut() {
+                 obj.insert("last_transition".to_string(), serde_json::Value::String("occurred".to_string()));
+            }
+        }));
+
+        actions.insert("set_exited_a".to_string(), Box::new(|ctx| {
+            if let Some(obj) = ctx.as_object_mut() {
+                obj.insert("exited_a".to_string(), serde_json::Value::Bool(true));
+            }
+        }));
+
+        actions.insert("set_entered_b".to_string(), Box::new(|ctx| {
+             if let Some(obj) = ctx.as_object_mut() {
+                obj.insert("entered_b".to_string(), serde_json::Value::Bool(true));
+            }
+        }));
+
+        self.machine.transition(event, &guards, &actions)
     }
 
     pub fn set_context_bool(&mut self, key: &str, value: bool) {

@@ -43,15 +43,18 @@ try {
     // Transform states
     for (const [stateName, stateDef] of Object.entries(machineDef.states)) {
         xstateConfig.states[stateName] = {
-            on: {}
+            on: {},
+            entry: stateDef.entry,
+            exit: stateDef.exit
         };
         
         if (stateDef.on) {
             for (const [eventName, transitions] of Object.entries(stateDef.on)) {
-                // definitions.transitions is array of { target, cond }
+                // definitions.transitions is array of { target, cond, actions }
                 xstateConfig.states[stateName].on[eventName] = transitions.map(t => ({
                     target: t.target,
-                    guard: t.cond 
+                    guard: t.cond,
+                    actions: t.actions
                 }));
             }
         }
@@ -59,7 +62,13 @@ try {
 
     const machine = createMachine(xstateConfig, {
         guards,
-        actions
+        actions: {
+            ...actions,
+            increment: assign({ count: ({ context }) => (context.count || 0) + 1 }),
+            set_entered_b: assign({ entered_b: true }),
+            set_exited_a: assign({ exited_a: true }),
+            log_transition: assign({ transition_logged: true }),
+        }
     });
 
     const actor = createActor(machine);
@@ -67,16 +76,12 @@ try {
     const trace = [];
 
     // Capture initial state
-    // trace.push({ event: "init", value: machine.initialState.value, context: machine.initialState.context });
-    // Actually subscription will catch initial state if started? 
-    // V5: subscribe emits current state immediately upon subscription? Let's verify.
-    // Usually yes.
-
-        trace.push({
-            event: snapshot.event?.type || "init", 
-            value: snapshot.value,
-            context: snapshot.context
-        });
+    const initSnap = actor.getSnapshot();
+    trace.push({
+        event: "init", 
+        value: initSnap.value,
+        context: initSnap.context
+    });
 
     actor.start();
 
@@ -84,6 +89,13 @@ try {
     for (const event of scenario) {
         const eventObj = typeof event === 'string' ? { type: event } : event;
         actor.send(eventObj);
+        
+        const snapshot = actor.getSnapshot();
+        trace.push({
+            event: eventObj.type,
+            value: snapshot.value,
+            context: snapshot.context
+        });
     }
 
     console.log(JSON.stringify(trace, null, 2));
