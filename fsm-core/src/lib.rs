@@ -14,7 +14,8 @@ pub struct MachineDefinition {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TransitionDefinition {
-    pub target: String,
+    #[serde(default)]
+    pub target: Option<String>,
     #[serde(default)]
     pub cond: Option<String>,
     #[serde(default)]
@@ -56,8 +57,9 @@ impl RuntimeMachine {
     pub fn transition(
         &mut self,
         event: &str,
-        guards: &HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>>,
-        actions: &HashMap<String, Box<dyn Fn(&mut serde_json::Value)>>,
+        event_payload: &serde_json::Value,
+        guards: &HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>>,
+        actions: &HashMap<String, Box<dyn Fn(&mut serde_json::Value, &serde_json::Value)>>,
     ) -> Option<String> {
         // Look up: Current State -> on[Event] -> List of Transitions
         if let Some(state_def) = self.definition.states.get(&self.current_state) {
@@ -66,7 +68,7 @@ impl RuntimeMachine {
                     let should_transition = match &transition.cond {
                         Some(cond_name) => {
                             if let Some(guard) = guards.get(cond_name) {
-                                guard(&self.context)
+                                guard(&self.context, event_payload)
                             } else {
                                 // Guard specified but not found in implementation map.
                                 // In XState, this usually logs a warning and treats as false.
@@ -78,11 +80,23 @@ impl RuntimeMachine {
                     };
 
                     if should_transition {
-                        // 1. Execute Exit Actions for Current State
-                        if let Some(current_state_def) = self.definition.states.get(&self.current_state) {
-                            for action_name in &current_state_def.exit {
-                                if let Some(action_fn) = actions.get(action_name) {
-                                    action_fn(&mut self.context);
+                        // Determine next state (if target is None, it's a self-transition to current state, or rather internal?)
+                        // In XState:
+                        // - Internal (no target): actions run, no exit/entry.
+                        // - External (target=current): exit, actions, entry.
+                        // For simplicity here: Treat None as Internal (stay, no exit/entry, just actions).
+                        // If user wants re-entry, they should specify target explicitly.
+                        
+                        let next_state_name = transition.target.clone().unwrap_or(self.current_state.clone());
+                        let is_internal = transition.target.is_none(); 
+
+                        if !is_internal {
+                            // 1. Execute Exit Actions for Current State
+                            if let Some(current_state_def) = self.definition.states.get(&self.current_state) {
+                                for action_name in &current_state_def.exit {
+                                    if let Some(action_fn) = actions.get(action_name) {
+                                        action_fn(&mut self.context, event_payload);
+                                    }
                                 }
                             }
                         }
@@ -90,18 +104,20 @@ impl RuntimeMachine {
                         // 2. Execute Transition Actions
                         for action_name in &transition.actions {
                             if let Some(action_fn) = actions.get(action_name) {
-                                action_fn(&mut self.context);
+                                action_fn(&mut self.context, event_payload);
                             }
                         }
 
-                        // 3. Update State
-                        self.current_state = transition.target.clone();
+                        if !is_internal {
+                            // 3. Update State
+                            self.current_state = next_state_name.clone();
 
-                        // 4. Execute Entry Actions for New State
-                        if let Some(new_state_def) = self.definition.states.get(&self.current_state) {
-                            for action_name in &new_state_def.entry {
-                                if let Some(action_fn) = actions.get(action_name) {
-                                    action_fn(&mut self.context);
+                            // 4. Execute Entry Actions for New State
+                            if let Some(new_state_def) = self.definition.states.get(&self.current_state) {
+                                for action_name in &new_state_def.entry {
+                                    if let Some(action_fn) = actions.get(action_name) {
+                                        action_fn(&mut self.context, event_payload);
+                                    }
                                 }
                             }
                         }
@@ -144,14 +160,15 @@ mod tests {
         
         let guards = HashMap::new();
         let actions = HashMap::new();
+        let payload = serde_json::Value::Null;
 
-        machine.transition("TIMER", &guards, &actions);
+        machine.transition("TIMER", &payload, &guards, &actions);
         assert_eq!(machine.state(), "yellow");
         
-        machine.transition("TIMER", &guards, &actions);
+        machine.transition("TIMER", &payload, &guards, &actions);
         assert_eq!(machine.state(), "red");
         
-        machine.transition("TIMER", &guards, &actions);
+        machine.transition("TIMER", &payload, &guards, &actions);
         assert_eq!(machine.state(), "green");
     }
 
@@ -171,9 +188,10 @@ mod tests {
 
         let guards = HashMap::new();
         let actions = HashMap::new();
+        let payload = serde_json::Value::Null;
 
         // "STOP" is not valid for "idle"
-        let result = machine.transition("STOP", &guards, &actions);
+        let result = machine.transition("STOP", &payload, &guards, &actions);
         assert!(result.is_none());
         assert_eq!(machine.state(), "idle"); // State should remain unchanged
     }
@@ -195,9 +213,10 @@ mod tests {
 
         let guards = HashMap::new();
         let actions = HashMap::new();
+        let payload = serde_json::Value::Null;
 
         // Attempting to transition from a missing state should gracefully fail (return None)
-        let result = machine.transition("ANY_EVENT", &guards, &actions);
+        let result = machine.transition("ANY_EVENT", &payload, &guards, &actions);
         assert!(result.is_none());
     }
 
@@ -225,8 +244,8 @@ mod tests {
         let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
         
         // Define guards
-        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>> = HashMap::new();
-        guards.insert("can_open".to_string(), Box::new(|ctx| {
+        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
+        guards.insert("can_open".to_string(), Box::new(|ctx, _evt| {
             // Allow open if NOT locked
             if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
                 !locked
@@ -236,15 +255,13 @@ mod tests {
         }));
         
         let actions = HashMap::new();
+        let payload = serde_json::Value::Null;
 
         // 1. Initial State: Closed, Context: Locked=true
         assert_eq!(machine.state(), "closed");
 
         // 2. Try to OPEN. Guard 'can_open' checks !locked. locked is true, so !locked is false.
-        // It should match the FIRST transition? No, XState: check first, if false check next.
-        // Our definition: match 'can_open' -> false. Next: { target: "closed" } (implicit true).
-        // So state stays 'closed'.
-        machine.transition("OPEN", &guards, &actions);
+        machine.transition("OPEN", &payload, &guards, &actions);
         assert_eq!(machine.state(), "closed"); 
 
         // 3. Unlock the door (modify context manually for test)
@@ -253,7 +270,7 @@ mod tests {
         }
 
         // 4. Try to OPEN again. Guard 'can_open' -> true. Transition to 'open'.
-        machine.transition("OPEN", &guards, &actions);
+        machine.transition("OPEN", &payload, &guards, &actions);
         assert_eq!(machine.state(), "open");
     }
 }

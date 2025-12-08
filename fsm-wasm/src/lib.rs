@@ -47,12 +47,22 @@ impl FsmRunner {
         }
     }
 
-    pub fn transition(&mut self, event: &str) -> Option<String> {
+    pub fn transition(&mut self, event: JsValue) -> Option<String> {
+        let (event_name, event_payload) = if event.is_string() {
+            let s = event.as_string().unwrap();
+            (s.clone(), serde_json::json!({ "type": s }))
+        } else {
+             // Assume object
+             let payload: serde_json::Value = serde_wasm_bindgen::from_value(event.clone()).unwrap_or(serde_json::Value::Null);
+             let name = payload.get("type").and_then(|t| t.as_str()).unwrap_or("UNKNOWN").to_string();
+             (name, payload)
+        };
+
         // 1. Inspect Event
         if let Some(inspector) = &self.inspector {
              let evt_obj = serde_json::json!({
                  "type": "@xstate.event",
-                 "event": { "type": event }
+                 "event": event_payload
              });
              if let Ok(s) = evt_obj.to_string().parse::<String>() {
                  let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
@@ -61,10 +71,10 @@ impl FsmRunner {
 
         // Guard Implementation for Demo
         use std::collections::HashMap;
-        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value) -> bool>> = HashMap::new();
+        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
         
         // Register "can_open" guard: checks if context.locked is FALSE
-        guards.insert("can_open".to_string(), Box::new(|ctx| {
+        guards.insert("can_open".to_string(), Box::new(|ctx, _evt| {
             if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
                 !locked
             } else {
@@ -73,9 +83,23 @@ impl FsmRunner {
         }));
 
         // Actions Implementation for Demo
-        let mut actions: HashMap<String, Box<dyn Fn(&mut serde_json::Value) -> ()>> = HashMap::new();
+        let mut actions: HashMap<String, Box<dyn Fn(&mut serde_json::Value, &serde_json::Value) -> ()>> = HashMap::new();
         
-        actions.insert("increment".to_string(), Box::new(|ctx| {
+        // Handle "unlock" action - triggered by UNLOCK event
+        actions.insert("unlock".to_string(), Box::new(|ctx, _evt| {
+            if let Some(obj) = ctx.as_object_mut() {
+                obj.insert("locked".to_string(), serde_json::Value::Bool(false));
+            }
+        }));
+
+        // Handle "lock" action - triggered by LOCK event
+        actions.insert("lock".to_string(), Box::new(|ctx, _evt| {
+            if let Some(obj) = ctx.as_object_mut() {
+                obj.insert("locked".to_string(), serde_json::Value::Bool(true));
+            }
+        }));
+
+        actions.insert("increment".to_string(), Box::new(|ctx, _evt| {
              let new_val = if let Some(count) = ctx.get("count").and_then(|v| v.as_i64()) {
                 count + 1
             } else {
@@ -86,31 +110,31 @@ impl FsmRunner {
             }
         }));
 
-        actions.insert("reset".to_string(), Box::new(|ctx| {
+        actions.insert("reset".to_string(), Box::new(|ctx, _evt| {
             if let Some(obj) = ctx.as_object_mut() {
                 obj.insert("count".to_string(), serde_json::Value::Number(0.into()));
             }
         }));
         
-        actions.insert("log_transition".to_string(), Box::new(|ctx| {
+        actions.insert("log_transition".to_string(), Box::new(|ctx, _evt| {
             if let Some(obj) = ctx.as_object_mut() {
                  obj.insert("last_transition".to_string(), serde_json::Value::String("occurred".to_string()));
             }
         }));
 
-        actions.insert("set_exited_a".to_string(), Box::new(|ctx| {
+        actions.insert("set_exited_a".to_string(), Box::new(|ctx, _evt| {
             if let Some(obj) = ctx.as_object_mut() {
                 obj.insert("exited_a".to_string(), serde_json::Value::Bool(true));
             }
         }));
 
-        actions.insert("set_entered_b".to_string(), Box::new(|ctx| {
+        actions.insert("set_entered_b".to_string(), Box::new(|ctx, _evt| {
              if let Some(obj) = ctx.as_object_mut() {
                 obj.insert("entered_b".to_string(), serde_json::Value::Bool(true));
             }
         }));
 
-        let result = self.machine.transition(event, &guards, &actions);
+        let result = self.machine.transition(&event_name, &event_payload, &guards, &actions);
 
         // 2. Inspect Snapshot
         if let Some(inspector) = &self.inspector {
