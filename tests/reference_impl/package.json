@@ -1,0 +1,13 @@
+{
+  "name": "fsm-reference-impl",
+  "version": "1.0.0",
+  "description": "Reference implementation runner using XState",
+  "main": "generate_trace.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "xstate": "^5.0.0"
+  },
+  "type": "module"
+}

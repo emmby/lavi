@@ -1,0 +1,20 @@
+{
+  "id": "door",
+  "initial": "closed",
+  "states": {
+    "closed": {
+      "on": {
+        "OPEN": [
+          { "target": "open", "cond": "can_open" },
+          { "target": "closed" }
+        ]
+      }
+    },
+    "open": {
+      "on": {
+        "CLOSE": [ { "target": "closed" } ]
+      }
+    }
+  },
+  "context": { "locked": true }
+}
