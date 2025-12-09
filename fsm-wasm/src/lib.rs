@@ -16,7 +16,14 @@ impl FsmRunner {
              RuntimeMachine::from_json(&json_definition)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?
         } else {
-             let definition: MachineDefinition = serde_wasm_bindgen::from_value(val)?;
+             let json_string = js_sys::JSON::stringify(&val)
+                .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
+                .as_string()
+                .ok_or(JsValue::from_str("Machine definition JSON is not a string"))?;
+
+             let definition: MachineDefinition = serde_json::from_str(&json_string)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
+
              let current_state = definition.initial.clone();
              let context = definition.context.clone().unwrap_or(serde_json::Value::Null);
              RuntimeMachine {
@@ -35,15 +42,17 @@ impl FsmRunner {
 
     pub fn start(&self) {
         if let Some(inspector) = &self.inspector {
-             let snap_obj = serde_json::json!({
-                 "type": "@xstate.snapshot",
-                 "context": self.machine.context,
-                 "value": self.machine.state(),
-                 "status": "active"
-             });
-             if let Ok(s) = snap_obj.to_string().parse::<String>() {
-                 let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
-             }
+             let obj = js_sys::Object::new();
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_str(self.machine.state()));
+             
+             // Fix: Use JSON parse to avoid Map serialization
+             let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
+             let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
+
+             let _ = inspector.call1(&JsValue::NULL, &obj);
         }
     }
 
@@ -58,17 +67,18 @@ impl FsmRunner {
              (name, payload)
         };
 
-        // 1. Inspect Event
         if let Some(inspector) = &self.inspector {
-             let evt_obj = serde_json::json!({
-                 "type": "@xstate.event",
-                 "event": event_payload
-             });
-             if let Ok(s) = evt_obj.to_string().parse::<String>() {
-                 let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
-             }
-        }
+             let obj = js_sys::Object::new();
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.event"));
+             
+             // Fix: Use JSON parse to avoid Map serialization
+             let evt_json = serde_json::to_string(&event_payload).unwrap_or("{}".to_string());
+             let evt_val = js_sys::JSON::parse(&evt_json).unwrap_or(JsValue::NULL);
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_val);
 
+             let _ = inspector.call1(&JsValue::NULL, &obj);
+        }
+        
         // Guard Implementation for Demo
         use std::collections::HashMap;
         let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
@@ -138,15 +148,17 @@ impl FsmRunner {
 
         // 2. Inspect Snapshot
         if let Some(inspector) = &self.inspector {
-             let snap_obj = serde_json::json!({
-                 "type": "@xstate.snapshot",
-                 "context": self.machine.context,
-                 "value": self.machine.state(),
-                 "status": "active"
-             });
-             if let Ok(s) = snap_obj.to_string().parse::<String>() {
-                 let _ = inspector.call1(&JsValue::NULL, &JsValue::from_str(&s));
-             }
+             let obj = js_sys::Object::new();
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_str(self.machine.state()));
+             
+             // Fix: Use JSON parse to avoid Map serialization
+             let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
+             let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
+
+             let _ = inspector.call1(&JsValue::NULL, &obj);
         }
 
         result

@@ -94,10 +94,6 @@
                          const lVal = this.lastVerified.value;
                          const lCtx = JSON.stringify(this.lastVerified.context);
                          
-                         // Debug check
-                         // console.log(`Checking divergence: WASM state '${wVal}' vs Last '${lVal}'`);
-                         // console.log(`Checking divergence: WASM ctx '${wCtx}' vs Last '${lCtx}'`);
-
                          if (wVal === lVal && wCtx === lCtx) {
                              log(`[${step}] WASM emitted extra snapshot (identical to previous). Ignoring divergence.`);
                              return;
@@ -168,8 +164,8 @@
 
             // --- WASM Setup ---
             const wasmRunner = new FsmRunner(machineDef);
-            wasmRunner.set_inspector((jsonStr) => {
-                inspector.onWasm(JSON.parse(jsonStr));
+            wasmRunner.set_inspector((evt) => {
+                inspector.onWasm(evt);
             });
             wasmRunner.start();
 
