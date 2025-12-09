@@ -52,6 +52,11 @@ impl FsmRunner {
              let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
 
+             // Parity Fields
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
+
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
     }
@@ -157,6 +162,11 @@ impl FsmRunner {
              let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
              let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
+
+             // Parity Fields
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
 
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }

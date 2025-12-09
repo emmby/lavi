@@ -52,30 +52,17 @@
             }
 
             onXState(evt) {
-                // console.log("XState Inspector Event:", evt.type, evt); 
                 if (evt.type === '@xstate.snapshot') {
-                    this.xstateSnapshot = {
-                        value: evt.snapshot.value,
-                        context: evt.snapshot.context
-                    };
+                    // Capture full snapshot structure for strict comparison
+                    // Sanitize via JSON to remove functions/internal helpers
+                    this.xstateSnapshot = JSON.parse(JSON.stringify(evt.snapshot));
                 }
             }
 
             onWasm(evt) {
                  if (evt.type === '@xstate.snapshot') {
-                    this.wasmSnapshot = {
-                        value: evt.value,
-                        context: evt.context
-                    };
+                    this.wasmSnapshot = evt;
                 }
-            }
-
-            // Helper to manually update WASM state for operations that don't emit events (deprecated by event usage)
-            manualWasmUpdate(runner) {
-                this.wasmSnapshot = {
-                    value: runner.current_state(),
-                    context: JSON.parse(runner.context_json())
-                };
             }
 
             verify(step) {
@@ -85,50 +72,52 @@
                 }
 
                 if (!this.xstateSnapshot && this.wasmSnapshot) {
-                    // XState silent, WASM yielded snapshot.
-                    // Check if WASM snapshot is identical to last verified state.
-                    if (this.lastVerified) {
-                         const wVal = this.wasmSnapshot.value;
-                         const wCtx = JSON.stringify(this.wasmSnapshot.context);
-                         
-                         const lVal = this.lastVerified.value;
-                         const lCtx = JSON.stringify(this.lastVerified.context);
-                         
-                         if (wVal === lVal && wCtx === lCtx) {
-                             log(`[${step}] WASM emitted extra snapshot (identical to previous). Ignoring divergence.`);
+                     // Check if identical to last verified (redundant emission check)
+                     if (this.lastVerified) {
+                         const wStr = JSON.stringify(this.wasmSnapshot);
+                         const lStr = JSON.stringify(this.lastVerified);
+                         if (wStr === lStr) {
+                             log(`[${step}] WASM emitted extra/redundant snapshot. Ignoring.`);
                              return;
-                         } else {
-                             log(`[${step}] Divergence mismatch! WASM: ${wVal}/${wCtx}, Last: ${lVal}/${lCtx}`);
                          }
-                    }
-                    
-                    throw new Error(`[${step}] Missing XState snapshot! WASM transitioned to ${this.wasmSnapshot.value}.`);
+                     }
+                    throw new Error(`[${step}] Missing XState snapshot! WASM transitioned.`);
                 }
 
                 if (!this.wasmSnapshot) {
                      throw new Error(`[${step}] Missing WASM snapshot! XState transitioned.`);
                 }
 
-                const xVal = this.xstateSnapshot.value;
-                const wVal = this.wasmSnapshot.value;
-                
-                if (xVal !== wVal) {
-                    throw new Error(`[${step}] State Mismatch! XState: '${xVal}', WASM: '${wVal}'`);
+                // STRICT COMPARISON
+                const xKeys = Object.keys(this.xstateSnapshot).sort();
+                const wKeys = Object.keys(this.wasmSnapshot).sort();
+
+                // 1. Check Key Equality
+                // We want WASM to match XState's structure exactly.
+                // Filter out 'machine' (XState internal ref) and 'type' (WASM event type)
+                const relevantXKeys = xKeys.filter(k => k !== 'machine').sort();
+                const relevantWKeys = wKeys.filter(k => k !== 'type').sort();
+
+                const xKeyStr = JSON.stringify(relevantXKeys);
+                const wKeyStr = JSON.stringify(relevantWKeys);
+
+                if (xKeyStr !== wKeyStr) {
+                    throw new Error(`[${step}] Key Mismatch! \nExpected (XState): ${xKeyStr}\nActual (WASM): ${wKeyStr}`);
                 }
 
-                const xCtx = JSON.stringify(this.xstateSnapshot.context);
-                const wCtx = JSON.stringify(this.wasmSnapshot.context);
-                if (xCtx !== wCtx) {
-                    throw new Error(`[${step}] Context Mismatch! XState: ${xCtx}, WASM: ${wCtx}`);
+                // 2. Compare Values
+                for (const key of relevantXKeys) {
+                    const xVal = JSON.stringify(this.xstateSnapshot[key]);
+                    const wVal = JSON.stringify(this.wasmSnapshot[key]);
+                    
+                    if (xVal !== wVal) {
+                        throw new Error(`[${step}] Field Mismatch '${key}': XState=${xVal}, WASM=${wVal}`);
+                    }
                 }
 
                 // Update last verified
-                this.lastVerified = {
-                    value: xVal,
-                    context: this.xstateSnapshot.context // keep obj
-                };
-
-                log(`[${step}] OK: State='${xVal}', Context=${xCtx}`);
+                this.lastVerified = this.wasmSnapshot;
+                log(`[${step}] OK: Strict Parity Verified.`);
             }
         }
 
