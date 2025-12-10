@@ -155,8 +155,11 @@
 
             // --- WASM Setup ---
             // NEW API USAGE: createActor(definition, options)
+            // Now injecting guards and actions from JS!
             const wasmActor = createWasmActor(machineDef, {
-                inspect: (evt) => inspector.onWasm(evt)
+                inspect: (evt) => inspector.onWasm(evt),
+                guards,
+                actions
             });
             wasmActor.start();
 

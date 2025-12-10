@@ -1,10 +1,13 @@
 use wasm_bindgen::prelude::*;
 use fsm_core::{RuntimeMachine, MachineDefinition};
+use std::collections::HashMap;
 
 #[wasm_bindgen]
 pub struct FsmRunner {
     machine: RuntimeMachine,
     inspector: Option<js_sys::Function>,
+    guards: HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>>,
+    actions: HashMap<String, Box<dyn Fn(&mut serde_json::Value, &serde_json::Value) -> ()>>,
 }
 
 #[wasm_bindgen]
@@ -33,7 +36,12 @@ impl FsmRunner {
              }
         };
             
-        Ok(FsmRunner { machine, inspector: None })
+        Ok(FsmRunner { 
+            machine, 
+            inspector: None,
+            guards: HashMap::new(),
+            actions: HashMap::new(),
+        })
     }
 
     pub fn set_inspector(&mut self, callback: js_sys::Function) {
@@ -84,72 +92,7 @@ impl FsmRunner {
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
         
-        // Guard Implementation for Demo
-        use std::collections::HashMap;
-        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
-        
-        // Register "can_open" guard: checks if context.locked is FALSE
-        guards.insert("can_open".to_string(), Box::new(|ctx, _evt| {
-            if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
-                !locked
-            } else {
-                true // Default to allowed if 'locked' not present
-            }
-        }));
-
-        // Actions Implementation for Demo
-        let mut actions: HashMap<String, Box<dyn Fn(&mut serde_json::Value, &serde_json::Value) -> ()>> = HashMap::new();
-        
-        // Handle "unlock" action - triggered by UNLOCK event
-        actions.insert("unlock".to_string(), Box::new(|ctx, _evt| {
-            if let Some(obj) = ctx.as_object_mut() {
-                obj.insert("locked".to_string(), serde_json::Value::Bool(false));
-            }
-        }));
-
-        // Handle "lock" action - triggered by LOCK event
-        actions.insert("lock".to_string(), Box::new(|ctx, _evt| {
-            if let Some(obj) = ctx.as_object_mut() {
-                obj.insert("locked".to_string(), serde_json::Value::Bool(true));
-            }
-        }));
-
-        actions.insert("increment".to_string(), Box::new(|ctx, _evt| {
-             let new_val = if let Some(count) = ctx.get("count").and_then(|v| v.as_i64()) {
-                count + 1
-            } else {
-                1
-            };
-            if let Some(obj) = ctx.as_object_mut() {
-                obj.insert("count".to_string(), serde_json::Value::Number(new_val.into()));
-            }
-        }));
-
-        actions.insert("reset".to_string(), Box::new(|ctx, _evt| {
-            if let Some(obj) = ctx.as_object_mut() {
-                obj.insert("count".to_string(), serde_json::Value::Number(0.into()));
-            }
-        }));
-        
-        actions.insert("log_transition".to_string(), Box::new(|ctx, _evt| {
-            if let Some(obj) = ctx.as_object_mut() {
-                 obj.insert("last_transition".to_string(), serde_json::Value::String("occurred".to_string()));
-            }
-        }));
-
-        actions.insert("set_exited_a".to_string(), Box::new(|ctx, _evt| {
-            if let Some(obj) = ctx.as_object_mut() {
-                obj.insert("exited_a".to_string(), serde_json::Value::Bool(true));
-            }
-        }));
-
-        actions.insert("set_entered_b".to_string(), Box::new(|ctx, _evt| {
-             if let Some(obj) = ctx.as_object_mut() {
-                obj.insert("entered_b".to_string(), serde_json::Value::Bool(true));
-            }
-        }));
-
-        let result = self.machine.transition(&event_name, &event_payload, &guards, &actions);
+        let result = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
 
         // 2. Inspect Snapshot
         if let Some(inspector) = &self.inspector {
