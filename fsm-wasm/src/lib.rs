@@ -190,7 +190,44 @@ impl FsmRunner {
         self.machine.state().to_string()
     }
     
-    pub fn context_json(&self) -> String {
-        self.machine.context.to_string()
+    pub fn send(&mut self, event: JsValue) -> Option<String> {
+        self.transition(event)
     }
+
+    pub fn subscribe(&mut self, callback: js_sys::Function) {
+        self.set_inspector(callback);
+    }
+
+    pub fn get_snapshot(&self) -> JsValue {
+         let obj = js_sys::Object::new();
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_str(self.machine.state()));
+         
+         let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
+         let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
+
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
+
+         obj.into()
+    }
+}
+
+#[wasm_bindgen(js_name = createActor)]
+pub fn create_actor(machine_def: JsValue, options: JsValue) -> Result<FsmRunner, JsValue> {
+    let mut runner = FsmRunner::new(machine_def)?;
+    
+    if options.is_object() {
+        let inspect_key = JsValue::from_str("inspect");
+        let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
+        if inspect_val.is_function() {
+             let func: js_sys::Function = inspect_val.dyn_into().unwrap();
+             runner.set_inspector(func);
+        }
+    }
+
+    Ok(runner)
 }

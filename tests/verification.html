@@ -13,9 +13,16 @@
 <body>
     <h1>Verification Status: <span id="status">RUNNING...</span></h1>
     <div id="logs" class="log"></div>
-
+    <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            const status = document.getElementById('status');
+            const logs = document.getElementById('logs');
+            if (status) status.innerText = "ERROR (Script)";
+            if (logs) logs.innerText += `\n[FATAL] ${message} at ${lineno}:${colno}`;
+        };
+    </script>
     <script type="module">
-        import init, { FsmRunner } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import init, { FsmRunner, createActor as createWasmActor } from '../fsm-wasm/pkg/fsm_wasm.js';
         import { createMachine, createActor, assign, setup } from 'https://esm.sh/xstate@5.18.2';
 
         const machineDef = {
@@ -127,7 +134,7 @@
 
             const inspector = new ComparisonInspector();
 
-            // --- XState Setup ---
+            // ... XState Setup ...
             const guards = {
                 can_open: ({ context }) => !context.locked
             };
@@ -136,15 +143,10 @@
                 lock: assign({ locked: true }),
             };
             
-            // Shared config directly passed to XState setup!
-            console.log("XState Config: Shared");
-
             const machine = setup({
                 guards,
                 actions
             }).createMachine(machineDef);
-
-
 
             const actor = createActor(machine, {
                 inspect: (evt) => inspector.onXState(evt)
@@ -152,11 +154,11 @@
             actor.start();
 
             // --- WASM Setup ---
-            const wasmRunner = new FsmRunner(machineDef);
-            wasmRunner.set_inspector((evt) => {
-                inspector.onWasm(evt);
+            // NEW API USAGE: createActor(definition, options)
+            const wasmActor = createWasmActor(machineDef, {
+                inspect: (evt) => inspector.onWasm(evt)
             });
-            wasmRunner.start();
+            wasmActor.start();
 
             // Verify Initial State
             inspector.verify("INITIAL");
@@ -173,13 +175,14 @@
                 // XState
                 actor.send({ type: eventName });
 
-                // WASM - Now using same event dispatch!
-                // Support passing object or string. For 'UNLOCK', passing string should work via normalization.
-                wasmRunner.transition(eventName);
+                // WASM - Now using .send() alias!
+                wasmActor.send(eventName);
 
                 // Verify Step
                 inspector.verify(eventName);
             }
+            // ...
+
 
             document.getElementById('status').innerText = "SUCCESS";
             document.getElementById('status').className = "pass";
