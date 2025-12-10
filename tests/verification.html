@@ -143,15 +143,15 @@
                 lock: assign({ locked: true }),
             };
             
-            const machine = setup({
+            const xstateMachine = setup({
                 guards,
                 actions
             }).createMachine(machineDef);
 
-            const actor = createActor(machine, {
+            const xstateActor = createActor(xstateMachine, {
                 inspect: (evt) => inspector.onXState(evt)
             });
-            actor.start();
+            xstateActor.start();
 
             // --- WASM Setup ---
             // NEW API USAGE: createActor(definition, options)
@@ -173,7 +173,7 @@
                 inspector.wasmSnapshot = null;
 
                 // XState
-                actor.send({ type: eventName });
+                xstateActor.send({ type: eventName });
 
                 // WASM - Now using .send() alias!
                 wasmActor.send(eventName);
