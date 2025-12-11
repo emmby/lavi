@@ -5,6 +5,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
+    use std::rc::Rc;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use crate::RuntimeMachine;
@@ -74,8 +75,8 @@ mod tests {
         let mut local_trace = Vec::new();
 
         // Implement guards & actions in Rust
-        let mut guards: HashMap<String, Box<dyn Fn(&Value) -> bool>> = HashMap::new();
-        guards.insert("can_open".to_string(), Box::new(|ctx| {
+        let mut guards: HashMap<String, Rc<dyn Fn(&Value, &Value) -> bool>> = HashMap::new();
+        guards.insert("can_open".to_string(), Rc::new(|ctx, _| {
             if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
                 !locked
             } else {
@@ -83,10 +84,10 @@ mod tests {
             }
         }));
         
-        guards.insert("always_true".to_string(), Box::new(|_| true));
-        guards.insert("always_false".to_string(), Box::new(|_| false));
+        guards.insert("always_true".to_string(), Rc::new(|_, _| true));
+        guards.insert("always_false".to_string(), Rc::new(|_, _| false));
 
-        let actions: HashMap<String, Box<dyn Fn(&mut Value)>> = HashMap::new();
+        let actions: HashMap<String, Rc<dyn Fn(&mut Value, &Value)>> = HashMap::new();
 
         // Scenario loop
         for event in scenario {
@@ -161,27 +162,27 @@ mod tests {
 
         let mut local_trace = Vec::new();
 
-        let guards: HashMap<String, Box<dyn Fn(&Value) -> bool>> = HashMap::new();
+        let guards: HashMap<String, Rc<dyn Fn(&Value, &Value) -> bool>> = HashMap::new();
         
-        let mut actions: HashMap<String, Box<dyn Fn(&mut Value)>> = HashMap::new();
-        actions.insert("increment".to_string(), Box::new(|ctx| {
+        let mut actions: HashMap<String, Rc<dyn Fn(&mut Value, &Value)>> = HashMap::new();
+        actions.insert("increment".to_string(), Rc::new(|ctx, _| {
             if let Some(count) = ctx.get("count").and_then(|v| v.as_i64()) {
                 if let Some(obj) = ctx.as_object_mut() {
                     obj.insert("count".to_string(), serde_json::Value::Number((count + 1).into()));
                 }
             }
         }));
-        actions.insert("set_entered_b".to_string(), Box::new(|ctx| {
+        actions.insert("set_entered_b".to_string(), Rc::new(|ctx, _| {
             if let Some(obj) = ctx.as_object_mut() {
                 obj.insert("entered_b".to_string(), serde_json::Value::Bool(true));
             }
         }));
-        actions.insert("set_exited_a".to_string(), Box::new(|ctx| {
+        actions.insert("set_exited_a".to_string(), Rc::new(|ctx, _| {
             if let Some(obj) = ctx.as_object_mut() {
                 obj.insert("exited_a".to_string(), serde_json::Value::Bool(true));
             }
         }));
-        actions.insert("log_transition".to_string(), Box::new(|ctx| {
+        actions.insert("log_transition".to_string(), Rc::new(|ctx, _| {
             if let Some(obj) = ctx.as_object_mut() {
                 obj.insert("transition_logged".to_string(), serde_json::Value::Bool(true));
             }

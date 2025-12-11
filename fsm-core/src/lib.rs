@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 // --- Definition (Schema) ---
 
@@ -34,7 +35,7 @@ pub struct StateDefinition {
 
 // --- Runtime ---
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RuntimeMachine {
     pub definition: MachineDefinition,
     pub current_state: String,
@@ -58,8 +59,8 @@ impl RuntimeMachine {
         &mut self,
         event: &str,
         event_payload: &serde_json::Value,
-        guards: &HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>>,
-        actions: &HashMap<String, Box<dyn Fn(&mut serde_json::Value, &serde_json::Value)>>,
+        guards: &HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>>,
+        actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value)>>,
     ) -> Option<String> {
         // Look up: Current State -> on[Event] -> List of Transitions
         if let Some(state_def) = self.definition.states.get(&self.current_state) {

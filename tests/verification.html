@@ -22,7 +22,7 @@
         };
     </script>
     <script type="module">
-        import init, { FsmRunner, createActor as createWasmActor } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import init, { FsmRunner, createActor as createWasmActor, setupWasmMachine } from '../fsm-wasm/pkg/fsm_wasm.js';
         import { createMachine, createActor, assign, setup } from 'https://esm.sh/xstate@5.18.2';
 
         const machineDef = {
@@ -143,10 +143,11 @@
                 lock: assign({ locked: true }),
             };
             
-            const xstateMachine = setup({
+            const config = {
                 guards,
                 actions
-            }).createMachine(machineDef);
+            };
+            const xstateMachine = setup(config).createMachine(machineDef);
 
             const xstateActor = createActor(xstateMachine, {
                 inspect: (evt) => inspector.onXState(evt)
@@ -156,10 +157,9 @@
             // --- WASM Setup ---
             // NEW API USAGE: createActor(definition, options)
             // Now injecting guards and actions from JS!
-            const wasmActor = createWasmActor(machineDef, {
-                inspect: (evt) => inspector.onWasm(evt),
-                guards,
-                actions
+            const wasmMachine = setupWasmMachine(config).createWasmMachine(machineDef);
+            const wasmActor = createWasmActor(wasmMachine, {
+                inspect: (evt) => inspector.onWasm(evt)
             });
             wasmActor.start();
 
