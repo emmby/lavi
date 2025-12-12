@@ -23,7 +23,7 @@
     </script>
     <script type="module">
         import init, { FsmRunner, createActor as createWasmActor, setup as setupWasmMachine } from '../fsm-wasm/pkg/fsm_wasm.js';
-        import { createMachine, createActor, assign, setup } from 'https://esm.sh/xstate@5.18.2';
+        import { createMachine, createActor as createXstateActor, assign, setup as setupXstateMachine } from 'https://esm.sh/xstate@5.18.2';
 
         const machineDef = {
             id: "door",
@@ -144,8 +144,8 @@
 
             const inspector = new ComparisonInspector();
             
-            const xstateMachine = setup(config).createMachine(machineDef);
-            const xstateActor = createActor(xstateMachine, {
+            const xstateMachine = setupXstateMachine(config).createMachine(machineDef);
+            const xstateActor = createXstateActor(xstateMachine, {
                 inspect: (evt) => inspector.onXState(evt)
             });
             xstateActor.start();
