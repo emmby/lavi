@@ -17,7 +17,7 @@ pub struct SetupObject {
 
 #[wasm_bindgen]
 impl SetupObject {
-    #[wasm_bindgen(js_name = createWasmMachine)]
+    #[wasm_bindgen(js_name = createMachine)]
     pub fn create_wasm_machine(&self, val: JsValue) -> Result<WasmMachine, JsValue> {
          // Create the inner machine using FsmRunner constructor logic
          let runner = FsmRunner::new(val)?;

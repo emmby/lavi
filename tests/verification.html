@@ -150,7 +150,7 @@
             });
             xstateActor.start();
 
-            const wasmMachine = setupWasmMachine(config).createWasmMachine(machineDef);
+            const wasmMachine = setupWasmMachine(config).createMachine(machineDef);
             const wasmActor = createWasmActor(wasmMachine, {
                 inspect: (evt) => inspector.onWasm(evt)
             });
