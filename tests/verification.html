@@ -22,7 +22,7 @@
         };
     </script>
     <script type="module">
-        import init, { FsmRunner, createActor as createWasmActor, setupWasmMachine } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import init, { FsmRunner, createActor as createWasmActor, setup as setupWasmMachine } from '../fsm-wasm/pkg/fsm_wasm.js';
         import { createMachine, createActor, assign, setup } from 'https://esm.sh/xstate@5.18.2';
 
         const machineDef = {

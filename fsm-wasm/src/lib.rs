@@ -37,7 +37,7 @@ impl SetupObject {
     }
 }
 
-#[wasm_bindgen(js_name = setupWasmMachine)]
+#[wasm_bindgen(js_name = setup)]
 pub fn setup_wasm_machine(config: JsValue) -> SetupObject {
     SetupObject { config }
 }
