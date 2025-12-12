@@ -49,6 +49,16 @@
             context: { locked: true }
         };
 
+        const config = {
+            guards: {
+                can_open: ({ context }) => !context.locked
+            },
+            actions: {
+                unlock: assign({ locked: false }),
+                lock: assign({ locked: true }),
+            }
+        };
+        
         const scenario = ["OPEN", "UNLOCK", "OPEN", "CLOSE"];
 
         class ComparisonInspector {
@@ -133,30 +143,13 @@
             log("WASM Initialized");
 
             const inspector = new ComparisonInspector();
-
-            // ... XState Setup ...
-            const guards = {
-                can_open: ({ context }) => !context.locked
-            };
-            const actions = {
-                unlock: assign({ locked: false }),
-                lock: assign({ locked: true }),
-            };
             
-            const config = {
-                guards,
-                actions
-            };
             const xstateMachine = setup(config).createMachine(machineDef);
-
             const xstateActor = createActor(xstateMachine, {
                 inspect: (evt) => inspector.onXState(evt)
             });
             xstateActor.start();
 
-            // --- WASM Setup ---
-            // NEW API USAGE: createActor(definition, options)
-            // Now injecting guards and actions from JS!
             const wasmMachine = setupWasmMachine(config).createWasmMachine(machineDef);
             const wasmActor = createWasmActor(wasmMachine, {
                 inspect: (evt) => inspector.onWasm(evt)
