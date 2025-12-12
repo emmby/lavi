@@ -45,16 +45,29 @@ This library allows you to load **XState-compatible JSON definitions** at runtim
 
 ## Testing
 
-This project includes a verification test suite that validates the WASM runtime against the official XState JavaScript library to ensure correct behavior.
+This project includes both native core tests and browser-based verification tests.
 
-To run the tests:
+### 1. Run Native Tests (fsm-core)
+These run on your machine and verify the core Rust logic.
+
+```bash
+cargo test
+```
+
+### 2. Run Browser Tests (fsm-wasm)
+These run in a headless Chrome browser to verify the WASM integration against XState.
 
 ```bash
 cd fsm-wasm
 wasm-pack test --headless --chrome
 ```
 
-_Note: You can also use `--firefox` or `--safari` if you have the respective drivers installed._
+### Run All Tests
+To run both suites in sequence:
+
+```bash
+cargo test && cd fsm-wasm && wasm-pack test --headless --chrome
+```
 
 ## Usage in JavaScript
 

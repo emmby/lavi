@@ -104,7 +104,7 @@ mod tests {
             }
 
             // Perform Transition
-            let _ = machine.transition(&event, &guards, &actions);
+            let _ = machine.transition(&event, &serde_json::Value::Null, &guards, &actions);
             
             // Record state for trace
             local_trace.push(TraceStep {
@@ -191,7 +191,7 @@ mod tests {
         // Scenario loop
         for event in scenario {
             // Perform Transition
-            let _ = machine.transition(&event, &guards, &actions);
+            let _ = machine.transition(&event, &serde_json::Value::Null, &guards, &actions);
             
             // Record state for trace
             local_trace.push(TraceStep {

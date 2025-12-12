@@ -245,8 +245,8 @@ mod tests {
         let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
         
         // Define guards
-        let mut guards: HashMap<String, Box<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
-        guards.insert("can_open".to_string(), Box::new(|ctx, _evt| {
+        let mut guards: HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
+        guards.insert("can_open".to_string(), Rc::new(|ctx, _evt| {
             // Allow open if NOT locked
             if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
                 !locked
