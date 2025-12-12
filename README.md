@@ -43,6 +43,19 @@ This library allows you to load **XState-compatible JSON definitions** at runtim
 3.  Open [http://localhost:8080](http://localhost:8080) in your browser.
 4.  Open the browser console to see state transitions logs, or interact with the UI.
 
+## Testing
+
+This project includes a verification test suite that validates the WASM runtime against the official XState JavaScript library to ensure correct behavior.
+
+To run the tests:
+
+```bash
+cd fsm-wasm
+wasm-pack test --headless --chrome
+```
+
+_Note: You can also use `--firefox` or `--safari` if you have the respective drivers installed._
+
 ## Usage in JavaScript
 
 ```javascript
