@@ -8,6 +8,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 extern "C" {
     fn getDoorScenario() -> JsValue;
     fn getAssignScenario() -> JsValue;
+    fn getDynamicAssignScenario() -> JsValue;
     fn runXState(machine_def: &JsValue, config: &JsValue, events: &JsValue) -> JsValue;
 }
 
@@ -105,4 +106,12 @@ fn test_verification_assign_machine() {
     let scenario = getAssignScenario();
     verify_scenario(scenario);
     console::log_1(&"Verification Passed: Assign!".into());
+}
+
+#[wasm_bindgen_test]
+fn test_verification_dynamic_assign_machine() {
+    console::log_1(&"Starting verification test: Dynamic Assign...".into());
+    let scenario = getDynamicAssignScenario();
+    verify_scenario(scenario);
+    console::log_1(&"Verification Passed: Dynamic Assign!".into());
 }

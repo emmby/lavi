@@ -145,6 +145,37 @@ fn parse_implementations(
              let assign_key = JsValue::from_str("assignment");
              let assign_val = js_sys::Reflect::get(&action_item, &assign_key).unwrap_or(JsValue::UNDEFINED);
              
+             // Case 1: Dynamic Assignment (assignment is a function)
+             if let Ok(assign_fn) = assign_val.clone().dyn_into::<js_sys::Function>() {
+                 actions_out.insert(key_str, Rc::new(move |ctx_mut, evt| {
+                     // Use JSON round-trip
+                     let ctx_json = serde_json::to_string(ctx_mut).unwrap_or("{}".to_string());
+                     let ctx_js = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
+                     
+                     let evt_json = serde_json::to_string(evt).unwrap_or("{}".to_string());
+                     let evt_js = js_sys::JSON::parse(&evt_json).unwrap_or(JsValue::NULL);
+                     
+                     let arg_obj = js_sys::Object::new();
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+
+                     if let Ok(res) = assign_fn.call1(&JsValue::NULL, &arg_obj) {
+                         if res.is_object() {
+                              let partial: serde_json::Value = serde_wasm_bindgen::from_value(res).unwrap_or(serde_json::Value::Null);
+                              if let Some(partial_obj) = partial.as_object() {
+                                  if let Some(ctx_obj) = ctx_mut.as_object_mut() {
+                                      for (k, v) in partial_obj {
+                                          ctx_obj.insert(k.clone(), v.clone());
+                                      }
+                                  }
+                              }
+                         }
+                     }
+                 }));
+                 continue;
+             }
+
+             // Case 2: Static Assignment (assignment is an object)
              if assign_val.is_object() {
                  let partial: serde_json::Value = serde_wasm_bindgen::from_value(assign_val).unwrap_or(serde_json::Value::Null);
                  

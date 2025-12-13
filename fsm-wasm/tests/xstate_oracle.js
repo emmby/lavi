@@ -88,6 +88,35 @@ export function getAssignScenario() {
     return { machineDef, machineDefJson: sanitizeForJson(machineDef), config, events };
 }
 
+export function getDynamicAssignScenario() {
+    const machineDef = {
+        id: "dynamic_assign_test",
+        initial: "a",
+        context: { count: 0 },
+        states: {
+            a: {
+                on: {
+                    INC: [{ target: "a", actions: ["increment"] }]
+                }
+            }
+        }
+    };
+
+    const config = {
+        actions: {
+            increment: assign((ctx) => ({ count: ctx.context.count + 1 }))
+        }
+    };
+    
+    // Scenario: A(count:0) -> INC -> A(count:1) -> INC -> A(count:2)
+    const events = ["INC", "INC"];
+
+    // Note: dynamic assignments in 'config' don't need sanitization for the machineDefJson
+    // BUT fsm-wasm setup_wasm_machine(config) handles the config object.
+    
+    return { machineDef, machineDefJson: machineDef, config, events };
+}
+
 export function runXState(machineDef, config, events) {
     const snapshots = [];
     
