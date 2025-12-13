@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Light Demo</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #222; margin: 0; color: white; }
+        .container { text-align: center; }
+        
+        .traffic-light {
+            background: #111;
+            padding: 20px;
+            border-radius: 20px;
+            display: inline-block;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            margin: 30px;
+        }
+
+        .light {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #333;
+            margin: 15px;
+            transition: all 0.3s;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+        }
+
+        .light.red.active { background: #ff3333; box-shadow: 0 0 30px #ff3333; }
+        .light.yellow.active { background: #ffcc00; box-shadow: 0 0 30px #ffcc00; }
+        .light.green.active { background: #33ff33; box-shadow: 0 0 30px #33ff33; }
+
+        button { padding: 15px 40px; font-size: 20px; cursor: pointer; border: none; border-radius: 30px; font-weight: bold; background: #fff; color: #333; transition: transform 0.1s; }
+        button:active { transform: scale(0.95); }
+        
+        .status { margin-top: 20px; font-family: monospace; color: #aaa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Traffic Light</h1>
+        <div class="traffic-light">
+            <div id="red" class="light red"></div>
+            <div id="yellow" class="light yellow"></div>
+            <div id="green" class="light green"></div>
+        </div>
+        
+        <button id="btnTimer">TIMER</button>
+        
+        <div class="status">
+            State: <span id="lblState">...</span><br>
+            Context: <span id="lblContext">...</span>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { FsmRunner } from '../fsm-wasm/pkg/fsm_wasm.js';
+
+        async function main() {
+            await init();
+
+            // Load machine definition from JSON file
+            const response = await fetch('./traffic_light.json?v=' + Date.now());
+            const machineDef = await response.text(); // FsmRunner expects string or object
+
+            const machine = new FsmRunner(machineDef);
+            updateUI();
+
+            function updateUI() {
+                const state = machine.current_state();
+                const ctx = machine.context_json();
+                
+                document.getElementById('lblState').innerText = state.toUpperCase();
+                document.getElementById('lblContext').innerText = ctx;
+                
+                // Reset lights
+                document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
+                
+                // Activate current light
+                if (state) {
+                    const el = document.getElementById(state);
+                    if (el) el.classList.add('active');
+                }
+            }
+
+            document.getElementById('btnTimer').onclick = () => {
+                machine.transition("TIMER");
+                updateUI();
+            };
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

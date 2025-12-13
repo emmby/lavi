@@ -3,13 +3,13 @@
   "initial": "green",
   "states": {
     "green": {
-      "on": { "TIMER": "yellow" }
+      "on": { "TIMER": [{ "target": "yellow" }] }
     },
     "yellow": {
-      "on": { "TIMER": "red" }
+      "on": { "TIMER": [{ "target": "red" }] }
     },
     "red": {
-      "on": { "TIMER": "green" }
+      "on": { "TIMER": [{ "target": "green" }] }
     }
   },
   "context": {
