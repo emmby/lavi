@@ -1,32 +1,17 @@
-import init, { FsmRunner, setup, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
+import { assign } from '../fsm-wasm/pkg/fsm_wasm.js';
 
 /**
- * Common setup for FSM examples.
- * @param {Object} options
- * @param {Object} options.machineDef - The state machine definition.
- * @param {Object} [options.config] - The configuration object (guards, actions).
- * @param {Function} [options.updateUI] - Callback to update the UI. Receives (state, context, machine).
+ * Displays the machine definition and configuration in the UI.
+ * @param {Object} machineDef - The state machine definition.
+ * @param {Object} [config] - The configuration object (guards, actions).
+ * @param {string} [elementId='defDisplay'] - The ID of the element to display the code in.
  */
-export async function runFsmExample({ machineDef, config }) {
-    await init();
-
-    let machine;
-
-    // Handle string definition (for JSON loading) or object definition
-    const def = typeof machineDef === 'string' ? JSON.parse(machineDef) : machineDef;
-
-    if (config) {
-        // Use setup() pattern if config (guards/actions) is provided
-        const wasmMachine = setup(config).createMachine(def);
-        machine = wasmMachine.spawn_runner({});
-    } else {
-        // Direct instantiation for simple machines
-        machine = new FsmRunner(def);
-    }
-
-    // Display Machine Definition if element exists
-    const defDisplay = document.getElementById('defDisplay');
+export function displayMachine(machineDef, config, elementId = 'defDisplay') {
+    const defDisplay = document.getElementById(elementId);
     if (defDisplay) {
+        // Handle definition parsing if it's a string
+        const def = typeof machineDef === 'string' ? JSON.parse(machineDef) : machineDef;
+
         let displayContent = "// Machine Definition\nconst machine = " + JSON.stringify(def, null, 2);
         
         if (config) {
@@ -43,10 +28,6 @@ export async function runFsmExample({ machineDef, config }) {
         
         defDisplay.innerText = displayContent;
     }
-
-    return {
-        machine
-    };
 }
 
 // Export common WASM functions for convenience

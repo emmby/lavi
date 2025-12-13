@@ -48,8 +48,11 @@
     </div>
 
     <script type="module">
-        import { runFsmExample, assign } from './common.js';
+        import init, { setup, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import { displayMachine } from './common.js';
         
+        await init();
+
         const machineDef = {
             id: "door",
             initial: "closed",
@@ -107,10 +110,12 @@
             }
         };
 
-        const { machine } = await runFsmExample({
-            machineDef,
-            config
-        });
+        // Display code in UI
+        displayMachine(machineDef, config, 'defDisplay');
+
+        // Instantiate machine
+        const wasmMachine = setup(config).createMachine(machineDef);
+        const machine = wasmMachine.spawn_runner({});
         
         // Initial manual update
         updateUI(machine.current_state(), { locked: true });

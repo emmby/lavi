@@ -54,7 +54,10 @@
     </div>
 
     <script type="module">
-        import { runFsmExample } from './common.js';
+        import init, { setup } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import { displayMachine } from './common.js';
+
+        await init();
 
         // Defined inline
         const machineDef = {
@@ -104,10 +107,11 @@
             }
         };
 
-        const { machine } = await runFsmExample({
-            machineDef,
-            config
-        });
+        // Display code in UI
+        displayMachine(machineDef, config);
+
+        // Instantiate machine
+        const machine = setup(config).createMachine(machineDef).spawn_runner({});
 
         // Initialize UI
         updateUI(machine.current_state());
