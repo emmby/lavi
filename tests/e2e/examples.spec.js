@@ -3,6 +3,18 @@ const { test, expect } = require('@playwright/test');
 
 test.describe('FSM WASM Examples', () => {
 
+  test.beforeEach(async ({ page }) => {
+    page.on('console', msg => {
+      if (msg.type() === 'error') {
+        throw new Error(`Console Error: "${msg.text()}"`);
+      }
+    });
+    // Also fail on uncaught exceptions
+    page.on('pageerror', err => {
+      throw new Error(`Page Error: "${err.message}"`);
+    });
+  });
+
   test('Simple Switch', async ({ page }) => {
     await page.goto('/examples/simple.html');
     

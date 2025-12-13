@@ -30,6 +30,4 @@ export function displayMachine(machineDef, config, elementId = 'defDisplay') {
     }
 }
 
-// Export common WASM functions for convenience
-// TODO why is this needed?
-export { assign };
+
