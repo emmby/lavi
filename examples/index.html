@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSM WASM Examples</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #f0f2f5; margin: 0; }
+        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 600px; }
+        h1 { color: #333; margin-bottom: 30px; }
+        .example-list { list-style: none; padding: 0; }
+        .example-item { margin: 15px 0; }
+        .example-link { 
+            display: block; 
+            padding: 20px; 
+            background: #fff; 
+            border: 1px solid #ddd; 
+            border-radius: 8px; 
+            text-decoration: none; 
+            color: #333; 
+            font-weight: bold; 
+            font-size: 18px; 
+            transition: all 0.2s; 
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .example-link:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); border-color: #007bff; color: #007bff; }
+        .example-desc { font-size: 14px; color: #666; font-weight: normal; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>FSM WASM Examples</h1>
+        <p>Explore the features of the FSM WASM interpreter.</p>
+        
+        <ul class="example-list">
+            <li class="example-item">
+                <a href="simple.html" class="example-link">
+                    <div>
+                        <div>Simple Light Switch</div>
+                        <div class="example-desc">Basic state toggling (On/Off)</div>
+                    </div>
+                    <span>→</span>
+                </a>
+            </li>
+            <li class="example-item">
+                <a href="actions.html" class="example-link">
+                    <div>
+                        <div>Actions & Side Effects</div>
+                        <div class="example-desc">Entry, Exit, and Transition actions</div>
+                    </div>
+                    <span>→</span>
+                </a>
+            </li>
+            <li class="example-item">
+                <a href="guards.html" class="example-link">
+                    <div>
+                        <div>Guards (Conditions)</div>
+                        <div class="example-desc">Conditional transitions (Lock/Unlock)</div>
+                    </div>
+                    <span>→</span>
+                </a>
+            </li>
+            <li class="example-item">
+                <a href="dynamic_assignment.html" class="example-link">
+                    <div>
+                        <div>Dynamic Assignment</div>
+                        <div class="example-desc">Context updates using functions</div>
+                    </div>
+                    <span>→</span>
+                </a>
+            </li>
+        </ul>
+    </div>
+</body>
+</html>

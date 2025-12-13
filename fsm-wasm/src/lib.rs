@@ -371,6 +371,10 @@ impl FsmRunner {
 
          obj.into()
     }
+
+    pub fn context_json(&self) -> String {
+        serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string())
+    }
 }
 
 #[wasm_bindgen(js_name = createActor)]

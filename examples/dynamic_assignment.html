@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Assignment Demo</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #e0f7fa; margin: 0; }
+        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 400px; }
+        
+        .counter-display { font-size: 80px; font-weight: bold; color: #006064; margin: 20px 0; }
+        
+        .controls { display: flex; gap: 10px; justify-content: center; }
+        button { padding: 15px 25px; cursor: pointer; border: none; border-radius: 8px; font-weight: bold; background: #0097a7; color: white; transition: background 0.2s; font-size: 18px; }
+        button:hover { background: #006064; }
+        button.reset { background: #ef5350; }
+        button.reset:hover { background: #b71c1c; }
+
+        .info { margin-top: 30px; font-size: 14px; color: #666; background: #f5f5f5; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Counter Machine</h1>
+        <p>Demonstrates dynamic context assignment</p>
+        
+        <div id="counter" class="counter-display">...</div>
+        
+        <div class="controls">
+            <button id="btnInc">INC (+1)</button>
+            <button id="btnDec">DEC (-1)</button>
+            <button id="btnReset" class="reset">RESET</button>
+        </div>
+
+        <div class="info">
+            Context: <span id="lblContext">...</span>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { setup, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
+
+        async function main() {
+            await init();
+
+            const machineDef = {
+                id: "counter",
+                initial: "active",
+                context: { count: 0 },
+                states: {
+                    active: {
+                        on: {
+                            INC: [{ actions: ["increment"] }],
+                            DEC: [{ actions: ["decrement"] }],
+                            RESET: [{ actions: ["reset"] }]
+                        }
+                    }
+                }
+            };
+
+            const config = {
+                actions: {
+                    increment: assign((ctx) => ({ count: ctx.context.count + 1 })),
+                    decrement: assign((ctx) => ({ count: ctx.context.count - 1 })),
+                    reset: assign({ count: 0 }) // Static assignment mixed with dynamic
+                }
+            };
+
+
+            // Setup the machine and runner
+            const wasmMachine = setup(config).createMachine(machineDef);
+            const runner = wasmMachine.spawn_runner({}); 
+
+            
+            function render() {
+                 const ctx = JSON.parse(runner.context_json());
+                 document.getElementById('counter').innerText = ctx.count;
+                 document.getElementById('lblContext').innerText = JSON.stringify(ctx);
+            }
+            
+            render();
+
+            document.getElementById('btnInc').onclick = () => {
+                runner.transition("INC");
+                render();
+            };
+
+            document.getElementById('btnDec').onclick = () => {
+                runner.transition("DEC");
+                render();
+            };
+
+            document.getElementById('btnReset').onclick = () => {
+                runner.transition("RESET");
+                render();
+            };
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

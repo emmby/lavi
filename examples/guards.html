@@ -49,7 +49,7 @@
     </div>
 
     <script type="module">
-        import init, { FsmRunner } from './fsm-wasm/pkg/fsm_wasm.js';
+        import init, { FsmRunner, setup } from '../fsm-wasm/pkg/fsm_wasm.js';
 
         async function main() {
             await init();
@@ -75,7 +75,15 @@
                 context: { locked: true }
             };
 
-            const machine = new FsmRunner(machineDef);
+
+            const config = {
+                guards: {
+                    can_open: ({ context }) => !context.locked
+                }
+            };
+
+            const wasmMachine = setup(config).createMachine(machineDef);
+            const machine = wasmMachine.spawn_runner({});
             updateUI();
 
             function updateUI() {
