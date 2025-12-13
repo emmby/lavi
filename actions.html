@@ -68,14 +68,14 @@
     </div>
 
     <script type="module">
-        import init, { FsmRunner } from './fsm-wasm/pkg/fsm_wasm.js';
+        import init, { FsmRunner, assign } from './fsm-wasm/pkg/fsm_wasm.js';
 
         async function main() {
             await init();
 
             // Machine Definition
             // State A: Exit -> set_exited_a
-            // Transition A->B: Action -> log_transition
+            // Transition A->B: Action -> log_transition, assign({ count: 10 })
             // State B: Entry -> set_entered_b, increment
             // Transition B->A: Action -> increment (so we can see count go up on reset too)
             const machineDef = {
@@ -89,7 +89,7 @@
                             NEXT: [
                                 {
                                     target: "b",
-                                    actions: ["log_transition"]
+                                    actions: ["log_transition", assign({ count: 10 })]
                                 }
                             ]
                         }

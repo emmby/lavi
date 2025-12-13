@@ -43,6 +43,14 @@ pub fn setup_wasm_machine(config: JsValue) -> SetupObject {
 }
 
 #[wasm_bindgen]
+pub fn assign(assignment: JsValue) -> JsValue {
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.assign"));
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("assignment"), &assignment);
+    obj.into()
+}
+
+#[wasm_bindgen]
 impl WasmMachine {
     // Hidden / internal use mainly, but exposed to JS
     pub fn spawn_runner(&self, options: JsValue) -> Result<FsmRunner, JsValue> {

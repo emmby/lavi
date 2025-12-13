@@ -41,6 +41,53 @@ export function getDoorScenario() {
     return { machineDef, config, events };
 }
 
+// Helper to convert XState assign functions to JSON-serializable objects for fsm-wasm
+function sanitizeForJson(obj) {
+    if (Array.isArray(obj)) {
+        return obj.map(sanitizeForJson);
+    } else if (obj !== null && typeof obj === 'object') {
+        const newObj = {};
+        for (const k in obj) {
+            newObj[k] = sanitizeForJson(obj[k]);
+        }
+        return newObj;
+    } else if (typeof obj === 'function' && obj.type === 'xstate.assign') {
+        return { type: 'xstate.assign', assignment: obj.assignment };
+    }
+    return obj;
+}
+
+export function getAssignScenario() {
+    const machineDef = {
+        id: "assign_test",
+        initial: "a",
+        context: { count: 0, test: "A" },
+        states: {
+            a: {
+                on: {
+                    NEXT: [{ target: "b", actions: [assign({ count: 10 })] }]
+                }
+            },
+            b: {
+                 entry: [assign({ test: "B" })],
+                 on: {
+                     RESET: [{ target: "a", actions: [assign({ count: 0, test: "A" })] }]
+                 }
+            }
+        }
+    };
+
+    const config = {
+        guards: {},
+        actions: {}
+    };
+    
+    // Scenario: A(count:0, test:A) -> NEXT -> B(count:10, test:A->B) -> RESET -> A(count:0, test:A)
+    const events = ["NEXT", "RESET", "NEXT"];
+
+    return { machineDef, machineDefJson: sanitizeForJson(machineDef), config, events };
+}
+
 export function runXState(machineDef, config, events) {
     const snapshots = [];
     

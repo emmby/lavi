@@ -14,13 +14,27 @@ pub struct MachineDefinition {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(untagged)]
+pub enum Action {
+    Named(String),
+    Assign(AssignAction),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AssignAction {
+    #[serde(rename = "type")]
+    pub action_type: String, // Expect "xstate.assign"
+    pub assignment: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TransitionDefinition {
     #[serde(default)]
     pub target: Option<String>,
     #[serde(default, alias = "guard")]
     pub cond: Option<String>,
     #[serde(default)]
-    pub actions: Vec<String>,
+    pub actions: Vec<Action>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -28,9 +42,9 @@ pub struct StateDefinition {
     #[serde(default)]
     pub on: HashMap<String, Vec<TransitionDefinition>>, // Event -> List of Transitions
     #[serde(default)]
-    pub entry: Vec<String>,
+    pub entry: Vec<Action>,
     #[serde(default)]
-    pub exit: Vec<String>,
+    pub exit: Vec<Action>,
 }
 
 // --- Runtime ---
@@ -94,19 +108,15 @@ impl RuntimeMachine {
                         if !is_internal {
                             // 1. Execute Exit Actions for Current State
                             if let Some(current_state_def) = self.definition.states.get(&self.current_state) {
-                                for action_name in &current_state_def.exit {
-                                    if let Some(action_fn) = actions.get(action_name) {
-                                        action_fn(&mut self.context, event_payload);
-                                    }
+                                for action in &current_state_def.exit {
+                                    Self::execute_action(&mut self.context, action, event_payload, actions);
                                 }
                             }
                         }
 
                         // 2. Execute Transition Actions
-                        for action_name in &transition.actions {
-                            if let Some(action_fn) = actions.get(action_name) {
-                                action_fn(&mut self.context, event_payload);
-                            }
+                        for action in &transition.actions {
+                            Self::execute_action(&mut self.context, action, event_payload, actions);
                         }
 
                         if !is_internal {
@@ -115,10 +125,8 @@ impl RuntimeMachine {
 
                             // 4. Execute Entry Actions for New State
                             if let Some(new_state_def) = self.definition.states.get(&self.current_state) {
-                                for action_name in &new_state_def.entry {
-                                    if let Some(action_fn) = actions.get(action_name) {
-                                        action_fn(&mut self.context, event_payload);
-                                    }
+                                for action in &new_state_def.entry {
+                                    Self::execute_action(&mut self.context, action, event_payload, actions);
                                 }
                             }
                         }
@@ -133,6 +141,32 @@ impl RuntimeMachine {
     
     pub fn state(&self) -> &str {
         &self.current_state
+    }
+
+    fn execute_action(
+        context: &mut serde_json::Value,
+        action: &Action,
+        event_payload: &serde_json::Value,
+        actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value)>>,
+    ) {
+        match action {
+            Action::Named(name) => {
+                if let Some(action_fn) = actions.get(name) {
+                    action_fn(context, event_payload);
+                }
+            }
+            Action::Assign(assign_action) => {
+                // Handle static assignment
+                if let Some(ctx_obj) = context.as_object_mut() {
+                    // Check if assignment is a partial object and merge it
+                    if let Some(partial) = assign_action.assignment.as_object() {
+                        for (k, v) in partial {
+                            ctx_obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -273,5 +307,48 @@ mod tests {
         // 4. Try to OPEN again. Guard 'can_open' -> true. Transition to 'open'.
         machine.transition("OPEN", &payload, &guards, &actions);
         assert_eq!(machine.state(), "open");
+    }
+
+    #[test]
+    fn test_assign_action() {
+        let json = r#"{
+          "id": "counter",
+          "initial": "a",
+          "context": { "count": 0, "fixed": "no" },
+          "states": {
+            "a": {
+              "on": {
+                "INC": [
+                  { 
+                    "target": "b",
+                    "actions": [
+                      { "type": "xstate.assign", "assignment": { "count": 1 } },
+                      { "type": "xstate.assign", "assignment": { "fixed": "yes" } }
+                    ]
+                  }
+                ]
+              }
+            },
+            "b": {}
+          }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
+        
+        let guards = HashMap::new();
+        let actions = HashMap::new();
+        let payload = serde_json::Value::Null;
+
+        assert_eq!(machine.state(), "a");
+        let ctx = machine.context.as_object().unwrap();
+        assert_eq!(ctx.get("count").unwrap().as_i64(), Some(0));
+        assert_eq!(ctx.get("fixed").unwrap().as_str(), Some("no"));
+
+        machine.transition("INC", &payload, &guards, &actions);
+        
+        assert_eq!(machine.state(), "b");
+        let ctx_new = machine.context.as_object().unwrap();
+        assert_eq!(ctx_new.get("count").unwrap().as_i64(), Some(1));
+        assert_eq!(ctx_new.get("fixed").unwrap().as_str(), Some("yes"));
     }
 }
