@@ -34,6 +34,26 @@
         async function main() {
             await init();
 
+            let machine;
+
+            const updateUI = () => {
+                if (!machine) return;
+                const ctx = JSON.parse(machine.context_json());
+                document.getElementById('lblContext').innerText = JSON.stringify(ctx);
+                document.getElementById('counterVal').innerText = ctx.count;
+            };
+
+            const config = {
+                actions: {
+                    increment: assign((ctx) => ({ count: ctx.context.count + 1 })),
+                    decrement: assign((ctx) => ({ count: ctx.context.count - 1 })),
+                    reset: assign({ count: 0 }),
+                    render: () => {
+                        setTimeout(updateUI, 0);
+                    }
+                }
+            };
+
             const machineDef = {
                 id: "counter",
                 initial: "active",
@@ -41,46 +61,21 @@
                 states: {
                     active: {
                         on: {
-                            INC: [{ actions: ["increment"] }],
-                            DEC: [{ actions: ["decrement"] }],
-                            RESET: [{ actions: ["reset"] }]
+                            INC: [{ actions: ["increment", "render"] }],
+                            DEC: [{ actions: ["decrement", "render"] }],
+                            RESET: [{ actions: ["reset", "render"] }]
                         }
                     }
                 }
             };
 
-            const config = {
-                actions: {
-                    increment: assign((ctx) => ({ count: ctx.context.count + 1 })),
-                    decrement: assign((ctx) => ({ count: ctx.context.count - 1 })),
-                    reset: assign({ count: 0 })
-                }
-            };
-
             const wasmMachine = setup(config).createMachine(machineDef);
-            const machine = wasmMachine.spawn_runner({});
+            machine = wasmMachine.spawn_runner({});
             updateUI();
             
-            function updateUI() {
-                const ctx = JSON.parse(machine.context_json());
-                document.getElementById('lblContext').innerText = JSON.stringify(ctx);
-                document.getElementById('counterVal').innerText = ctx.count;
-            }
-
-            document.getElementById('btnInc').onclick = () => {
-                machine.transition("INC");
-                updateUI();
-            };
-
-            document.getElementById('btnDec').onclick = () => {
-                machine.transition("DEC");
-                updateUI();
-            };
-
-            document.getElementById('btnReset').onclick = () => {
-                machine.transition("RESET");
-                updateUI();
-            };
+            document.getElementById('btnInc').onclick = () => machine.transition("INC");
+            document.getElementById('btnDec').onclick = () => machine.transition("DEC");
+            document.getElementById('btnReset').onclick = () => machine.transition("RESET");
         }
 
         main().catch(console.error);

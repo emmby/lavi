@@ -36,6 +36,7 @@
         <h1>Actions Demo</h1>
         <p>State transitions trigger actions (entry, exit, transition).</p>
         
+
         <div id="lblState" class="state-display">Loading...</div>
         
         <div class="status-box">
@@ -51,10 +52,54 @@
     </div>
 
     <script type="module">
-        import init, { FsmRunner, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import init, { setup, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
 
         async function main() {
             await init();
+
+            let machine;
+
+            const updateUI = () => {
+                // If called before machine is fully spawned, skip update
+                if (!machine) return;
+
+                const state = machine.current_state();
+                const ctx = JSON.parse(machine.context_json());
+                
+                const stateEl = document.getElementById('lblState');
+                if (stateEl) {
+                    stateEl.innerText = state.toUpperCase();
+                    stateEl.className = 'state-display ' + (state === 'a' ? 'state-a' : 'state-b');
+                }
+                
+                const contextEl = document.getElementById('lblContext');
+                if (contextEl) {
+                    contextEl.innerText = JSON.stringify(ctx, null, 2);
+                }
+            };
+
+            const log = (msg) => {
+                const box = document.getElementById('logBox');
+                if (!box) return;
+                const line = document.createElement('div');
+                line.innerText = msg;
+                box.insertBefore(line, box.firstChild);
+            };
+
+            const config = {
+                actions: {
+                    log_transition: () => log("Transitioning..."),
+                    increment: assign((ctx) => ({ count: ctx.context.count + 1 })),
+                    set_exited_a: () => log("Exited A"),
+                    set_entered_b: () => log("Entered B"),
+                    // The 'render' action called by the FSM. 
+                    // We use setTimeout to defer execution until the transition completes 
+                    // and the FSM state is fully updated.
+                    render: () => {
+                        setTimeout(updateUI, 0);
+                    }
+                }
+            };
 
             const machineDef = {
                 id: "actions_machine",
@@ -62,6 +107,7 @@
                 context: { count: 0 },
                 states: {
                     a: {
+                        entry: ["render"], 
                         exit: ["set_exited_a"],
                         on: {
                             NEXT: [
@@ -73,12 +119,12 @@
                         }
                     },
                     b: {
-                        entry: ["set_entered_b", "increment"],
+                        entry: ["set_entered_b", "increment", "render"],
                         on: {
                             RESET: [
                                 {
                                     target: "a",
-                                    actions: ["increment"]
+                                    actions: ["increment", "render"]
                                 }
                             ]
                         }
@@ -86,38 +132,14 @@
                 }
             };
 
-            const machine = new FsmRunner(machineDef);
-            updateUI("Initialized");
+            const wasmMachine = setup(config).createMachine(machineDef);
+            machine = wasmMachine.spawn_runner({});
+            
+            // Initial manual update to show starting state
+            updateUI();
 
-            function updateUI(lastEvent) {
-                const state = machine.current_state();
-                const ctx = JSON.parse(machine.context_json());
-                
-                const stateEl = document.getElementById('lblState');
-                stateEl.innerText = state.toUpperCase();
-                stateEl.className = 'state-display ' + (state === 'a' ? 'state-a' : 'state-b');
-                
-                document.getElementById('lblContext').innerText = JSON.stringify(ctx, null, 2);
-                
-                log(`[${lastEvent}] State: ${state}, Count: ${ctx.count}`);
-            }
-
-            function log(msg) {
-                const box = document.getElementById('logBox');
-                const line = document.createElement('div');
-                line.innerText = msg;
-                box.insertBefore(line, box.firstChild);
-            }
-
-            document.getElementById('btnNext').onclick = () => {
-                machine.transition("NEXT");
-                updateUI("NEXT");
-            };
-
-            document.getElementById('btnReset').onclick = () => {
-                machine.transition("RESET");
-                updateUI("RESET");
-            };
+            document.getElementById('btnNext').onclick = () => machine.transition("NEXT");
+            document.getElementById('btnReset').onclick = () => machine.transition("RESET");
         }
 
         main().catch(console.error);
