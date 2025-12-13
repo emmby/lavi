@@ -115,7 +115,7 @@
 
         // Instantiate machine
         const wasmMachine = setup(config).createMachine(machineDef);
-        const machine = wasmMachine.spawn_runner({});
+        const machine = wasmMachine.createActor({});
         
         // Initial manual update
         updateUI(machine.current_state(), { locked: true });

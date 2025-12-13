@@ -60,7 +60,7 @@
         import init, { setup, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
 
         async function main() {
-            await init(); // TODO why do we need init? does xstate need it?
+            await init();
 
             let machine;
 
@@ -101,9 +101,6 @@
                     // The 'render' action called by the FSM. 
                     // We use setTimeout to defer execution until the transition completes 
                     // and the FSM state is fully updated.
-                    //
-                    // TODO why is setTimeout needed? Is it needed for xstate? If not,
-                    // we should update the wasm interpreter to not need it either
                     render: () => {
                         setTimeout(updateUI, 0);
                     }
@@ -151,8 +148,7 @@
                 "\n\n// Configuration\nconst config = " + JSON.stringify(config, replacer, 2);
 
             const wasmMachine = setup(config).createMachine(machineDef);
-            // TODO what is the equivalent of spawn_runner in xstate? we should rename spawn_runner to be consistent
-            machine = wasmMachine.spawn_runner({});
+            machine = wasmMachine.createActor({});
             
             // Initial manual update to show starting state
             updateUI();

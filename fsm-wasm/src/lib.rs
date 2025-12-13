@@ -57,7 +57,8 @@ pub fn assign(assignment: JsValue) -> JsValue {
 #[wasm_bindgen]
 impl WasmMachine {
     // Hidden / internal use mainly, but exposed to JS
-    pub fn spawn_runner(&self, options: JsValue) -> Result<FsmRunner, JsValue> {
+    #[wasm_bindgen(js_name = createActor)]
+    pub fn create_actor_method(&self, options: JsValue) -> Result<FsmRunner, JsValue> {
          let mut runner = FsmRunner { 
             machine: self.machine.clone(), 
             inspector: None,
@@ -383,9 +384,9 @@ impl FsmRunner {
 
 #[wasm_bindgen(js_name = createActor)]
 pub fn create_actor(machine_def: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
-    // 1. Check if machine_def is a WasmMachine (via spawn_runner method)
+    // 1. Check if machine_def is a WasmMachine (via createActor method)
     if machine_def.is_object() {
-        let spawn_fn = js_sys::Reflect::get(&machine_def, &JsValue::from_str("spawn_runner")).unwrap_or(JsValue::UNDEFINED);
+        let spawn_fn = js_sys::Reflect::get(&machine_def, &JsValue::from_str("createActor")).unwrap_or(JsValue::UNDEFINED);
         if let Ok(func) = spawn_fn.dyn_into::<js_sys::Function>() {
              // It is a WasmMachine (or compatible object)
              let runner_val = func.call1(&machine_def, &options)?;

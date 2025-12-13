@@ -78,7 +78,8 @@
         displayMachine(machineDef, config);
 
         // Instantiate machine
-        const machine = setup(config).createMachine(machineDef).spawn_runner({});
+        // Instantiate machine
+        const machine = setup(config).createMachine(machineDef).createActor({});
         
         // Initial render
         updateUI(machine.current_state());
