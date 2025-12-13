@@ -46,7 +46,7 @@ fn verify_scenario(scenario: JsValue) {
     let inspect_opts = js_sys::Object::new();
     js_sys::Reflect::set(&inspect_opts, &"inspect".into(), &inspector.as_ref().unchecked_ref()).unwrap();
 
-    let mut runner = wasm_machine.spawn_runner(inspect_opts.into()).expect("Failed to spawn runner");
+    let mut runner = wasm_machine.create_actor_method(inspect_opts.into()).expect("Failed to spawn runner");
     
     // 3. Start WASM
     console::log_1(&"Starting WASM runner...".into());

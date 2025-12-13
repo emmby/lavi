@@ -1,5 +1,15 @@
 {
+  "scripts": {
+    "test": "npm run test:native && npm run test:wasm && npm run test:e2e",
+    "test:native": "cargo test",
+    "test:wasm": "cd fsm-wasm && wasm-pack test --headless --chrome",
+    "test:e2e": "playwright test"
+  },
   "dependencies": {
     "xstate": "^5.25.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "playwright": "^1.40.0"
   }
 }

@@ -63,11 +63,17 @@ wasm-pack test --headless --chrome
 ```
 
 ### Run All Tests
-To run both suites in sequence:
+To run all test suites (native, WASM, and E2E) in sequence:
 
 ```bash
-cargo test && cd fsm-wasm && wasm-pack test --headless --chrome
+npm test
 ```
+
+Or run them individually:
+- `npm run test:native` (Rust Core)
+- `npm run test:wasm` (WASM/XState)
+- `npm run test:e2e` (HTML Examples via Playwright)
+
 
 ## Usage in JavaScript
 
