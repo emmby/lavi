@@ -48,17 +48,33 @@
             <div class="status-row"><span class="status-label">Context:</span><span id="lblContext">...</span></div>
         </div>
         <div class="code-container">
-            <div class="code-title">Machine Configuration (Loaded from JSON)</div>
-            <pre id="defDisplay" class="code-block">Loading...</pre>
+            <div class="code-title">Machine Configuration</div>
+            <pre id="defDisplay" class="code-block"></pre>
         </div>
     </div>
 
     <script type="module">
         import { runFsmExample } from './common.js';
 
-        // Load machine definition from JSON file with cache busting
-        const response = await fetch('./traffic_light.json?v=' + Date.now());
-        const machineDef = await response.text();
+        // Defined inline
+        const machineDef = {
+          "id": "trafficLight",
+          "initial": "green",
+          "states": {
+            "green": {
+              "on": { "TIMER": [{ "target": "yellow" }] }
+            },
+            "yellow": {
+              "on": { "TIMER": [{ "target": "red" }] }
+            },
+            "red": {
+              "on": { "TIMER": [{ "target": "green" }] }
+            }
+          },
+          "context": {
+            "cycle_count": 0
+          }
+        };
 
         const { transition } = await runFsmExample({
             machineDef,
