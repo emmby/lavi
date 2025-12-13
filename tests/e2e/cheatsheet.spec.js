@@ -1,0 +1,311 @@
+
+const { test, expect } = require('@playwright/test');
+const { setup, createActor, assign, fromPromise, fromTransition, fromObservable, fromCallback } = require('xstate');
+
+test.describe('XState Cheatsheet Examples', () => {
+
+  // 1. Creating a state machine (Toggle)
+  // Original: https://stately.ai/docs/cheatsheet#creating-a-state-machine
+  // TODO: Replace xstate with wasm
+  test('Creating a state machine (Toggle)', async () => {
+    const machine = setup({ /* ... */}).createMachine({
+      id: 'toggle',
+      initial: 'active',
+      context: { count: 0 },
+      states: {
+        active: {
+          entry: assign({ count: ({ context }) => context.count + 1 }),
+          on: { toggle: { target: 'inactive' } },
+        },
+        inactive: {
+          on: { toggle: { target: 'active' } },
+        },
+      },
+    });
+
+    const actor = createActor(machine);
+    actor.start();
+    
+    // Initial state: active, count=1 (entry action ran)
+    expect(actor.getSnapshot().value).toBe('active');
+    expect(actor.getSnapshot().context.count).toBe(1);
+
+    actor.send({ type: 'toggle' });
+    expect(actor.getSnapshot().value).toBe('inactive');
+    expect(actor.getSnapshot().context.count).toBe(1);
+
+    actor.send({ type: 'toggle' });
+    expect(actor.getSnapshot().value).toBe('active');
+    expect(actor.getSnapshot().context.count).toBe(2);
+  });
+
+  // 2. Creating promise logic
+  // Original: https://stately.ai/docs/cheatsheet#creating-promise-logic
+  // TODO: Replace xstate with wasm
+  test('Creating promise logic', async () => {
+    const promiseLogic = fromPromise(async () => {
+      // Mocking fetch behavior
+      return { message: "https://mock.dog.ceo/image.jpg", status: "success" };
+    });
+
+    const actor = createActor(promiseLogic);
+    actor.start();
+
+    // Wait for promise to resolve
+    await new Promise(res => setTimeout(res, 50));
+
+    const snapshot = actor.getSnapshot();
+    expect(snapshot.output).toEqual({
+      message: "https://mock.dog.ceo/image.jpg",
+      status: "success"
+    });
+    expect(snapshot.status).toBe('done');
+  });
+
+  // 3. Creating transition logic
+  // Original: https://stately.ai/docs/cheatsheet#creating-transition-logic
+  // TODO: Replace xstate with wasm
+  test('Creating transition logic', async () => {
+    const transitionLogic = fromTransition(
+      (state, event) => {
+        switch (event.type) {
+          case 'inc':
+            return { ...state, count: state.count + 1 };
+          default:
+            return state;
+        }
+      },
+      { count: 0 } // initial state
+    );
+
+    const actor = createActor(transitionLogic);
+    actor.start();
+
+    expect(actor.getSnapshot().context).toEqual({ count: 0 });
+
+    actor.send({ type: 'inc' });
+    expect(actor.getSnapshot().context).toEqual({ count: 1 });
+
+    actor.send({ type: 'inc' });
+    expect(actor.getSnapshot().context).toEqual({ count: 2 });
+  });
+
+  // 4. Creating observable logic
+  // Original: https://stately.ai/docs/cheatsheet#creating-observable-logic
+  // TODO: Replace xstate with wasm
+  test('Creating observable logic', async () => {
+    // Mock interval observable without rxjs dependency
+    const observableLogic = fromObservable(() => ({
+      subscribe: (observer) => {
+        let count = 0;
+        const i = setInterval(() => {
+          observer.next(count++);
+        }, 10);
+        return { unsubscribe: () => clearInterval(i) };
+      }
+    }));
+    
+    const actor = createActor(observableLogic);
+    
+    let lastValue = null;
+    actor.subscribe((snapshot) => {
+      lastValue = snapshot.context;
+    });
+    
+    actor.start();
+    
+    await new Promise(res => setTimeout(res, 50));
+    // Should have emitted a few values (0, 1, 2...)
+    expect(lastValue).toBeGreaterThanOrEqual(0);
+    
+    actor.stop();
+  });
+
+  // 5. Creating callback logic
+  // Original: https://stately.ai/docs/cheatsheet#creating-callback-logic
+  // TODO: Replace xstate with wasm
+  test('Creating callback logic', async () => {
+    let receivedCancel = false;
+    
+    const callbackLogic = fromCallback(({ sendBack, receive }) => {
+      const i = setTimeout(() => {
+        sendBack({ type: 'timeout' });
+      }, 100); // reduced timeout
+
+      receive((event) => {
+        if (event.type === 'cancel') {
+          receivedCancel = true;
+          clearTimeout(i);
+        }
+      });
+      return () => {
+        clearTimeout(i);
+      };
+    });
+
+    const actor = createActor(callbackLogic);
+    actor.start();
+    
+    actor.send({ type: 'cancel' });
+    expect(receivedCancel).toBe(true);
+  });
+
+  // 6. Parent states
+  // Original: https://stately.ai/docs/cheatsheet#parent-states
+  // TODO: Replace xstate with wasm
+  test('Parent states', async () => {
+    const machine = setup({ /* ... */}).createMachine({
+      id: 'parent',
+      initial: 'active',
+      states: {
+        active: {
+          initial: 'one',
+          states: {
+            one: {
+              on: { NEXT: { target: 'two' } },
+            },
+            two: {},
+          },
+          on: {
+            NEXT: { target: 'inactive' },
+          },
+        },
+        inactive: {},
+      },
+    });
+
+    const actor = createActor(machine);
+    actor.start();
+
+    // logs { active: 'one' }
+    expect(actor.getSnapshot().value).toEqual({ active: 'one' });
+
+    actor.send({ type: 'NEXT' });
+    // logs { active: 'two' }
+    expect(actor.getSnapshot().value).toEqual({ active: 'two' });
+
+    actor.send({ type: 'NEXT' });
+    // logs 'inactive'
+    expect(actor.getSnapshot().value).toBe('inactive');
+  });
+
+  // 7. Actions
+  // Original: https://stately.ai/docs/cheatsheet#actions
+  // TODO: Replace xstate with wasm
+  test('Actions', async () => {
+    const logs = [];
+    const machine = setup({
+      actions: {
+        activate: () => logs.push('Activating'),
+        deactivate: () => logs.push('Deactivating'),
+        notify: (_, params) => logs.push(params?.message ?? 'Default message'),
+      },
+    }).createMachine({
+      id: 'toggle',
+      initial: 'active',
+      states: {
+        active: {
+          entry: { type: 'activate' },
+          exit: { type: 'deactivate' },
+          on: {
+            toggle: {
+              target: 'inactive',
+              actions: [{ type: 'notify' }],
+            },
+          },
+        },
+        inactive: {
+          on: {
+            toggle: {
+              target: 'active',
+              actions: [
+                { type: 'notify', params: { message: 'Some notification' } },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    const actor = createActor(machine);
+    actor.start();
+    // Entry active -> 'Activating'
+    expect(logs).toContain('Activating');
+    logs.length = 0; // clear
+
+    actor.send({ type: 'toggle' });
+    // Exit active -> 'Deactivating'
+    // Action -> 'Default message'
+    expect(logs).toEqual(['Deactivating', 'Default message']);
+    logs.length = 0;
+
+    actor.send({ type: 'toggle' });
+    // Action -> 'Some notification'
+    // Entry active -> 'Activating'
+    expect(logs).toEqual(['Some notification', 'Activating']);
+  });
+
+  // 8. Guards
+  // Original: https://stately.ai/docs/cheatsheet#guards
+  // TODO: Replace xstate with wasm
+  test('Guards', async () => {
+    const logs = [];
+    const machine = setup({
+      guards: {
+        canBeToggled: ({ context }) => context.canActivate,
+        isAfterTime: (_, params) => {
+          // Mock time check: assuming we pass a boolean in params for simplicity in test
+          // or we can just return true/false based on params for deterministic testing
+          return params.shouldPass === true;
+        },
+      },
+      actions: {
+        notifyNotAllowed: () => {
+          logs.push('Cannot be toggled');
+        },
+      },
+    }).createMachine({
+      id: 'toggle',
+      initial: 'active',
+      context: {
+        canActivate: false,
+      },
+      states: {
+        inactive: {
+          on: {
+            toggle: [
+              { target: 'active', guard: 'canBeToggled' },
+              { actions: 'notifyNotAllowed' },
+            ],
+          },
+        },
+        active: {
+          on: {
+            toggle: {
+              // Guard with params
+              guard: { type: 'isAfterTime', params: { shouldPass: true } },
+              target: 'inactive',
+            },
+            failToggle: {
+               guard: { type: 'isAfterTime', params: { shouldPass: false } },
+               target: 'inactive',
+            }
+          },
+        },
+      },
+    });
+
+    const actor = createActor(machine);
+    actor.start();
+
+    // Active -> Inactive (guard isAfterTime is mocked to true)
+    actor.send({ type: 'toggle' });
+    expect(actor.getSnapshot().value).toBe('inactive');
+
+    // Inactive -> Active (guard canBeToggled is false)
+    actor.send({ type: 'toggle' });
+    expect(actor.getSnapshot().value).toBe('inactive');
+    expect(logs).toContain('Cannot be toggled');
+  });
+
+});
