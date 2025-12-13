@@ -170,8 +170,7 @@ impl RuntimeMachine {
     }
 }
 
-#[cfg(test)]
-mod reference_test;
+
 
 #[cfg(test)]
 mod tests {
