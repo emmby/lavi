@@ -49,6 +49,11 @@
         </div>
 
         <div class="log-box" id="logBox"></div>
+
+        <div class="code-container">
+            <div class="code-title">Machine Configuration</div>
+            <pre id="defDisplay" class="code-block"></pre>
+        </div>
     </div>
 
     <script type="module">
@@ -131,6 +136,15 @@
                     }
                 }
             };
+
+            // Display code
+            const replacer = (key, value) => {
+                if (typeof value === 'function') return value.toString();
+                return value;
+            };
+            document.getElementById('defDisplay').innerText = 
+                "// Machine Definition\nconst machine = " + JSON.stringify(machineDef, null, 2) +
+                "\n\n// Configuration\nconst config = " + JSON.stringify(config, replacer, 2);
 
             const wasmMachine = setup(config).createMachine(machineDef);
             machine = wasmMachine.spawn_runner({});

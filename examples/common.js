@@ -50,6 +50,34 @@ export async function runFsmExample({ machineDef, config, updateUI }) {
     // Initial update
     wrappedUpdateUI("INIT");
 
+    // Display Machine Definition if element exists
+    const defDisplay = document.getElementById('defDisplay');
+    if (defDisplay) {
+        let displayContent = "// Machine Definition\nconst machine = " + JSON.stringify(def, null, 2);
+        
+        if (config) {
+            // Note: Functions in config will not stringify well by default, 
+            // but we can try to show keys at least.
+            // For better display, we might want to manually format it or expect the caller to do it.
+            // Here we just do a basic stringify which omits functions.
+            // A better approach for specific examples is to let them handle the display text
+            // or pass the raw source string.
+            // For now, we show the structure.
+            
+            // Replacer to show function placeholders
+            const replacer = (key, value) => {
+                if (typeof value === 'function') {
+                    return value.toString();
+                }
+                return value;
+            };
+            
+            displayContent += "\n\n// Configuration (Actions/Guards)\nconst config = " + JSON.stringify(config, replacer, 2);
+        }
+        
+        defDisplay.innerText = displayContent;
+    }
+
     return {
         machine,
         updateUI: wrappedUpdateUI,
