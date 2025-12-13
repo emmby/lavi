@@ -63,10 +63,10 @@
                     on: {
                         OPEN: [
                             { target: "open", cond: "can_open" },
-                            { target: "closed", actions: ["render"] } // Render to update log/status if needed
+                            { target: "closed", actions: ["render"] }
                         ],
-                        LOCK: { actions: ["lock", "render"] },
-                        UNLOCK: { actions: ["unlock", "render"] }
+                        LOCK: [{ actions: ["lock", "render"] }],
+                        UNLOCK: [{ actions: ["unlock", "render"] }]
                     }
                 },
                 open: {

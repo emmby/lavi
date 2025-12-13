@@ -54,7 +54,7 @@
     </div>
 
     <script type="module">
-        import init, { setup } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import init, { setup, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
         import { displayMachine } from './common.js';
 
         await init();
@@ -74,7 +74,7 @@
             },
             "red": {
               "entry": ["render"],
-              "on": { "TIMER": [{ "target": "green" }] }
+              "on": { "TIMER": [{ "target": "green", "actions": ["increment_cycle"] }] }
             }
           },
           "context": {
@@ -82,7 +82,7 @@
           }
         };
 
-        const updateUI = (state) => {
+        const updateUI = (state, ctx) => {
             // Reset lights
             document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
             
@@ -95,13 +95,19 @@
             // Update status text
             const lblState = document.getElementById('lblState');
             if (lblState) lblState.innerText = state ? state.toUpperCase() : "...";
+
+            // Update context
+            const lblContext = document.getElementById('lblContext');
+            if (lblContext && ctx) lblContext.innerText = JSON.stringify(ctx, null, 2);
         };
 
         const config = {
             actions: {
+                increment_cycle: assign((ctx) => ({ cycle_count: ctx.context.cycle_count + 1 })),
                 render: () => {
                    setTimeout(() => {
-                       updateUI(machine.current_state());
+                       const ctx = JSON.parse(machine.context_json());
+                       updateUI(machine.current_state(), ctx);
                    }, 0);
                 }
             }
@@ -114,7 +120,7 @@
         const machine = setup(config).createMachine(machineDef).spawn_runner({});
 
         // Initialize UI
-        updateUI(machine.current_state());
+        updateUI(machine.current_state(), { cycle_count: 0 });
 
         document.getElementById('btnTimer').onclick = () => machine.transition("TIMER");
     </script>

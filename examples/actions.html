@@ -95,6 +95,7 @@
                 actions: {
                     log_transition: () => log("Transitioning..."),
                     increment: assign((ctx) => ({ count: ctx.context.count + 1 })),
+                    set_count_10: assign({ count: 10 }),
                     set_exited_a: () => log("Exited A"),
                     set_entered_b: () => log("Entered B"),
                     // The 'render' action called by the FSM. 
@@ -118,7 +119,7 @@
                             NEXT: [
                                 {
                                     target: "b",
-                                    actions: ["log_transition", assign({ count: 10 })]
+                                    actions: ["log_transition", "set_count_10"]
                                 }
                             ]
                         }
