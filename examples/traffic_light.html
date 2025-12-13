@@ -62,12 +62,15 @@
           "initial": "green",
           "states": {
             "green": {
+              "entry": ["render"],
               "on": { "TIMER": [{ "target": "yellow" }] }
             },
             "yellow": {
+              "entry": ["render"],
               "on": { "TIMER": [{ "target": "red" }] }
             },
             "red": {
+              "entry": ["render"],
               "on": { "TIMER": [{ "target": "green" }] }
             }
           },
@@ -76,21 +79,40 @@
           }
         };
 
-        const { transition } = await runFsmExample({
-            machineDef,
-            updateUI: (state) => {
-                // Reset lights
-                document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
-                
-                // Activate current light
-                if (state) {
-                    const el = document.getElementById(state);
-                    if (el) el.classList.add('active');
+        const updateUI = (state) => {
+            // Reset lights
+            document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
+            
+            // Activate current light
+            if (state) {
+                const el = document.getElementById(state);
+                if (el) el.classList.add('active');
+            }
+
+            // Update status text
+            const lblState = document.getElementById('lblState');
+            if (lblState) lblState.innerText = state ? state.toUpperCase() : "...";
+        };
+
+        const config = {
+            actions: {
+                render: () => {
+                   setTimeout(() => {
+                       updateUI(machine.current_state());
+                   }, 0);
                 }
             }
+        };
+
+        const { machine } = await runFsmExample({
+            machineDef,
+            config
         });
 
-        document.getElementById('btnTimer').onclick = () => transition("TIMER");
+        // Initialize UI
+        updateUI(machine.current_state());
+
+        document.getElementById('btnTimer').onclick = () => machine.transition("TIMER");
     </script>
 </body>
 </html>

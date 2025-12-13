@@ -38,24 +38,51 @@
             id: "switch",
             initial: "off",
             states: {
-                off: { on: { TOGGLE: [{ target: "on" }] } },
-                on:  { on: { TOGGLE: [{ target: "off" }] } }
+                off: { 
+                    entry: ["render"],
+                    on: { TOGGLE: [{ target: "on" }] } 
+                },
+                on:  { 
+                    entry: ["render"],
+                    on: { TOGGLE: [{ target: "off" }] } 
+                }
             }
         };
 
-        const { transition } = await runFsmExample({
-            machineDef,
-            updateUI: (state, context) => {
-                const bulb = document.getElementById('bulb');
-                if (state === 'on') {
-                    bulb.classList.add('on');
-                } else {
-                    bulb.classList.remove('on');
+        const updateUI = (state) => {
+            const bulb = document.getElementById('bulb');
+            if (state === 'on') {
+                bulb.classList.add('on');
+            } else {
+                bulb.classList.remove('on');
+            }
+            
+            // Allow common.js to handle this? No, common.js logic was removed.
+            // We need to update the status label ourselves now.
+            const lblState = document.getElementById('lblState');
+            if (lblState) lblState.innerText = state.toUpperCase();
+        };
+
+        const config = {
+            actions: {
+                render: () => {
+                    // Defer to ensure we get post-transition state
+                    setTimeout(() => {
+                        updateUI(machine.current_state());
+                    }, 0);
                 }
             }
-        });
+        };
 
-        document.getElementById('btnToggle').onclick = () => transition("TOGGLE");
+        const { machine } = await runFsmExample({
+            machineDef,
+            config
+        });
+        
+        // Initial render
+        updateUI(machine.current_state());
+
+        document.getElementById('btnToggle').onclick = () => machine.transition("TOGGLE");
     </script>
 </body>
 </html>

@@ -48,59 +48,78 @@
     </div>
 
     <script type="module">
-        import { runFsmExample } from './common.js';
+        import { runFsmExample, assign } from './common.js';
         
         const machineDef = {
             id: "door",
             initial: "closed",
+            context: { locked: true },
             states: {
                 closed: {
+                    entry: ["render"],
                     on: {
                         OPEN: [
                             { target: "open", cond: "can_open" },
-                            { target: "closed" }
-                        ]
+                            { target: "closed", actions: ["render"] } // Render to update log/status if needed
+                        ],
+                        LOCK: { actions: ["lock", "render"] },
+                        UNLOCK: { actions: ["unlock", "render"] }
                     }
                 },
                 open: {
+                    entry: ["render"],
                     on: {
                         CLOSE: [ { target: "closed" } ]
                     }
                 }
-            },
-            context: { locked: true }
-        };
-
-        const { machine, updateUI, transition } = await runFsmExample({
-            machineDef,
-            config: {
-                guards: {
-                    can_open: ({ context }) => !context.locked
-                }
-            },
-            updateUI: (state, ctx) => {
-                const doorEl = document.getElementById('door');
-                if (state === 'open') {
-                    doorEl.classList.add('open');
-                } else {
-                    doorEl.classList.remove('open');
-                }
-                document.getElementById('lockIcon').innerText = ctx.locked ? '🔒' : '🔓';
             }
+        };
+
+        const updateUI = (state, ctx) => {
+            const doorEl = document.getElementById('door');
+            if (state === 'open') {
+                doorEl.classList.add('open');
+            } else {
+                doorEl.classList.remove('open');
+            }
+            document.getElementById('lockIcon').innerText = ctx.locked ? '🔒' : '🔓';
+            
+            const lblState = document.getElementById('lblState');
+            if (lblState) lblState.innerText = state.toUpperCase();
+
+            const lblContext = document.getElementById('lblContext');
+            if (lblContext) lblContext.innerText = JSON.stringify(ctx, null, 2);
+        };
+
+        const config = {
+            guards: {
+                can_open: ({ context }) => !context.locked
+            },
+            actions: {
+                lock: assign({ locked: true }),
+                unlock: assign({ locked: false }),
+                render: () => {
+                    setTimeout(() => {
+                        const ctx = JSON.parse(machine.context_json());
+                        updateUI(machine.current_state(), ctx);
+                    }, 0);
+                }
+            }
+        };
+
+        const { machine } = await runFsmExample({
+            machineDef,
+            config
         });
-
-        document.getElementById('btnOpen').onclick = () => transition("OPEN");
-        document.getElementById('btnClose').onclick = () => transition("CLOSE");
         
-        document.getElementById('btnLock').onclick = () => {
-            machine.set_context_bool("locked", true);
-            updateUI("CTX_UPDATE");
-        };
+        // Initial manual update
+        updateUI(machine.current_state(), { locked: true });
 
-        document.getElementById('btnUnlock').onclick = () => {
-            machine.set_context_bool("locked", false);
-            updateUI("CTX_UPDATE");
-        };
+        document.getElementById('btnOpen').onclick = () => machine.transition("OPEN");
+        document.getElementById('btnClose').onclick = () => machine.transition("CLOSE");
+        
+        document.getElementById('btnLock').onclick = () => machine.transition("LOCK");
+        document.getElementById('btnUnlock').onclick = () => machine.transition("UNLOCK");
     </script>
 </body>
 </html>
