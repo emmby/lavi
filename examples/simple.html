@@ -4,68 +4,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Simple Light Switch</title>
+    <link rel="stylesheet" href="style.css">
     <style>
-        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #222; margin: 0; color: white; transition: background-color 0.5s; }
-        .container { text-align: center; }
-        
-        .bulb { width: 150px; height: 150px; background: #444; border-radius: 50%; margin: 30px auto; box-shadow: 0 0 10px rgba(0,0,0,0.5); transition: all 0.3s; }
+        .bulb { width: 150px; height: 150px; background: #444; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.5); transition: all 0.3s; }
         .bulb.on { background: #ffeb3b; box-shadow: 0 0 50px #ffeb3b; }
-        
-        button { padding: 15px 40px; font-size: 20px; cursor: pointer; border: none; border-radius: 30px; font-weight: bold; background: #fff; color: #333; transition: transform 0.1s; }
-        button:active { transform: scale(0.95); }
-
-        body.light-mode { background-color: #f0f2f5; color: #333; }
+        body.light-mode { background-color: #333; } /* Invert logic for demo since base is light now */
+        /* Override base white bg for dark mode demo logic if needed, or stick to bulb */
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Light Switch</h1>
-        <div id="bulb" class="bulb"></div>
+        
+        <div class="visual-box">
+            <div id="bulb" class="bulb"></div>
+        </div>
+
         <button id="btnToggle">TOGGLE</button>
-        <p>State: <span id="lblState">...</span></p>
+        
+        <div class="status-box">
+            <div class="status-row"><span class="status-label">State:</span><span id="lblState">...</span></div>
+        </div>
     </div>
 
     <script type="module">
-        import init, { FsmRunner } from '../fsm-wasm/pkg/fsm_wasm.js';
+        import { runFsmExample } from './common.js';
 
-        async function main() {
-            await init();
+        const machineDef = {
+            id: "switch",
+            initial: "off",
+            states: {
+                off: { on: { TOGGLE: [{ target: "on" }] } },
+                on:  { on: { TOGGLE: [{ target: "off" }] } }
+            }
+        };
 
-            const machineDef = {
-                id: "switch",
-                initial: "off",
-                states: {
-                    off: { on: { TOGGLE: [{ target: "on" }] } },
-                    on:  { on: { TOGGLE: [{ target: "off" }] } }
-                }
-            };
-
-            const machine = new FsmRunner(machineDef);
-            updateUI();
-
-            function updateUI() {
-                const state = machine.current_state();
-                document.getElementById('lblState').innerText = state.toUpperCase();
-                
+        const { transition } = await runFsmExample({
+            machineDef,
+            updateUI: (state, context) => {
                 const bulb = document.getElementById('bulb');
-                const body = document.body;
-                
                 if (state === 'on') {
                     bulb.classList.add('on');
-                    body.classList.add('light-mode');
                 } else {
                     bulb.classList.remove('on');
-                    body.classList.remove('light-mode');
                 }
             }
+        });
 
-            document.getElementById('btnToggle').onclick = () => {
-                machine.transition("TOGGLE");
-                updateUI();
-            };
-        }
-
-        main().catch(console.error);
+        document.getElementById('btnToggle').onclick = () => transition("TOGGLE");
     </script>
 </body>
 </html>

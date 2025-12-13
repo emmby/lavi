@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FSM Actions Demo</title>
+    <link rel="stylesheet" href="style.css">
     <style>
-        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #f0f2f5; margin: 0; }
-        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 500px; }
-        
         .state-display {
             font-size: 48px;
             font-weight: bold;
@@ -21,20 +19,6 @@
         .state-a { background: #e3f2fd; color: #1976d2; }
         .state-b { background: #e8f5e9; color: #2e7d32; }
 
-        .context-box {
-            text-align: left;
-            background: #282c34;
-            color: #abb2bf;
-            padding: 15px;
-            border-radius: 6px;
-            font-family: monospace;
-            margin: 15px 0;
-            min-height: 80px;
-        }
-
-        button { padding: 12px 24px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; background: #007bff; color: white; transition: background 0.2s; font-size: 16px; margin: 5px; }
-        button:hover { background: #0056b3; }
-        
         .log-box {
             height: 150px;
             overflow-y: auto;
@@ -52,11 +36,10 @@
         <h1>Actions Demo</h1>
         <p>State transitions trigger actions (entry, exit, transition).</p>
         
-        <div id="stateDisplay" class="state-display">Loading...</div>
+        <div id="lblState" class="state-display">Loading...</div>
         
-        <div class="context-box">
-            <div>Context:</div>
-            <div id="lblContext">...</div>
+        <div class="status-box">
+            <div class="status-row"><span class="status-label">Context:</span><span id="lblContext">...</span></div>
         </div>
 
         <div class="controls">
@@ -73,11 +56,6 @@
         async function main() {
             await init();
 
-            // Machine Definition
-            // State A: Exit -> set_exited_a
-            // Transition A->B: Action -> log_transition, assign({ count: 10 })
-            // State B: Entry -> set_entered_b, increment
-            // Transition B->A: Action -> increment (so we can see count go up on reset too)
             const machineDef = {
                 id: "actions_machine",
                 initial: "a",
@@ -115,7 +93,7 @@
                 const state = machine.current_state();
                 const ctx = JSON.parse(machine.context_json());
                 
-                const stateEl = document.getElementById('stateDisplay');
+                const stateEl = document.getElementById('lblState');
                 stateEl.innerText = state.toUpperCase();
                 stateEl.className = 'state-display ' + (state === 'a' ? 'state-a' : 'state-b');
                 

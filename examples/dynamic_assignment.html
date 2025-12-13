@@ -4,36 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dynamic Assignment Demo</title>
+    <link rel="stylesheet" href="style.css">
     <style>
-        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #e0f7fa; margin: 0; }
-        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 400px; }
-        
-        .counter-display { font-size: 80px; font-weight: bold; color: #006064; margin: 20px 0; }
-        
+        .counter-display { font-size: 80px; font-weight: bold; color: #2e7d32; margin: 30px 0; }
         .controls { display: flex; gap: 10px; justify-content: center; }
-        button { padding: 15px 25px; cursor: pointer; border: none; border-radius: 8px; font-weight: bold; background: #0097a7; color: white; transition: background 0.2s; font-size: 18px; }
-        button:hover { background: #006064; }
-        button.reset { background: #ef5350; }
-        button.reset:hover { background: #b71c1c; }
-
-        .info { margin-top: 30px; font-size: 14px; color: #666; background: #f5f5f5; padding: 10px; border-radius: 4px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Counter Machine</h1>
-        <p>Demonstrates dynamic context assignment</p>
+        <p>Demonstrates dynamic assignment logic (x = x + 1).</p>
         
-        <div id="counter" class="counter-display">...</div>
+        <div class="counter-display" id="counterVal">0</div>
         
         <div class="controls">
-            <button id="btnInc">INC (+1)</button>
-            <button id="btnDec">DEC (-1)</button>
-            <button id="btnReset" class="reset">RESET</button>
+            <button id="btnInc">INCREMENT</button>
+            <button id="btnDec">DECREMENT</button>
+            <button id="btnReset" style="background-color: #757575;">RESET</button>
         </div>
 
-        <div class="info">
-            Context: <span id="lblContext">...</span>
+        <div class="status-box">
+             <div class="status-row"><span class="status-label">Context:</span><span id="lblContext">...</span></div>
         </div>
     </div>
 
@@ -62,37 +53,33 @@
                 actions: {
                     increment: assign((ctx) => ({ count: ctx.context.count + 1 })),
                     decrement: assign((ctx) => ({ count: ctx.context.count - 1 })),
-                    reset: assign({ count: 0 }) // Static assignment mixed with dynamic
+                    reset: assign({ count: 0 })
                 }
             };
 
-
-            // Setup the machine and runner
             const wasmMachine = setup(config).createMachine(machineDef);
-            const runner = wasmMachine.spawn_runner({}); 
-
+            const machine = wasmMachine.spawn_runner({});
+            updateUI();
             
-            function render() {
-                 const ctx = JSON.parse(runner.context_json());
-                 document.getElementById('counter').innerText = ctx.count;
-                 document.getElementById('lblContext').innerText = JSON.stringify(ctx);
+            function updateUI() {
+                const ctx = JSON.parse(machine.context_json());
+                document.getElementById('lblContext').innerText = JSON.stringify(ctx);
+                document.getElementById('counterVal').innerText = ctx.count;
             }
-            
-            render();
 
             document.getElementById('btnInc').onclick = () => {
-                runner.transition("INC");
-                render();
+                machine.transition("INC");
+                updateUI();
             };
 
             document.getElementById('btnDec').onclick = () => {
-                runner.transition("DEC");
-                render();
+                machine.transition("DEC");
+                updateUI();
             };
 
             document.getElementById('btnReset').onclick = () => {
-                runner.transition("RESET");
-                render();
+                machine.transition("RESET");
+                updateUI();
             };
         }
 
