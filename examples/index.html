@@ -5,82 +5,155 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FSM WASM Examples</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #f0f2f5; margin: 0; }
-        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; width: 600px; }
-        h1 { color: #333; margin-bottom: 30px; }
-        .example-list { list-style: none; padding: 0; }
-        .example-item { margin: 15px 0; }
-        .example-link { 
-            display: block; 
-            padding: 20px; 
-            background: #fff; 
-            border: 1px solid #ddd; 
-            border-radius: 8px; 
-            text-decoration: none; 
-            color: #333; 
-            font-weight: bold; 
-            font-size: 18px; 
-            transition: all 0.2s; 
+        body { font-family: 'Inter', 'Segoe UI', sans-serif; margin: 0; padding: 0; height: 100vh; overflow: hidden; display: flex; color: #333; }
+        
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: #1a1a1a;
+            color: #eee;
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            flex-direction: column;
+            border-right: 1px solid #333;
+            flex-shrink: 0;
         }
-        .example-link:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); border-color: #007bff; color: #007bff; }
-        .example-desc { font-size: 14px; color: #666; font-weight: normal; margin-top: 5px; }
+
+        .sidebar-header {
+            padding: 20px;
+            background: #000;
+            border-bottom: 1px solid #333;
+        }
+
+        .sidebar-header h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-groups {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 0;
+        }
+
+        .nav-group-title {
+            padding: 10px 20px 5px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+            font-weight: bold;
+        }
+
+        .nav-link {
+            display: block;
+            padding: 10px 20px;
+            color: #ccc;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-link:hover {
+            color: #fff;
+            background: rgba(255,255,255,0.05);
+        }
+
+        .nav-link.active {
+            color: #fff;
+            background: rgba(255,255,255,0.1);
+            border-left-color: #007bff;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            background: #f5f5f5;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+        
+        .placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #888;
+        }
+        
+        .placeholder h2 { color: #333; margin-bottom: 10px; }
+
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>FSM WASM Examples</h1>
-        <p>Explore the features of the FSM WASM interpreter.</p>
-        
-        <ul class="example-list">
-            <li class="example-item">
-                <a href="simple.html" class="example-link">
-                    <div>
-                        <div>Simple Light Switch</div>
-                        <div class="example-desc">Basic state toggling (On/Off)</div>
-                    </div>
-                    <span>→</span>
-                </a>
-            </li>
-            <li class="example-item">
-                <a href="actions.html" class="example-link">
-                    <div>
-                        <div>Actions & Side Effects</div>
-                        <div class="example-desc">Entry, Exit, and Transition actions</div>
-                    </div>
-                    <span>→</span>
-                </a>
-            </li>
-            <li class="example-item">
-                <a href="guards.html" class="example-link">
-                    <div>
-                        <div>Guards (Conditions)</div>
-                        <div class="example-desc">Conditional transitions (Lock/Unlock)</div>
-                    </div>
-                    <span>→</span>
-                </a>
-            </li>
-            <li class="example-item">
-                <a href="dynamic_assignment.html" class="example-link">
-                    <div>
-                        <div>Dynamic Assignment</div>
-                        <div class="example-desc">Context updates using functions</div>
-                    </div>
-                    <span>→</span>
-                </a>
-            </li>
-            <li class="example-item">
-                <a href="traffic_light.html" class="example-link">
-                    <div>
-                        <div>Traffic Light</div>
-                        <div class="example-desc">Loading definition from JSON file</div>
-                    </div>
-                    <span>→</span>
-                </a>
-            </li>
-        </ul>
-    </div>
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>FSM WASM</h1>
+        </div>
+        <nav class="nav-groups">
+            <div class="nav-group-title">Basics</div>
+            <a href="simple.html" class="nav-link" data-target="simple.html">Light Switch</a>
+            <a href="traffic_light.html" class="nav-link" data-target="traffic_light.html">Traffic Light</a>
+            
+            <div class="nav-group-title">Features</div>
+            <a href="actions.html" class="nav-link" data-target="actions.html">Actions & Side Effects</a>
+            <a href="guards.html" class="nav-link" data-target="guards.html">Guards (Conditions)</a>
+            <a href="dynamic_assignment.html" class="nav-link" data-target="dynamic_assignment.html">Dynamic Assignment</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <iframe id="contentFrame" src="" title="Example Viewer"></iframe>
+        <div id="placeholder" class="placeholder">
+            <h2>Select an example</h2>
+            <p>Choose a demo from the sidebar to view it.</p>
+        </div>
+    </main>
+
+    <script>
+        const iframe = document.getElementById('contentFrame');
+        const placeholder = document.getElementById('placeholder');
+        const links = document.querySelectorAll('.nav-link');
+
+        function loadExample(url) {
+            iframe.src = url;
+            iframe.style.display = 'block';
+            placeholder.style.display = 'none';
+        }
+
+        // Handle navigation
+        links.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const url = link.getAttribute('data-target');
+                
+                // Update active state
+                links.forEach(l => l.classList.remove('active'));
+                link.classList.add('active');
+                
+                loadExample(url);
+            });
+        });
+
+        // Auto-load first example or handle initial state
+        // Let's default to Simple Light Switch
+        const firstLink = links[0];
+        if(firstLink) {
+             firstLink.classList.add('active');
+             loadExample(firstLink.getAttribute('data-target'));
+        }
+    </script>
 </body>
 </html>
