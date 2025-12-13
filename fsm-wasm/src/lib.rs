@@ -44,10 +44,14 @@ pub fn setup_wasm_machine(config: JsValue) -> SetupObject {
 
 #[wasm_bindgen]
 pub fn assign(assignment: JsValue) -> JsValue {
-    let obj = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.assign"));
-    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("assignment"), &assignment);
-    obj.into()
+    // Create a function named "assign" that returns undefined, matching xstate
+    let func_constructor = js_sys::Function::new_no_args("return function assign() {};");
+    let func = func_constructor.call0(&JsValue::NULL).unwrap();
+
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.assign"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("assignment"), &assignment);
+    
+    func.into()
 }
 
 #[wasm_bindgen]

@@ -140,3 +140,7 @@ export function runXState(machineDef, config, events) {
     
     return snapshots;
 }
+
+export function getXStateAssign(assignment) {
+    return assign(assignment);
+}

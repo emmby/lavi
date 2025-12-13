@@ -10,6 +10,7 @@ extern "C" {
     fn getAssignScenario() -> JsValue;
     fn getDynamicAssignScenario() -> JsValue;
     fn runXState(machine_def: &JsValue, config: &JsValue, events: &JsValue) -> JsValue;
+    fn getXStateAssign(assignment: &JsValue) -> JsValue;
 }
 
 fn verify_scenario(scenario: JsValue) {
@@ -114,4 +115,36 @@ fn test_verification_dynamic_assign_machine() {
     let scenario = getDynamicAssignScenario();
     verify_scenario(scenario);
     console::log_1(&"Verification Passed: Dynamic Assign!".into());
+}
+
+#[wasm_bindgen_test]
+fn test_assign_identity() {
+    console::log_1(&"Testing assign() identity...".into());
+    
+    // Case 1: Object assignment
+    let obj_assign = serde_wasm_bindgen::to_value(&serde_json::json!({ "count": 10 })).unwrap();
+    let xstate_res = getXStateAssign(&obj_assign);
+    let wasm_res = fsm_wasm::assign(obj_assign);
+    
+    // Compare type
+    let type_key = JsValue::from_str("type");
+    let x_type = js_sys::Reflect::get(&xstate_res, &type_key).unwrap();
+    let w_type = js_sys::Reflect::get(&wasm_res, &type_key).unwrap();
+    assert_eq!(x_type.as_string(), w_type.as_string(), "Type should match");
+    assert_eq!(x_type.as_string().unwrap(), "xstate.assign", "Type should be xstate.assign");
+    
+    // Compare function type
+    assert!(xstate_res.is_function(), "XState assign returns function");
+    assert!(wasm_res.is_function(), "Wasm assign returns function");
+
+    // Compare assignment payload
+    let assign_key = JsValue::from_str("assignment");
+    let x_val = js_sys::Reflect::get(&xstate_res, &assign_key).unwrap();
+    let w_val = js_sys::Reflect::get(&wasm_res, &assign_key).unwrap();
+    
+    let x_json = js_sys::JSON::stringify(&x_val).unwrap();
+    let w_json = js_sys::JSON::stringify(&w_val).unwrap();
+    assert_eq!(x_json, w_json, "Assignment content should match");
+
+    console::log_1(&"Assign identity verified!".into());
 }
