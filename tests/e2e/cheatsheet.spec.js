@@ -7,7 +7,7 @@ test.describe('XState Cheatsheet Examples', () => {
   // 1. Creating a state machine (Toggle)
   // Original: https://stately.ai/docs/cheatsheet#creating-a-state-machine
   test('Creating a state machine (Toggle) [WASM]', async ({ page }) => {
-    page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+    const commonPath = path.resolve(__dirname, '../../examples/common.js');
     await page.goto('/examples/simple.html');
     // Import the WASM module
     // Note: In a real Node environment we might need to handle WASM loading differently (e.g. fs.readFile)
@@ -42,21 +42,22 @@ test.describe('XState Cheatsheet Examples', () => {
     // Pass object directly to let WASM handle inline functions (if implemented)
     console.log('DEBUG MACHINE DEF:', machineDef.states.active.entry);
     const machine = new FsmRunner(machineDef);
+    machine.start();
     
     // Initial state check
     // WASM API: current_state(), context_json()
     expect(machine.current_state()).toBe('active');
-    // Note: FsmRunner currently does not execute entry actions on initialization, so count is 0
-    expect(JSON.parse(machine.context_json()).count).toBe(0);
+    // Note: FsmRunner now executes entry actions on initialization, so count is 1
+    expect(JSON.parse(machine.context_json()).count).toBe(1);
 
     machine.send('toggle');
     expect(machine.current_state()).toBe('inactive');
-    expect(JSON.parse(machine.context_json()).count).toBe(0);
+    expect(JSON.parse(machine.context_json()).count).toBe(1);
 
     machine.send('toggle');
     expect(machine.current_state()).toBe('active');
-    // Re-enter active -> entry action runs -> set count = 1 (static)
-    expect(JSON.parse(machine.context_json()).count).toBe(1);
+    // Re-enter active -> entry action runs -> increment count -> 2
+    expect(JSON.parse(machine.context_json()).count).toBe(2);
   });
 
   // 2. Creating promise logic
@@ -263,9 +264,8 @@ test.describe('XState Cheatsheet Examples', () => {
     actor.start();
     
     // Entry active -> 'Activating'
-    // TODO: WASM implementation currently does NOT run entry actions on initial start.
-    // We skip this check to verify the rest of the generic action logic (params, etc).
-    // expect(logs).toContain('Activating');
+    // Entry active -> 'Activating'
+    expect(logs).toContain('Activating');
     logs.length = 0; // clear/ensure empty
 
     actor.send({ type: 'toggle' });

@@ -457,7 +457,39 @@ impl FsmRunner {
         self.inspector = Some(callback);
     }
 
-    pub fn start(&self) {
+    pub fn start(&mut self) {
+        // 1. Execute entry actions for the initial state
+        let current_state = self.machine.state();
+        let actions_map = self.actions.clone();
+        
+        let entry_actions = if let Some(state_def) = self.machine.definition.states.get(current_state) {
+            state_def.entry.clone()
+        } else {
+            Vec::new()
+        };
+
+        for action in entry_actions {
+            let action_type = match &action {
+                fsm_core::Action::Named(s) => s.clone(),
+                fsm_core::Action::Assign(a) => a.action_type.clone(),
+                fsm_core::Action::Generic(g) => g.action_type.clone(),
+            };
+
+            if let Some(impl_fn) = actions_map.get(&action_type) {
+                 let params = match &action {
+                     fsm_core::Action::Generic(g) => &g.params,
+                     _ => &None
+                 };
+
+                 // Create init event
+                 let init_event = serde_json::json!({ "type": "xstate.init" });
+                 
+                 // Execute action
+                 (impl_fn)(&mut self.machine.context, &init_event, params);
+            }
+        }
+        
+        // 2. Inspector Snapshot
         if let Some(inspector) = &self.inspector {
              let obj = js_sys::Object::new();
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
