@@ -3,4 +3,4 @@
 **/*.rs.bk
 *.swp
 .DS_Store
-fsm-wasm/pkg
+fsm-wasm/pkgportable-xstate-ffi/tests/out/

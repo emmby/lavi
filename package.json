@@ -1,12 +1,16 @@
 {
   "scripts": {
-    "build": "npm run build:npm && npm run build:web",
+    "build": "npm run build:npm && npm run build:web && npm run build:ffi",
     "build:web": "cd portable-xstate-wasm && wasm-pack build --target web --out-name portable_xstate",
     "build:npm": "cd portable-xstate-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name portable_xstate",
-    "test": "npm run test:native && npm run test:wasm && npm run test:e2e",
+    "test": "npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:ffi",
     "test:native": "cargo test",
     "test:wasm": "cd portable-xstate-wasm && wasm-pack test --headless --chrome",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:ffi": "cargo build --package portable-xstate-ffi",
+    "test:ffi": "npm run build:ffi && npm run test:ffi:c && npm run test:ffi:cpp",
+    "test:ffi:c": "mkdir -p portable-xstate-ffi/tests/out && clang portable-xstate-ffi/tests/c_test.c -o portable-xstate-ffi/tests/out/c_test -I portable-xstate-ffi/include -L target/debug -lportable_xstate_ffi && ./portable-xstate-ffi/tests/out/c_test",
+    "test:ffi:cpp": "mkdir -p portable-xstate-ffi/tests/out && clang++ portable-xstate-ffi/tests/cpp_test.cpp -o portable-xstate-ffi/tests/out/cpp_test -I portable-xstate-ffi/include -L target/debug -lportable_xstate_ffi -std=c++11 && ./portable-xstate-ffi/tests/out/cpp_test"
   },
   "dependencies": {
     "xstate": "^5.25.0"
