@@ -512,7 +512,9 @@ impl FsmRunner {
         let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
 
-        // Parity Fields (empty for now)
+        // Parity Fields
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
         
         obj.into()
@@ -569,21 +571,9 @@ impl FsmRunner {
 
         // 2. Inspect Snapshot
         if let Some(inspector) = &self.inspector {
-             let obj = js_sys::Object::new();
+             let obj = self.get_snapshot();
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_str(self.machine.state()));
-             
-             // Fix: Use JSON parse to avoid Map serialization
-             let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
-             let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
-
-             // Parity Fields
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
-
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
 
