@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "portable-xstate-core",
-    "portable-xstate",
+    "portable-xstate-wasm",
 ]
 resolver = "2"
 

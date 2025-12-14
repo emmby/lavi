@@ -1,11 +1,11 @@
 {
   "scripts": {
     "build": "npm run build:npm && npm run build:web",
-    "build:web": "cd portable-xstate && wasm-pack build --target web --out-name portable_xstate",
-    "build:npm": "cd portable-xstate && wasm-pack build --target nodejs --out-dir pkg-npm --out-name portable_xstate",
+    "build:web": "cd portable-xstate-wasm && wasm-pack build --target web --out-name portable_xstate",
+    "build:npm": "cd portable-xstate-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name portable_xstate",
     "test": "npm run test:native && npm run test:wasm && npm run test:e2e",
     "test:native": "cargo test",
-    "test:wasm": "cd portable-xstate && wasm-pack test --headless --chrome",
+    "test:wasm": "cd portable-xstate-wasm && wasm-pack test --headless --chrome",
     "test:e2e": "playwright test"
   },
   "dependencies": {

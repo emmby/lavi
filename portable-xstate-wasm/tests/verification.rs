@@ -29,7 +29,7 @@ fn verify_scenario(scenario: JsValue) {
 
     // 2. Setup WASM Machine
     console::log_1(&"Setting up WASM machine...".into());
-    let setup_obj = portable_xstate::setup_wasm_machine(config.clone());
+    let setup_obj = portable_xstate_wasm::setup_wasm_machine(config.clone());
     let wasm_machine = setup_obj.create_wasm_machine(wasm_def).expect("Failed to create wasm machine");
 
     // Capture WASM snapshots
@@ -124,7 +124,7 @@ fn test_assign_identity() {
     // Case 1: Object assignment
     let obj_assign = serde_wasm_bindgen::to_value(&serde_json::json!({ "count": 10 })).unwrap();
     let xstate_res = getXStateAssign(&obj_assign);
-    let wasm_res = portable_xstate::assign(obj_assign);
+    let wasm_res = portable_xstate_wasm::assign(obj_assign);
     
     // Compare type
     let type_key = JsValue::from_str("type");
