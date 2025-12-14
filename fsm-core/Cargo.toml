@@ -1,5 +1,5 @@
 [package]
-name = "fsm-core"
+name = "portable-xstate-core"
 version = "0.1.0"
 edition = "2021"
 

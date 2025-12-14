@@ -1,6 +1,6 @@
-# FSM WASM Examples
+# Portable XState Examples
 
-This directory contains HTML examples demonstrating the capabilities of the FSM WASM library.
+This directory contains HTML examples demonstrating the capabilities of the Portable XState library.
 
 ## Prerequisite: Local Server Required
 

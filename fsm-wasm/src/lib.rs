@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use fsm_core::{RuntimeMachine, MachineDefinition};
+use portable_xstate_core::{RuntimeMachine, MachineDefinition};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -483,14 +483,14 @@ impl FsmRunner {
 
         for action in entry_actions {
             let action_type = match &action {
-                fsm_core::Action::Named(s) => s.clone(),
-                fsm_core::Action::Assign(a) => a.action_type.clone(),
-                fsm_core::Action::Generic(g) => g.action_type.clone(),
+                portable_xstate_core::Action::Named(s) => s.clone(),
+                portable_xstate_core::Action::Assign(a) => a.action_type.clone(),
+                portable_xstate_core::Action::Generic(g) => g.action_type.clone(),
             };
 
             if let Some(impl_fn) = actions_map.get(&action_type) {
                  let params = match &action {
-                     fsm_core::Action::Generic(g) => &g.params,
+                     portable_xstate_core::Action::Generic(g) => &g.params,
                      _ => &None
                  };
 

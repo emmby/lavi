@@ -1,8 +1,8 @@
-# Wasm XState Runtime
+# Portable XState
 
 A high-performance, dynamic Finite State Machine (FSM) runtime for the web, powered by Rust and WebAssembly.
 
-This library allows you to load **XState-compatible JSON definitions** at runtime and execute them within a compiled WebAssembly module.
+Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON definitions** at runtime and execute them within a compiled WebAssembly module.
 
 ## Features
 
@@ -13,8 +13,8 @@ This library allows you to load **XState-compatible JSON definitions** at runtim
 
 ## Project Structure
 
-*   **`fsm-core`**: The pure Rust library containing the `RuntimeMachine` logic and state storage.
-*   **`fsm-wasm`**: The generic Wasm adapter that exposes the runtime to the browser.
+*   **`portable-xstate-core`**: The pure Rust library containing the `RuntimeMachine` logic and state storage.
+*   **`portable-xstate`**: The generic Wasm adapter that exposes the runtime to the browser.
 *   **`fsm-codegen`**: (Experimental) Macros for compile-time state machine generation.
 *   **`index.html`**: A demo web page visualizing a Traffic Light state machine.
 
@@ -30,7 +30,7 @@ This library allows you to load **XState-compatible JSON definitions** at runtim
 1.  Open the project in the Dev Container.
 2.  Build the Wasm module:
     ```bash
-    wasm-pack build fsm-wasm --target web
+    wasm-pack build fsm-wasm --target web --out-name portable_xstate
     ```
 
 ### Running the Demo
@@ -54,7 +54,7 @@ These run on your machine and verify the core Rust logic.
 cargo test
 ```
 
-### 2. Run Browser Tests (fsm-wasm)
+### 2. Run Browser Tests (portable-xstate)
 These run in a headless Chrome browser to verify the WASM integration against XState.
 
 ```bash
@@ -78,7 +78,7 @@ Or run them individually:
 ## Usage in JavaScript
 
 ```javascript
-import init, { FsmRunner } from './path/to/pkg/fsm_wasm.js';
+import init, { FsmRunner } from './path/to/pkg/portable_xstate.js';
 
 async function main() {
     await init();

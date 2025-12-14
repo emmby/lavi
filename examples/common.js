@@ -1,4 +1,4 @@
-import { assign } from '../fsm-wasm/pkg/fsm_wasm.js';
+import { assign } from '../fsm-wasm/pkg/portable_xstate.js';
 
 /**
  * Displays the machine definition and configuration in the UI.
