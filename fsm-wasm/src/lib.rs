@@ -23,8 +23,8 @@ impl SetupObject {
          let runner = FsmRunner::new(val, JsValue::UNDEFINED)?;
          let machine = runner.machine.clone();
 
-         let mut guards = HashMap::new();
-         let mut actions = HashMap::new();
+         let mut guards = runner.guards.clone();
+         let mut actions = runner.actions.clone();
          
          // Parse config
          parse_implementations(&self.config, &mut guards, &mut actions);
@@ -401,6 +401,7 @@ fn convert_inline_action(
                              let final_val: serde_json::Value = serde_wasm_bindgen::from_value(final_val_js).unwrap_or(serde_json::Value::Null);
                              
                              let key_str = key_js.as_string().unwrap_or_default();
+                             
                              // Update context
                              ctx_obj.insert(key_str, final_val);
                          }
@@ -411,7 +412,6 @@ fn convert_inline_action(
              // Return replacement object: { type: "generated_assign_N", params: null }
              let new_obj = js_sys::Object::new();
              let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&new_action_name));
-             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &JsValue::NULL);
              return Some(new_obj.into());
          }
      }
@@ -437,7 +437,7 @@ impl FsmRunner {
              // If object, pre-process to "lift" inline implementations (like assign functions)
              let (cleaned_val, extra_actions) = extract_inline_assignments(&val)?;
              actions.extend(extra_actions);
-
+ 
              let json_string = js_sys::JSON::stringify(&cleaned_val)
                 .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
                 .as_string()
@@ -578,6 +578,12 @@ impl FsmRunner {
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
         
+        web_sys::console::log_1(&JsValue::from_str(&format!("SEND: Calling transition for event {}. Actions count: {}", event_name, self.actions.len())));
+        for k in self.actions.keys() {
+             if k.contains("generated") { 
+                 web_sys::console::log_1(&JsValue::from_str(&format!("Action available: {}", k)));
+             }
+        }
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
 
         // 2. Inspect Snapshot

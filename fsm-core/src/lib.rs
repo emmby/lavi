@@ -549,6 +549,8 @@ mod tests {
         assert_eq!(ctx_new.get("fixed").unwrap().as_str(), Some("yes"));
     }
 
+    mod test_action_deser;
+
     #[test]
     fn test_single_action_deserialization() {
         let json = r#"{
