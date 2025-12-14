@@ -37,11 +37,26 @@ pub struct GenericAction {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GuardObject {
+    #[serde(rename = "type")]
+    pub guard_type: String,
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(untagged)]
+pub enum TransitionGuard {
+    Name(String),
+    Object(GuardObject),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TransitionDefinition {
     #[serde(default)]
     pub target: Option<String>,
     #[serde(default, alias = "guard")]
-    pub cond: Option<String>,
+    pub cond: Option<TransitionGuard>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub actions: Vec<Action>,
 }
@@ -202,7 +217,7 @@ impl RuntimeMachine {
         &mut self,
         event: &str,
         event_payload: &serde_json::Value,
-        guards: &HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>>,
+        guards: &HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value, &Option<serde_json::Value>) -> bool>>,
         actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value, &Option<serde_json::Value>)>>,
     ) -> Option<String> {
         // Look up: Current State -> on[Event] -> List of Transitions
@@ -215,9 +230,14 @@ impl RuntimeMachine {
                 if let Some(transitions) = state_def.on.get(event) {
                     for transition in transitions {
                         let should_transition = match &transition.cond {
-                            Some(cond_name) => {
-                                if let Some(guard) = guards.get(cond_name) {
-                                    guard(&self.context, event_payload)
+                            Some(guard_def) => {
+                                let (guard_name, params) = match guard_def {
+                                    TransitionGuard::Name(s) => (s, &None),
+                                    TransitionGuard::Object(obj) => (&obj.guard_type, &obj.params),
+                                };
+
+                                if let Some(guard) = guards.get(guard_name) {
+                                    guard(&self.context, event_payload, params)
                                 } else {
                                     false
                                 }
@@ -456,8 +476,8 @@ mod tests {
         let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
         
         // Define guards
-        let mut guards: HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>> = HashMap::new();
-        guards.insert("can_open".to_string(), Rc::new(|ctx, _evt| {
+        let mut guards: HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value, &Option<serde_json::Value>) -> bool>> = HashMap::new();
+        guards.insert("can_open".to_string(), Rc::new(|ctx, _evt, _params| {
             // Allow open if NOT locked
             if let Some(locked) = ctx.get("locked").and_then(|v| v.as_bool()) {
                 !locked
@@ -560,4 +580,53 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_parameterized_guard() {
+        let json = r#"{
+          "id": "param_test",
+          "initial": "a",
+          "states": {
+            "a": {
+              "on": {
+                "NEXT": [
+                  { "target": "b", "cond": { "type": "greaterThan", "params": { "min": 10 } } }
+                ]
+              }
+            },
+            "b": {}
+          },
+          "context": { "val": 5 }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).expect("Failed to parse");
+        
+        let mut guards: HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value, &Option<serde_json::Value>) -> bool>> = HashMap::new();
+        guards.insert("greaterThan".to_string(), Rc::new(|ctx, _evt, params| {
+            let val = ctx.get("val").and_then(|v| v.as_i64()).unwrap_or(0);
+            if let Some(p) = params {
+                let min = p.get("min").and_then(|v| v.as_i64()).unwrap_or(0);
+                val > min
+            } else {
+                false
+            }
+        }));
+        
+        let actions = HashMap::new();
+        let payload = serde_json::Value::Null;
+
+        // 1. val is 5, min is 10. 5 > 10 is false. Should NOT transition.
+        machine.transition("NEXT", &payload, &guards, &actions);
+        assert_eq!(machine.state(), "a");
+
+        // 2. Update context val to 15.
+        if let Some(obj) = machine.context.as_object_mut() {
+            obj.insert("val".to_string(), serde_json::Value::Number(15.into()));
+        }
+
+        // 3. val is 15, min is 10. 15 > 10 is true. Should transition.
+        machine.transition("NEXT", &payload, &guards, &actions);
+        assert_eq!(machine.state(), "b");
+    }
 }
+

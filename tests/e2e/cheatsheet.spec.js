@@ -304,11 +304,22 @@ test.describe('XState Cheatsheet Examples', () => {
   });
 
   // 8. Guards
-  // Original: https://stately.ai/docs/cheatsheet#guards
-  // TODO: Replace xstate with wasm
-  test('Guards', async () => {
+  // Note: This test uses a custom 'toggle' machine (different from the cheatsheet's 'feedback' machine)
+  // to verify parameterized guards ('isAfterTime') and context-based guards ('canBeToggled') in WASM.
+  test('Guards [WASM]', async () => {
+    // Import WASM module
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../fsm-wasm/pkg/fsm_wasm.js');
+
+    // Initialize WASM
+    const fs = require('fs');
+    const path = require('path');
+    const wasmPath = path.resolve(__dirname, '../../fsm-wasm/pkg/fsm_wasm_bg.wasm');
+    const wasmBuffer = fs.readFileSync(wasmPath);
+    const wasmModule = await WebAssembly.compile(wasmBuffer);
+    await init({ module_or_path: wasmModule });
+
     const logs = [];
-    const machine = setup({
+    const machine = wasmSetup({
       guards: {
         canBeToggled: ({ context }) => context.canActivate,
         isAfterTime: (_, params) => {
@@ -348,19 +359,26 @@ test.describe('XState Cheatsheet Examples', () => {
                guard: { type: 'isAfterTime', params: { shouldPass: false } },
                target: 'inactive',
             }
-          },
+        },
         },
       },
     });
 
-    const actor = createActor(machine);
+    const actor = wasmCreateActor(machine);
     actor.start();
 
-    // Active -> Inactive (guard isAfterTime is mocked to true)
+    // Initial state: active
+    expect(actor.getSnapshot().value).toBe('active');
+
+    // failToggle -> suppressed by guard (shouldPass: false)
+    actor.send({ type: 'failToggle' });
+    expect(actor.getSnapshot().value).toBe('active');
+
+    // toggle -> allowed by guard (shouldPass: true) -> inactive
     actor.send({ type: 'toggle' });
     expect(actor.getSnapshot().value).toBe('inactive');
 
-    // Inactive -> Active (guard canBeToggled is false)
+    // In inactive: toggle -> canBeToggled (false) -> fallback action
     actor.send({ type: 'toggle' });
     expect(actor.getSnapshot().value).toBe('inactive');
     expect(logs).toContain('Cannot be toggled');

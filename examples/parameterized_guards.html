@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FSM WASM - Parameterized Guards</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module">
+        import init, { createActor } from '../fsm-wasm/pkg/fsm_wasm.js';
+
+        async function main() {
+            // Initialize WASM
+            await init();
+
+            const machineDef = {
+                id: "paramGuards",
+                initial: "start",
+                context: { count: 0 },
+                states: {
+                    start: {
+                        on: {
+                            NEXT: [
+                                { 
+                                    target: "high", 
+                                    cond: { type: "greaterThan", params: { min: 5 } } 
+                                },
+                                {
+                                    target: "medium",
+                                    cond: { type: "greaterThan", params: { min: 2 } }
+                                },
+                                { 
+                                    target: "start",
+                                    actions: [{ type: "log", params: { msg: "Stayed in start" } }]
+                                }
+                            ]
+                        }
+                    },
+                    medium: {
+                        on: { RESET: { target: "start", actions: [{ type: "reset" }] } }
+                    },
+                    high: {
+                        on: { RESET: { target: "start", actions: [{ type: "reset" }] } }
+                    }
+                }
+            };
+
+            const options = {
+                guards: {
+                    greaterThan: (ctx, event, params) => {
+                        console.log("Guard greaterThan checked:", { ctx, params });
+                        return ctx.count > params.min;
+                    }
+                },
+                actions: {
+                    reset: (ctx) => {
+                         // Note: In real XState 5 this might be assign, but for this demo ensuring legacy actions work too
+                         console.log("Resetting");
+                    },
+                    log: (ctx, event, params) => {
+                        console.log("Log:", params?.msg);
+                    }
+                }
+            };
+
+            const actor = createActor(machineDef, options);
+            actor.start();
+
+            // Helpers
+            window.actor = actor;
+            window.setCount = (n) => {
+                // Manually hacking context for demo purposes since we don't have assign accessible easily 
+                // outside of the machine definition without sending an event that triggers an assign.
+                // But wait, we can't hack context easily from outside in this binding yet (no set_context).
+                // So let's use an event to update it.
+            };
+            
+            // Helper to update count via internal event
+            // Note: We need to define an action in the machine to update count
+            // Let's reload with a better machine def for the UI
+        }
+        
+        main();
+    </script>
+</head>
+<body>
+    <div id="app">
+        <h1>Parameterized Guards</h1>
+        <div class="card">
+            <div class="state-display">
+                State: <span id="state">Loading...</span>
+            </div>
+            <div class="context-display">
+                Count: <span id="count">0</span>
+            </div>
+            
+            <div class="controls">
+                <button id="btnInc">Increment (+1)</button>
+                <button id="btnNext">Try Next</button>
+                <button id="btnReset">Reset</button>
+            </div>
+            
+            <p class="description">
+                Logic: <br>
+                - If count > 5 -> Go to "high"<br>
+                - Else if count > 2 -> Go to "medium"<br>
+                - Else -> Stay in "start"
+            </p>
+        </div>
+    </div>
+    <script type="module">
+        import init, { createActor, assign } from '../fsm-wasm/pkg/fsm_wasm.js';
+
+        async function main() {
+            await init();
+
+            const machineDef = {
+                id: "guards-machine",
+                initial: "start",
+                context: { count: 0 },
+                states: {
+                    start: {
+                        on: {
+                            INC: {
+                                actions: [assign({ count: ({ context }) => context.count + 1 })]
+                            },
+                            NEXT: [
+                                { 
+                                    target: "high", 
+                                    cond: { type: "greaterThan", params: { min: 5 } } 
+                                },
+                                {
+                                    target: "medium",
+                                    cond: { type: "greaterThan", params: { min: 2 } }
+                                },
+                                { 
+                                    target: "start" // Fallback
+                                }
+                            ]
+                        }
+                    },
+                    medium: {
+                        on: { RESET: { target: "start", actions: ["resetCount"] } }
+                    },
+                    high: {
+                        on: { RESET: { target: "start", actions: ["resetCount"] } }
+                    }
+                }
+            };
+
+            const options = {
+                guards: {
+                    greaterThan: (ctx, event, params) => {
+                        return ctx.count > (params?.min || 0);
+                    }
+                },
+                actions: {
+                    resetCount: assign({ count: 0 })
+                }
+            };
+
+            const actor = createActor(machineDef, options);
+            actor.start();
+            window.actor = actor;
+
+            function updateUI() {
+                const snap = actor.getSnapshot();
+                document.getElementById('state').textContent = typeof snap.value === 'string' ? snap.value : JSON.stringify(snap.value);
+                document.getElementById('count').textContent = snap.context.count;
+            }
+
+            updateUI();
+            
+            // Buttons
+            document.getElementById('btnInc').onclick = () => {
+                actor.send({ type: "INC" });
+                updateUI();
+            };
+            document.getElementById('btnNext').onclick = () => {
+                actor.send({ type: "NEXT" });
+                updateUI();
+            };
+            document.getElementById('btnReset').onclick = () => {
+                actor.send({ type: "RESET" });
+                updateUI();
+            };
+        }
+        main().catch(console.error);
+    </script>
+</body>
+</html>
