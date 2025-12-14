@@ -5,82 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FSM WASM - Parameterized Guards</title>
     <link rel="stylesheet" href="style.css">
-    <script type="module">
-        import init, { createActor } from '../fsm-wasm/pkg/fsm_wasm.js';
 
-        async function main() {
-            // Initialize WASM
-            await init();
-
-            const machineDef = {
-                id: "paramGuards",
-                initial: "start",
-                context: { count: 0 },
-                states: {
-                    start: {
-                        on: {
-                            NEXT: [
-                                { 
-                                    target: "high", 
-                                    cond: { type: "greaterThan", params: { min: 5 } } 
-                                },
-                                {
-                                    target: "medium",
-                                    cond: { type: "greaterThan", params: { min: 2 } }
-                                },
-                                { 
-                                    target: "start",
-                                    actions: [{ type: "log", params: { msg: "Stayed in start" } }]
-                                }
-                            ]
-                        }
-                    },
-                    medium: {
-                        on: { RESET: { target: "start", actions: [{ type: "reset" }] } }
-                    },
-                    high: {
-                        on: { RESET: { target: "start", actions: [{ type: "reset" }] } }
-                    }
-                }
-            };
-
-            const options = {
-                guards: {
-                    greaterThan: (ctx, event, params) => {
-                        console.log("Guard greaterThan checked:", { ctx, params });
-                        return ctx.count > params.min;
-                    }
-                },
-                actions: {
-                    reset: (ctx) => {
-                         // Note: In real XState 5 this might be assign, but for this demo ensuring legacy actions work too
-                         console.log("Resetting");
-                    },
-                    log: (ctx, event, params) => {
-                        console.log("Log:", params?.msg);
-                    }
-                }
-            };
-
-            const actor = createActor(machineDef, options);
-            actor.start();
-
-            // Helpers
-            window.actor = actor;
-            window.setCount = (n) => {
-                // Manually hacking context for demo purposes since we don't have assign accessible easily 
-                // outside of the machine definition without sending an event that triggers an assign.
-                // But wait, we can't hack context easily from outside in this binding yet (no set_context).
-                // So let's use an event to update it.
-            };
-            
-            // Helper to update count via internal event
-            // Note: We need to define an action in the machine to update count
-            // Let's reload with a better machine def for the UI
-        }
-        
-        main();
-    </script>
 </head>
 <body>
     <div id="app">
@@ -149,8 +74,8 @@
 
             const options = {
                 guards: {
-                    greaterThan: (ctx, event, params) => {
-                        return ctx.count > (params?.min || 0);
+                    greaterThan: ({ context }, params) => {
+                        return context.count > (params?.min || 0);
                     }
                 },
                 actions: {

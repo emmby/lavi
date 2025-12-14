@@ -228,7 +228,7 @@ test.describe('FSM WASM Examples', () => {
 
       // Try Next (6 > 5 is true) -> High
       await nextBtn.click();
-      await expect(stateLabel).toHaveText('"high"'); // The UI implementation stringifies value if object, high is simple string but maybe result is quoted? Check implementation.
+      await expect(stateLabel).toHaveText('high');
       // Wait, in JS UI: document.getElementById('state').textContent = typeof snap.value === 'string' ? snap.value : JSON.stringify(snap.value);
       // If result is "high", prompt text is high.
       // But verify if `snap.value` is "high" or object. It should be "high".

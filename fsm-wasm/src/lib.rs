@@ -108,6 +108,7 @@ fn parse_implementations(
     if guards_val.is_object() {
          let guards_map = js_sys::Object::from(guards_val);
          let keys = js_sys::Object::keys(&guards_map);
+         
          for i in 0..keys.length() {
              let key_js = keys.get(i);
              let key_str = key_js.as_string().unwrap_or_default();
@@ -133,14 +134,14 @@ fn parse_implementations(
                      let arg_obj = js_sys::Object::new();
                      let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
                      let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-
+ 
                      let res = guard_fn.call2(&JsValue::NULL, &arg_obj, &params_js).unwrap_or(JsValue::FALSE);
                      res.as_bool().unwrap_or(false)
                  }));
              }
          }
     }
-
+ 
     // --- Actions ---
     let actions_key = JsValue::from_str("actions");
     let actions_val = js_sys::Reflect::get(&obj, &actions_key).unwrap_or(JsValue::UNDEFINED);
@@ -578,12 +579,6 @@ impl FsmRunner {
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
         
-        web_sys::console::log_1(&JsValue::from_str(&format!("SEND: Calling transition for event {}. Actions count: {}", event_name, self.actions.len())));
-        for k in self.actions.keys() {
-             if k.contains("generated") { 
-                 web_sys::console::log_1(&JsValue::from_str(&format!("Action available: {}", k)));
-             }
-        }
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
 
         // 2. Inspect Snapshot
