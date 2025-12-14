@@ -125,7 +125,12 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "portable-xstate-core"
 version = "0.1.0"
+
+[[package]]
+name = "portable-xstate-json"
+version = "0.1.0"
 dependencies = [
+ "portable-xstate-core",
  "serde",
  "serde_json",
 ]
@@ -136,6 +141,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "portable-xstate-core",
+ "portable-xstate-json",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

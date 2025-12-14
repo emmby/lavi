@@ -2,6 +2,7 @@
 members = [
     "portable-xstate-core",
     "portable-xstate-wasm",
+    "portable-xstate-json",
 ]
 resolver = "2"
 
@@ -13,5 +14,6 @@ quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 proc-macro2 = "1.0"
 portable-xstate-core = { path = "./portable-xstate-core" }
+portable-xstate-json = { path = "./portable-xstate-json" }
 serde-wasm-bindgen = "0.6"
 

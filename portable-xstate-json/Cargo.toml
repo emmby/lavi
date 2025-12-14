@@ -1,0 +1,9 @@
+[package]
+name = "portable-xstate-json"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+portable-xstate-core = { path = "../portable-xstate-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
