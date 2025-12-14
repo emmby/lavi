@@ -18,6 +18,7 @@ pub struct MachineDefinition {
 pub enum Action {
     Named(String),
     Assign(AssignAction),
+    Generic(GenericAction),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -25,6 +26,14 @@ pub struct AssignAction {
     #[serde(rename = "type")]
     pub action_type: String, // Expect "xstate.assign"
     pub assignment: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GenericAction {
+    #[serde(rename = "type")]
+    pub action_type: String,
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -46,6 +55,8 @@ pub struct StateDefinition {
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub exit: Vec<Action>,
 }
+
+// ... helper functions omitted for brevity in replacement chunk ...
 
 fn deserialize_vec_or_single<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
@@ -117,7 +128,7 @@ impl RuntimeMachine {
         event: &str,
         event_payload: &serde_json::Value,
         guards: &HashMap<String, Rc<dyn Fn(&serde_json::Value, &serde_json::Value) -> bool>>,
-        actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value)>>,
+        actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value, &Option<serde_json::Value>)>>,
     ) -> Option<String> {
         // Look up: Current State -> on[Event] -> List of Transitions
         if let Some(state_def) = self.definition.states.get(&self.current_state) {
@@ -190,13 +201,18 @@ impl RuntimeMachine {
         context: &mut serde_json::Value,
         action: &Action,
         event_payload: &serde_json::Value,
-        actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value)>>,
+        actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value, &Option<serde_json::Value>)>>,
     ) {
         match action {
             Action::Named(name) => {
                 if let Some(action_fn) = actions.get(name) {
-                    action_fn(context, event_payload);
+                    action_fn(context, event_payload, &None);
                 }
+            }
+            Action::Generic(generic_action) => {
+                 if let Some(action_fn) = actions.get(&generic_action.action_type) {
+                     action_fn(context, event_payload, &generic_action.params);
+                 }
             }
             Action::Assign(assign_action) => {
                 // Handle static assignment
