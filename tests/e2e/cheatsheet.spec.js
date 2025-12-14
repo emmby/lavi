@@ -4,6 +4,12 @@ const { setup, createActor, assign, fromPromise, fromTransition, fromObservable,
 const fs = require('fs');
 const path = require('path');
 
+// Instructions to migrate these tests to WASM.
+// - Identify the next test in cheatsheet.spec.js that is most likely to work successfully as-is using our wasm interpreter. Update that test to use the wasm interpreter instead of the xstate interpreter.
+// - Identify the reason for any failures but DO NOT FIX the failures yet.
+// - Without changing the test, update the WASM interpreter to match the xstate interpreter so the test passes
+// - Wait for the user to instruct you to move on to the next test.
+
 test.describe('XState Cheatsheet Examples', () => {
 
   // 1. Creating a state machine (Toggle)
