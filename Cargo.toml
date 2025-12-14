@@ -4,6 +4,7 @@ members = [
 
     "fsm-wasm",
 ]
+resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
