@@ -29,7 +29,8 @@ test.describe('XState Cheatsheet Examples', () => {
     // We might need to pass the bytes if fetch isn't available or if path is wrong.
     const wasmPath = path.resolve(__dirname, '../../fsm-wasm/pkg/fsm_wasm_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
-    await init(wasmBuffer);
+    const wasmModule = await WebAssembly.compile(wasmBuffer);
+    await init({ module_or_path: wasmModule });
     
     const machineDef = {
       id: 'toggle',
@@ -192,7 +193,8 @@ test.describe('XState Cheatsheet Examples', () => {
     // Initialize WASM
     const wasmPath = path.resolve(__dirname, '../../fsm-wasm/pkg/fsm_wasm_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
-    await init(wasmBuffer);
+    const wasmModule = await WebAssembly.compile(wasmBuffer);
+    await init({ module_or_path: wasmModule });
 
     const machine = wasmSetup({ /* ... */}).createMachine({
       id: 'parent',
@@ -242,7 +244,8 @@ test.describe('XState Cheatsheet Examples', () => {
     const path = require('path');
     const wasmPath = path.resolve(__dirname, '../../fsm-wasm/pkg/fsm_wasm_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
-    await init(wasmBuffer);
+    const wasmModule = await WebAssembly.compile(wasmBuffer);
+    await init({ module_or_path: wasmModule });
 
     const logs = [];
     

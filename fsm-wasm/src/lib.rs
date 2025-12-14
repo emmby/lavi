@@ -415,7 +415,7 @@ fn convert_inline_action(
 impl FsmRunner {
     #[wasm_bindgen(constructor)]
     pub fn new(val: JsValue) -> Result<FsmRunner, JsValue> {
-        let mut guards = HashMap::new();
+        let guards = HashMap::new();
         let mut actions = HashMap::new();
 
         let machine = if val.is_string() {

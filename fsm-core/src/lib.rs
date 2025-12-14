@@ -133,7 +133,7 @@ impl RuntimeMachine {
 
     pub fn resolve_initial_state(states: &HashMap<String, StateDefinition>, start_key: &str) -> String {
         let mut current_key = start_key.to_string();
-        let mut current_states = states;
+        // let current_states = states; // Removed unused variable
         
         // Loop to dig deeper if there's an initial state
         loop {
@@ -186,7 +186,7 @@ impl RuntimeMachine {
         let mut current_map = root_states;
         let mut last_def = None;
 
-        for (i, part) in parts.iter().enumerate() {
+        for part in parts.iter() {
             if let Some(def) = current_map.get(*part) {
                 last_def = Some(def);
                 current_map = &def.states;
