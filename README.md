@@ -92,10 +92,11 @@ async function main() {
     });
 
     const machine = new FsmRunner(machineDef);
-    console.log(machine.current_state()); // "idle"
+    console.log(machine.getSnapshot().value); // "idle"
     
-    machine.transition("START");
-    console.log(machine.current_state()); // "running"
+    // Send an event
+    machine.send("START");
+    console.log(machine.getSnapshot().value); // "running"
 }
 main();
 ```

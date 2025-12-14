@@ -154,8 +154,8 @@
             // Initial manual update to show starting state
             updateUI();
 
-            document.getElementById('btnNext').onclick = () => machine.transition("NEXT");
-            document.getElementById('btnReset').onclick = () => machine.transition("RESET");
+            document.getElementById('btnNext').onclick = () => machine.send("NEXT");
+            document.getElementById('btnReset').onclick = () => machine.send("RESET");
         }
 
         main().catch(console.error);

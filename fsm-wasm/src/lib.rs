@@ -453,7 +453,7 @@ impl FsmRunner {
     }
 
 
-    pub fn set_inspector(&mut self, callback: js_sys::Function) {
+    pub(crate) fn set_inspector(&mut self, callback: js_sys::Function) {
         self.inspector = Some(callback);
     }
 
@@ -544,7 +544,7 @@ impl FsmRunner {
         obj.into()
     }
 
-    pub fn transition(&mut self, event: JsValue) -> Option<String> {
+    pub fn send(&mut self, event: JsValue) {
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
             (s.clone(), serde_json::json!({ "type": s }))
@@ -567,7 +567,7 @@ impl FsmRunner {
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
         
-        let result = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
+        let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
 
         // 2. Inspect Snapshot
         if let Some(inspector) = &self.inspector {
@@ -576,26 +576,9 @@ impl FsmRunner {
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
-
-        result
     }
 
-    pub fn set_context_bool(&mut self, key: &str, value: bool) {
-        if let Some(obj) = self.machine.context.as_object_mut() {
-            obj.insert(key.to_string(), serde_json::Value::Bool(value));
-        } else {
-            // context might be null or not an object, promote to object?
-            // for now assume initialized as object
-            let mut map = serde_json::Map::new();
-            map.insert(key.to_string(), serde_json::Value::Bool(value));
-            self.machine.context = serde_json::Value::Object(map); 
-        }
-    }
-
-    pub fn send(&mut self, event: JsValue) -> Option<String> {
-        self.transition(event)
-    }
-
+    #[wasm_bindgen(js_name = subscribe)]
     pub fn subscribe(&mut self, callback: js_sys::Function) {
         self.set_inspector(callback);
     }

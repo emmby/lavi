@@ -86,9 +86,9 @@
             machine = wasmMachine.createActor({});
             updateUI();
             
-            document.getElementById('btnInc').onclick = () => machine.transition("INC");
-            document.getElementById('btnDec').onclick = () => machine.transition("DEC");
-            document.getElementById('btnReset').onclick = () => machine.transition("RESET");
+            document.getElementById('btnInc').onclick = () => machine.send("INC");
+            document.getElementById('btnDec').onclick = () => machine.send("DEC");
+            document.getElementById('btnReset').onclick = () => machine.send("RESET");
         }
 
         main().catch(console.error);

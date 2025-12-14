@@ -86,7 +86,7 @@
         // Initial render
         updateUI();
 
-        document.getElementById('btnToggle').onclick = () => machine.transition("TOGGLE");
+        document.getElementById('btnToggle').onclick = () => machine.send("TOGGLE");
     </script>
 </body>
 </html>

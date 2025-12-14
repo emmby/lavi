@@ -121,11 +121,11 @@
         // Initial manual update
         updateUI();
 
-        document.getElementById('btnOpen').onclick = () => machine.transition("OPEN");
-        document.getElementById('btnClose').onclick = () => machine.transition("CLOSE");
+        document.getElementById('btnOpen').onclick = () => machine.send("OPEN");
+        document.getElementById('btnClose').onclick = () => machine.send("CLOSE");
         
-        document.getElementById('btnLock').onclick = () => machine.transition("LOCK");
-        document.getElementById('btnUnlock').onclick = () => machine.transition("UNLOCK");
+        document.getElementById('btnLock').onclick = () => machine.send("LOCK");
+        document.getElementById('btnUnlock').onclick = () => machine.send("UNLOCK");
     </script>
 </body>
 </html>
