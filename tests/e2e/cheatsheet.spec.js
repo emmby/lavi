@@ -1,6 +1,8 @@
 
 const { test, expect } = require('@playwright/test');
 const { setup, createActor, assign, fromPromise, fromTransition, fromObservable, fromCallback } = require('xstate');
+const fs = require('fs');
+const path = require('path');
 
 test.describe('XState Cheatsheet Examples', () => {
 
@@ -17,8 +19,6 @@ test.describe('XState Cheatsheet Examples', () => {
     // Initialize WASM
     // In Node (non-browser), wasm-pack generated code might try to fetch/load wasm_bg.wasm.
     // We might need to pass the bytes if fetch isn't available or if path is wrong.
-    const fs = require('fs');
-    const path = require('path');
     const wasmPath = path.resolve(__dirname, '../../fsm-wasm/pkg/fsm_wasm_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     await init(wasmBuffer);
@@ -40,7 +40,6 @@ test.describe('XState Cheatsheet Examples', () => {
     
     // const jsonStr = JSON.stringify(machineDef);
     // Pass object directly to let WASM handle inline functions (if implemented)
-    console.log('DEBUG MACHINE DEF:', machineDef.states.active.entry);
     const machine = new FsmRunner(machineDef);
     machine.start();
     
