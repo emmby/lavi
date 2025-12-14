@@ -1,0 +1,12 @@
+[package]
+name = "portable-xstate-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+portable-xstate-core = { path = "../portable-xstate-core" }
+portable-xstate-json = { path = "../portable-xstate-json" }
+libc = "0.2"

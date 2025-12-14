@@ -2,7 +2,7 @@
 members = [
     "portable-xstate-core",
     "portable-xstate-wasm",
-    "portable-xstate-json",
+    "portable-xstate-json", "portable-xstate-ffi",
 ]
 resolver = "2"
 
