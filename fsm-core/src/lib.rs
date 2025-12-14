@@ -33,18 +33,61 @@ pub struct TransitionDefinition {
     pub target: Option<String>,
     #[serde(default, alias = "guard")]
     pub cond: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub actions: Vec<Action>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StateDefinition {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
     pub on: HashMap<String, Vec<TransitionDefinition>>, // Event -> List of Transitions
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<Action>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub exit: Vec<Action>,
+}
+
+fn deserialize_vec_or_single<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum VecOrSingle<T> {
+        Vec(Vec<T>),
+        Single(T),
+    }
+
+    match VecOrSingle::deserialize(deserializer)? {
+        VecOrSingle::Vec(v) => Ok(v),
+        VecOrSingle::Single(s) => Ok(vec![s]),
+    }
+}
+
+fn deserialize_map_vec_or_single<'de, D, T>(deserializer: D) -> Result<HashMap<String, Vec<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum VecOrSingle<T> {
+        Vec(Vec<T>),
+        Single(T),
+    }
+
+    let map: HashMap<String, VecOrSingle<T>> = HashMap::deserialize(deserializer)?;
+    
+    let mut result = HashMap::new();
+    for (key, value) in map {
+        let vec = match value {
+            VecOrSingle::Vec(v) => v,
+            VecOrSingle::Single(s) => vec![s],
+        };
+        result.insert(key, vec);
+    }
+    Ok(result)
 }
 
 // --- Runtime ---
@@ -349,5 +392,37 @@ mod tests {
         let ctx_new = machine.context.as_object().unwrap();
         assert_eq!(ctx_new.get("count").unwrap().as_i64(), Some(1));
         assert_eq!(ctx_new.get("fixed").unwrap().as_str(), Some("yes"));
+    }
+
+    #[test]
+    fn test_single_action_deserialization() {
+        let json = r#"{
+          "id": "single_action",
+          "initial": "active",
+          "context": { "count": 0 },
+          "states": {
+            "active": {
+              "entry": { 
+                 "type": "assign", 
+                 "assignment": {} 
+              },
+              "on": { "NEXT": [ { "target": "inactive" } ] }
+            },
+            "inactive": {}
+          }
+        }"#;
+
+        let machine = RuntimeMachine::from_json(json);
+        assert!(machine.is_ok(), "Failed to parse single action object: {:?}", machine.err());
+        
+        let machine = machine.unwrap();
+        if let Some(state) = machine.definition.states.get("active") {
+            assert_eq!(state.entry.len(), 1);
+            if let Action::Assign(assign) = &state.entry[0] {
+                assert_eq!(assign.action_type, "assign");
+            } else {
+                panic!("Expected Assign action");
+            }
+        }
     }
 }
