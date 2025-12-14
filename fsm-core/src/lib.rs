@@ -48,6 +48,11 @@ pub struct TransitionDefinition {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StateDefinition {
+    #[serde(default)]
+    pub initial: Option<String>,
+    #[serde(default)]
+    pub states: HashMap<String, StateDefinition>,
+
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
     pub on: HashMap<String, Vec<TransitionDefinition>>, // Event -> List of Transitions
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
@@ -111,9 +116,12 @@ pub struct RuntimeMachine {
 }
 
 impl RuntimeMachine {
+
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let definition: MachineDefinition = serde_json::from_str(json)?;
-        let current_state = definition.initial.clone();
+        let initial_top = definition.initial.clone();
+        // Resolve deep initial state
+        let current_state = Self::resolve_initial_state(&definition.states, &initial_top);
         let context = definition.context.clone().unwrap_or(serde_json::Value::Null);
         
         Ok(Self {
@@ -123,6 +131,73 @@ impl RuntimeMachine {
         })
     }
 
+    pub fn resolve_initial_state(states: &HashMap<String, StateDefinition>, start_key: &str) -> String {
+        let mut current_key = start_key.to_string();
+        let mut current_states = states;
+        
+        // Loop to dig deeper if there's an initial state
+        loop {
+            // Find the state definition for the current key's leaf
+            // (Note: This simple logic assumes start_key is a direct child of 'states' for the first step)
+            // For proper recursion, we need to traverse the path if it's already dotted.
+            // But from_json starts with top-level key.
+            
+            // NOTE: This logic assumes we build the path incrementally. 
+            // If start_key is "active", we look in states["active"].
+            // If that has initial="one", we append ".one" and look in states["active"].states["one"].
+            
+            // Actually, let's just implement the "descent" from the current level.
+            // But we need to look up `current_key` in the generic map.
+            // It's cleaner to traverse.
+            
+            // Simplified approach: Just verify if we can go deeper. 
+            // We need a helper that takes the FULL path and returns the Definition + Context for next step?
+            // Or just recursive helper.
+            
+            // Let's restart logic:
+            // 1. We have a path (e.g. "active"). 
+            // 2. Resolve definition.
+            // 3. If definition has `initial`, append it (e.g. "active.one") and recurse.
+            // 4. Else return path.
+             
+            if let Some(def) = Self::get_state_def_recursive(states, &current_key) {
+                 if let Some(ref init) = def.initial {
+                     current_key = format!("{}.{}", current_key, init);
+                     // Continue loop with new key
+                 } else {
+                     break;
+                 }
+            } else {
+                break;
+            }
+        }
+        current_key
+    }
+
+    pub fn get_state_definition(&self, path: &str) -> Option<&StateDefinition> {
+        Self::get_state_def_recursive(&self.definition.states, path)
+    }
+
+    fn get_state_def_recursive<'a>(
+        root_states: &'a HashMap<String, StateDefinition>, 
+        path: &str
+    ) -> Option<&'a StateDefinition> {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current_map = root_states;
+        let mut last_def = None;
+
+        for (i, part) in parts.iter().enumerate() {
+            if let Some(def) = current_map.get(*part) {
+                last_def = Some(def);
+                current_map = &def.states;
+            } else {
+                return None;
+            }
+        }
+        last_def
+    }
+
+
     pub fn transition(
         &mut self,
         event: &str,
@@ -131,65 +206,109 @@ impl RuntimeMachine {
         actions: &HashMap<String, Rc<dyn Fn(&mut serde_json::Value, &serde_json::Value, &Option<serde_json::Value>)>>,
     ) -> Option<String> {
         // Look up: Current State -> on[Event] -> List of Transitions
-        if let Some(state_def) = self.definition.states.get(&self.current_state) {
-            if let Some(transitions) = state_def.on.get(event) {
-                for transition in transitions {
-                    let should_transition = match &transition.cond {
-                        Some(cond_name) => {
-                            if let Some(guard) = guards.get(cond_name) {
-                                guard(&self.context, event_payload)
+        // Support hierarchy: If current state is "active.one", check "active.one", then "active".
+        
+        let mut state_path = self.current_state.clone();
+        
+        loop {
+            if let Some(state_def) = Self::get_state_def_recursive(&self.definition.states, &state_path) {
+                if let Some(transitions) = state_def.on.get(event) {
+                    for transition in transitions {
+                        let should_transition = match &transition.cond {
+                            Some(cond_name) => {
+                                if let Some(guard) = guards.get(cond_name) {
+                                    guard(&self.context, event_payload)
+                                } else {
+                                    false
+                                }
+                            }
+                            None => true,
+                        };
+
+                        if should_transition {
+                            let target_base = transition.target.clone().unwrap_or(state_path.clone());
+                            // If target is sibling, resolve relative to parent? 
+                            // XState resolution is complex. For cheatsheet:
+                            // If target="inactive", and we are at "active.one", we look for "active.inactive" then "inactive".
+                            // For this MVP, assume absolute paths or siblings of ROOT unless formatted.
+                            // Actually, standard string targets often imply "sibling" or "top-level".
+                            // Simplification: Try to find target in Root. If not, maybe implementation specific.
+                            // The test uses "inactive" (sibling of active) and "two" (sibling of one).
+                            // So "two" -> "active.two". "inactive" -> "inactive".
+
+                            let next_state_full_path = if transition.target.is_none() {
+                                state_path.clone() // Internal / stay
                             } else {
-                                // Guard specified but not found in implementation map.
-                                // In XState, this usually logs a warning and treats as false.
-                                // For this simple implementation, we'll treat as false (block transition).
-                                false
-                            }
-                        }
-                        None => true, // No guard, always take it
-                    };
+                                // Resolve target path
+                                // 1. Try absolute/top-level
+                                if self.definition.states.contains_key(&target_base) {
+                                    Self::resolve_initial_state(&self.definition.states, &target_base)
+                                } else {
+                                    // 2. Try sibling of current matched state (state_path)
+                                    // If state_path is "active", sibling checks root.
+                                    // If state_path is "active.one", sibling is "active.two".
+                                    if let Some(parent_dot) = state_path.rfind('.') {
+                                        let parent_path = &state_path[..parent_dot];
+                                        let sibling_path = format!("{}.{}", parent_path, target_base);
+                                        // Verify it exists
+                                        if Self::get_state_def_recursive(&self.definition.states, &sibling_path).is_some() {
+                                            Self::resolve_initial_state(&self.definition.states, &sibling_path)
+                                        } else {
+                                            // Fallback to absolute/base (might fail but best guess)
+                                            target_base
+                                        }
+                                    } else {
+                                        // No parent, so we already checked root. Just return base.
+                                        target_base
+                                    }
+                                }
+                            };
+                            
+                            let is_internal = transition.target.is_none(); 
 
-                    if should_transition {
-                        // Determine next state (if target is None, it's a self-transition to current state, or rather internal?)
-                        // In XState:
-                        // - Internal (no target): actions run, no exit/entry.
-                        // - External (target=current): exit, actions, entry.
-                        // For simplicity here: Treat None as Internal (stay, no exit/entry, just actions).
-                        // If user wants re-entry, they should specify target explicitly.
-                        
-                        let next_state_name = transition.target.clone().unwrap_or(self.current_state.clone());
-                        let is_internal = transition.target.is_none(); 
-
-                        if !is_internal {
-                            // 1. Execute Exit Actions for Current State
-                            if let Some(current_state_def) = self.definition.states.get(&self.current_state) {
-                                for action in &current_state_def.exit {
-                                    Self::execute_action(&mut self.context, action, event_payload, actions);
+                            if !is_internal {
+                                // 1. Execute Exit Actions for Current State (and parents up to LCCA?)
+                                // MVP: Just exit current leaf.
+                                if let Some(current_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
+                                    for action in &current_state_def.exit {
+                                        Self::execute_action(&mut self.context, action, event_payload, actions);
+                                    }
                                 }
                             }
-                        }
 
-                        // 2. Execute Transition Actions
-                        for action in &transition.actions {
-                            Self::execute_action(&mut self.context, action, event_payload, actions);
-                        }
+                            // 2. Execute Transition Actions
+                            for action in &transition.actions {
+                                Self::execute_action(&mut self.context, action, event_payload, actions);
+                            }
 
-                        if !is_internal {
-                            // 3. Update State
-                            self.current_state = next_state_name.clone();
+                            if !is_internal {
+                                // 3. Update State
+                                self.current_state = next_state_full_path.clone();
 
-                            // 4. Execute Entry Actions for New State
-                            if let Some(new_state_def) = self.definition.states.get(&self.current_state) {
-                                for action in &new_state_def.entry {
-                                    Self::execute_action(&mut self.context, action, event_payload, actions);
+                                // 4. Execute Entry Actions for New State (and deep children)
+                                // MVP: Just enter the final leaf. Correct XState enters all down the path.
+                                // For now, let's just execute the leaf's entry.
+                                if let Some(new_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
+                                    for action in &new_state_def.entry {
+                                        Self::execute_action(&mut self.context, action, event_payload, actions);
+                                    }
                                 }
                             }
-                        }
 
-                        return Some(self.current_state.clone());
+                            return Some(self.current_state.clone());
+                        }
                     }
                 }
             }
+            
+            // Bubble up
+            if let Some(dot_idx) = state_path.rfind('.') {
+                state_path = state_path[..dot_idx].to_string();
+            } else {
+                break; // Reached root, no handled event
+            }
         }
+        
         None
     }
     

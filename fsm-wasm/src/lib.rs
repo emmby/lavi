@@ -435,7 +435,7 @@ impl FsmRunner {
              let definition: MachineDefinition = serde_json::from_str(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
 
-             let current_state = definition.initial.clone();
+             let current_state = RuntimeMachine::resolve_initial_state(&definition.states, &definition.initial);
              let context = definition.context.clone().unwrap_or(serde_json::Value::Null);
              RuntimeMachine {
                 definition,
@@ -462,7 +462,8 @@ impl FsmRunner {
         let current_state = self.machine.state();
         let actions_map = self.actions.clone();
         
-        let entry_actions = if let Some(state_def) = self.machine.definition.states.get(current_state) {
+        // Use the public helper to resolve deep states
+        let entry_actions = if let Some(state_def) = self.machine.get_state_definition(&current_state) {
             state_def.entry.clone()
         } else {
             Vec::new()
@@ -488,26 +489,57 @@ impl FsmRunner {
                  (impl_fn)(&mut self.machine.context, &init_event, params);
             }
         }
-        
+
         // 2. Inspector Snapshot
         if let Some(inspector) = &self.inspector {
-             let obj = js_sys::Object::new();
+             let obj = self.get_snapshot();
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_str(self.machine.state()));
-             
-             // Fix: Use JSON parse to avoid Map serialization
-             let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
-             let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
-
-             // Parity Fields
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
-
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
+    }
+
+    #[wasm_bindgen(js_name = getSnapshot)]
+    pub fn get_snapshot(&self) -> JsValue {
+        let obj = js_sys::Object::new();
+        
+        // Value: Convert dot-path to object or string
+        let state_val = self.path_to_value_object(&self.machine.state());
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &state_val);
+
+        // Context
+        let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
+        let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
+
+        // Parity Fields (empty for now)
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
+        
+        obj.into()
+    }
+
+    fn path_to_value_object(&self, path: &str) -> JsValue {
+        if !path.contains('.') {
+            return JsValue::from_str(path);
+        }
+        
+        // "active.one" -> { active: "one" }
+        // "active.nested.three" -> { active: { nested: "three" } }
+        let parts: Vec<&str> = path.split('.').collect();
+        self.recursive_build_obj(&parts)
+    }
+
+    fn recursive_build_obj(&self, parts: &[&str]) -> JsValue {
+        if parts.len() == 1 {
+            return JsValue::from_str(parts[0]);
+        }
+        
+        let obj = js_sys::Object::new();
+        let key = parts[0];
+        let val = self.recursive_build_obj(&parts[1..]);
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), &val);
+        
+        obj.into()
     }
 
     pub fn transition(&mut self, event: JsValue) -> Option<String> {
@@ -580,23 +612,6 @@ impl FsmRunner {
 
     pub fn subscribe(&mut self, callback: js_sys::Function) {
         self.set_inspector(callback);
-    }
-
-    pub fn get_snapshot(&self) -> JsValue {
-         let obj = js_sys::Object::new();
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &JsValue::from_str(self.machine.state()));
-         
-         let ctx_json = serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string());
-         let ctx_val = js_sys::JSON::parse(&ctx_json).unwrap_or(JsValue::NULL);
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
-
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("historyValue"), &js_sys::Object::new());
-         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("children"), &js_sys::Object::new());
-
-         obj.into()
     }
 
     pub fn context_json(&self) -> String {

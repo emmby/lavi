@@ -178,8 +178,16 @@ test.describe('XState Cheatsheet Examples', () => {
   // 6. Parent states
   // Original: https://stately.ai/docs/cheatsheet#parent-states
   // TODO: Replace xstate with wasm
-  test('Parent states', async () => {
-    const machine = setup({ /* ... */}).createMachine({
+  test('Parent states [WASM]', async () => {
+    // Import WASM module
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../fsm-wasm/pkg/fsm_wasm.js');
+
+    // Initialize WASM
+    const wasmPath = path.resolve(__dirname, '../../fsm-wasm/pkg/fsm_wasm_bg.wasm');
+    const wasmBuffer = fs.readFileSync(wasmPath);
+    await init(wasmBuffer);
+
+    const machine = wasmSetup({ /* ... */}).createMachine({
       id: 'parent',
       initial: 'active',
       states: {
@@ -199,10 +207,11 @@ test.describe('XState Cheatsheet Examples', () => {
       },
     });
 
-    const actor = createActor(machine);
+    const actor = wasmCreateActor(machine);
     actor.start();
 
     // logs { active: 'one' }
+    // WASM implementation may return string "one" or "active.one" or fail if hierarchy not implemented
     expect(actor.getSnapshot().value).toEqual({ active: 'one' });
 
     actor.send({ type: 'NEXT' });
