@@ -14,7 +14,6 @@ mod tests {
     use super::*;
     use portable_xstate_core::{RuntimeMachine, Value};
     use std::collections::HashMap;
-    use std::rc::Rc;
 
     #[test]
     fn test_traffic_light_runtime_via_json() {

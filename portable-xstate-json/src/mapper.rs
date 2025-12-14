@@ -4,7 +4,7 @@ use portable_xstate_core::{
 };
 use crate::dto::{
     MachineDefinitionDto, StateDefinitionDto, TransitionDefinitionDto, ActionDto, 
-    AssignActionDto, GenericActionDto, GuardObjectDto, TransitionGuardDto
+    TransitionGuardDto
 };
 
 pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
