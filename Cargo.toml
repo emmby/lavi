@@ -1,8 +1,7 @@
 [workspace]
 members = [
-    "fsm-core",
-
-    "fsm-wasm",
+    "portable-xstate-core",
+    "portable-xstate",
 ]
 resolver = "2"
 
@@ -13,6 +12,6 @@ wasm-bindgen = "0.2"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 proc-macro2 = "1.0"
-portable-xstate-core = { path = "./fsm-core" }
+portable-xstate-core = { path = "./portable-xstate-core" }
 serde-wasm-bindgen = "0.6"
 
