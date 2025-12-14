@@ -42,9 +42,9 @@
 
             const updateUI = () => {
                 if (!machine) return;
-                const ctx = JSON.parse(machine.context_json());
-                document.getElementById('lblContext').innerText = JSON.stringify(ctx);
-                document.getElementById('counterVal').innerText = ctx.count;
+                const snapshot = machine.getSnapshot();
+                document.getElementById('lblContext').innerText = JSON.stringify(snapshot.context);
+                document.getElementById('counterVal').innerText = snapshot.context.count;
             };
 
             const config = {

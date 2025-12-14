@@ -602,20 +602,12 @@ impl FsmRunner {
         }
     }
 
-    pub fn current_state(&self) -> String {
-        self.machine.state().to_string()
-    }
-    
     pub fn send(&mut self, event: JsValue) -> Option<String> {
         self.transition(event)
     }
 
     pub fn subscribe(&mut self, callback: js_sys::Function) {
         self.set_inspector(callback);
-    }
-
-    pub fn context_json(&self) -> String {
-        serde_json::to_string(&self.machine.context).unwrap_or("{}".to_string())
     }
 }
 

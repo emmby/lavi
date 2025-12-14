@@ -68,8 +68,9 @@
                 // If called before machine is fully spawned, skip update
                 if (!machine) return;
 
-                const state = machine.current_state();
-                const ctx = JSON.parse(machine.context_json());
+                const snapshot = machine.getSnapshot();
+                const state = snapshot.value;
+                const ctx = snapshot.context;
                 
                 const stateEl = document.getElementById('lblState');
                 if (stateEl) {

@@ -1,3 +1,6 @@
+// Tests to verify we can pass the xstate cheatsheet examples to wasm and have them work.
+// The tests are currently using xstate and we are trying to migrate them to wasm.
+// 
 // Instructions to migrate these tests to WASM.
 // - Identify the next test in cheatsheet.spec.js that is most likely to work successfully as-is using our wasm interpreter. Update that test to use the wasm interpreter instead of the xstate interpreter.
 // - Identify the reason for any failures but DO NOT FIX the failures yet.
@@ -50,18 +53,22 @@ test.describe('XState Cheatsheet Examples', () => {
     
     // Initial state check
     // WASM API: current_state(), context_json()
-    expect(machine.current_state()).toBe('active');
-    // Note: FsmRunner now executes entry actions on initialization, so count is 1
-    expect(JSON.parse(machine.context_json()).count).toBe(1);
+    expect(machine.getSnapshot().value).toBe('active');
+    // WASM: In XState, start() triggers initial entry actions. 
+    // We recently fixed this parity. Count should be 1.
+    expect(machine.getSnapshot().context.count).toBe(1);
 
     machine.send('toggle');
-    expect(machine.current_state()).toBe('inactive');
-    expect(JSON.parse(machine.context_json()).count).toBe(1);
+    expect(machine.getSnapshot().value).toBe('inactive');
+    // inactive -> active (entry action increments count -> 2)
+    // Wait, transition active->inactive does NOT increment. 
+    // Re-entering active does.
+    expect(machine.getSnapshot().context.count).toBe(1);
 
     machine.send('toggle');
-    expect(machine.current_state()).toBe('active');
-    // Re-enter active -> entry action runs -> increment count -> 2
-    expect(JSON.parse(machine.context_json()).count).toBe(2);
+    expect(machine.getSnapshot().value).toBe('active');
+    // active entry action increments count
+    expect(machine.getSnapshot().context.count).toBe(2);
   });
 
   // 2. Creating promise logic

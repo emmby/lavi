@@ -82,7 +82,11 @@
           }
         };
 
-        const updateUI = (state, ctx) => {
+        const updateUI = () => {
+            const snapshot = machine.getSnapshot();
+            const state = snapshot.value;
+            const ctx = snapshot.context;
+
             // Reset lights
             document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
             
@@ -106,8 +110,7 @@
                 increment_cycle: assign((ctx) => ({ cycle_count: ctx.context.cycle_count + 1 })),
                 render: () => {
                    setTimeout(() => {
-                       const ctx = JSON.parse(machine.context_json());
-                       updateUI(machine.current_state(), ctx);
+                       updateUI();
                    }, 0);
                 }
             }
@@ -121,7 +124,7 @@
         const machine = setup(config).createMachine(machineDef).createActor({});
 
         // Initialize UI
-        updateUI(machine.current_state(), { cycle_count: 0 });
+        updateUI();
 
         document.getElementById('btnTimer').onclick = () => machine.transition("TIMER");
     </script>

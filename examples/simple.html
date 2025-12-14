@@ -52,7 +52,9 @@
             }
         };
 
-        const updateUI = (state) => {
+        const updateUI = () => {
+            const snapshot = machine.getSnapshot();
+            const state = snapshot.value;
             const bulb = document.getElementById('bulb');
             if (state === 'on') {
                 bulb.classList.add('on');
@@ -68,7 +70,7 @@
             actions: {
                 render: () => {
                     setTimeout(() => {
-                        updateUI(machine.current_state());
+                        updateUI();
                     }, 0);
                 }
             }
@@ -82,7 +84,7 @@
         const machine = setup(config).createMachine(machineDef).createActor({});
         
         // Initial render
-        updateUI(machine.current_state());
+        updateUI();
 
         document.getElementById('btnToggle').onclick = () => machine.transition("TOGGLE");
     </script>

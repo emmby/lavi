@@ -78,20 +78,22 @@
             }
         };
 
-        const updateUI = (state, ctx) => {
+        const updateUI = () => { // No args needed, uses machine.getSnapshot()
+            const snapshot = machine.getSnapshot();
+            
             const doorEl = document.getElementById('door');
-            if (state === 'open') {
+            if (snapshot.value === 'open') {
                 doorEl.classList.add('open');
             } else {
                 doorEl.classList.remove('open');
             }
-            document.getElementById('lockIcon').innerText = ctx.locked ? '🔒' : '🔓';
+            document.getElementById('lockIcon').innerText = snapshot.context.locked ? '🔒' : '🔓';
             
             const lblState = document.getElementById('lblState');
-            if (lblState) lblState.innerText = state.toUpperCase();
+            if (lblState) lblState.innerText = snapshot.value.toUpperCase();
 
             const lblContext = document.getElementById('lblContext');
-            if (lblContext) lblContext.innerText = JSON.stringify(ctx, null, 2);
+            if (lblContext) lblContext.innerText = JSON.stringify(snapshot.context, null, 2);
         };
 
         const config = {
@@ -103,8 +105,7 @@
                 unlock: assign({ locked: false }),
                 render: () => {
                     setTimeout(() => {
-                        const ctx = JSON.parse(machine.context_json());
-                        updateUI(machine.current_state(), ctx);
+                        updateUI();
                     }, 0);
                 }
             }
@@ -118,7 +119,7 @@
         const machine = wasmMachine.createActor({});
         
         // Initial manual update
-        updateUI(machine.current_state(), { locked: true });
+        updateUI();
 
         document.getElementById('btnOpen').onclick = () => machine.transition("OPEN");
         document.getElementById('btnClose').onclick = () => machine.transition("CLOSE");
