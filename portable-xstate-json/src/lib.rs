@@ -13,7 +13,7 @@ pub fn from_json_str(json: &str) -> Result<MachineDefinition, serde_json::Error>
 mod tests {
     use super::*;
     use portable_xstate_core::{RuntimeMachine, Value};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_traffic_light_runtime_via_json() {
@@ -33,8 +33,8 @@ mod tests {
          
          assert_eq!(machine.state(), "green");
          
-         let guards = HashMap::new();
-         let actions = HashMap::new();
+         let guards = BTreeMap::new();
+         let actions = BTreeMap::new();
          let payload = Value::Null;
 
          machine.transition("TIMER", &payload, &guards, &actions);

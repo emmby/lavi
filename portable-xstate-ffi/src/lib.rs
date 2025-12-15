@@ -3,7 +3,7 @@ use std::os::raw::{c_char, c_int};
 use portable_xstate_core::{RuntimeMachine, Value};
 use portable_xstate_json::from_json_str;
 use std::ptr;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub struct MachineContext {
     machine: RuntimeMachine,
@@ -75,8 +75,8 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
         Err(_) => return -2,
     };
     
-    let guards = HashMap::new(); 
-    let actions = HashMap::new(); 
+    let guards = BTreeMap::new(); 
+    let actions = BTreeMap::new(); 
     let payload = Value::Null;
 
     ctx.machine.transition(event, &payload, &guards, &actions);

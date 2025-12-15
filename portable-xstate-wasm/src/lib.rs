@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use portable_xstate_core::{RuntimeMachine, Value};
 use crate::utils::{json_to_value, value_to_json};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 mod utils;
@@ -9,8 +9,8 @@ mod utils;
 #[wasm_bindgen]
 pub struct WasmMachine {
      machine: RuntimeMachine,
-     guards: HashMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-     actions: HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+     guards: BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+     actions: BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
 }
 
 #[wasm_bindgen]
@@ -89,15 +89,15 @@ impl WasmMachine {
 pub struct FsmRunner {
     machine: RuntimeMachine,
     inspector: Option<js_sys::Function>,
-    guards: HashMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-    actions: HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    guards: BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    actions: BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
 }
 
 // Helper to parse "guards" and "actions" from a JS object (either implementations object or options object)
 fn parse_implementations(
     impl_obj: &JsValue,
-    guards_out: &mut HashMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-    actions_out: &mut HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    guards_out: &mut BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    actions_out: &mut BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
 ) {
     if !impl_obj.is_object() {
         return;
@@ -246,8 +246,8 @@ fn parse_implementations(
 }
 
 // Helper function to extract inline assignments
-fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>), JsValue> {
-    let mut actions_out = HashMap::new();
+fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>), JsValue> {
+    let mut actions_out = BTreeMap::new();
     let mut action_counter = 0;
 
     if !val.is_object() {
@@ -311,7 +311,7 @@ fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, HashMap<String,
 fn process_action_list(
     parent_obj: &js_sys::Object, 
     prop_name: &str, 
-    actions_out: &mut HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_out: &mut BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
     counter: &mut u32
 ) {
     let prop_key = JsValue::from_str(prop_name);
@@ -337,7 +337,7 @@ fn process_action_list(
 
 fn convert_inline_action(
     action_item: &JsValue,
-    actions_out: &mut HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_out: &mut BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
     counter: &mut u32
 ) -> Option<JsValue> {
      let is_obj = action_item.is_object();
@@ -439,8 +439,8 @@ fn convert_inline_action(
 impl FsmRunner {
     #[wasm_bindgen(constructor)]
     pub fn new(val: JsValue, options: JsValue) -> Result<FsmRunner, JsValue> {
-        let mut guards: HashMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = HashMap::new();
-        let mut actions = HashMap::new();
+        let mut guards: BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = BTreeMap::new();
+        let mut actions = BTreeMap::new();
 
         // Parse options if provided
         parse_implementations(&options, &mut guards, &mut actions);
@@ -505,7 +505,7 @@ impl FsmRunner {
 
                  // Create init event
                  // Pure Rust value!
-                 let init_event_value = Value::Object(HashMap::from([("type".to_string(), Value::String("xstate.init".to_string()))]));
+                 let init_event_value = Value::Object(BTreeMap::from([("type".to_string(), Value::String("xstate.init".to_string()))]));
                  
                  // Execute action
                  (impl_fn)(&mut self.machine.context, &init_event_value, params);
@@ -571,7 +571,7 @@ impl FsmRunner {
     pub fn send(&mut self, event: JsValue) {
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
-            let payload = Value::Object(HashMap::from([("type".to_string(), Value::String(s.clone()))]));
+            let payload = Value::Object(BTreeMap::from([("type".to_string(), Value::String(s.clone()))]));
             (s, payload)
         } else {
              // Assume object

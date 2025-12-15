@@ -1,5 +1,12 @@
-use std::collections::HashMap;
-use std::rc::Rc;
+#![no_std]
+extern crate alloc;
+
+use alloc::collections::BTreeMap;
+use alloc::rc::Rc;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::format;
+
 
 // --- Domain Model ---
 
@@ -10,7 +17,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Array(Vec<Value>),
-    Object(HashMap<String, Value>),
+    Object(BTreeMap<String, Value>),
 }
 
 impl Value {
@@ -42,14 +49,14 @@ impl Value {
         }
     }
 
-    pub fn as_object(&self) -> Option<&HashMap<String, Value>> {
+    pub fn as_object(&self) -> Option<&BTreeMap<String, Value>> {
         match self {
             Value::Object(map) => Some(map),
             _ => None,
         }
     }
 
-    pub fn as_object_mut(&mut self) -> Option<&mut HashMap<String, Value>> {
+    pub fn as_object_mut(&mut self) -> Option<&mut BTreeMap<String, Value>> {
         match self {
             Value::Object(map) => Some(map),
             _ => None,
@@ -85,7 +92,7 @@ impl From<i64> for Value {
 pub struct MachineDefinition {
     pub id: String,
     pub initial: String,
-    pub states: HashMap<String, StateDefinition>,
+    pub states: BTreeMap<String, StateDefinition>,
     pub context: Option<Value>,
 }
 
@@ -130,8 +137,8 @@ pub struct TransitionDefinition {
 #[derive(Debug, Clone)]
 pub struct StateDefinition {
     pub initial: Option<String>,
-    pub states: HashMap<String, StateDefinition>,
-    pub on: HashMap<String, Vec<TransitionDefinition>>, 
+    pub states: BTreeMap<String, StateDefinition>,
+    pub on: BTreeMap<String, Vec<TransitionDefinition>>, 
     pub entry: Vec<Action>,
     pub exit: Vec<Action>,
 }
@@ -158,7 +165,7 @@ impl RuntimeMachine {
         }
     }
 
-    pub fn resolve_initial_state(states: &HashMap<String, StateDefinition>, start_key: &str) -> String {
+    pub fn resolve_initial_state(states: &BTreeMap<String, StateDefinition>, start_key: &str) -> String {
         let mut current_key = start_key.to_string();
         
         loop {
@@ -180,7 +187,7 @@ impl RuntimeMachine {
     }
 
     fn get_state_def_recursive<'a>(
-        root_states: &'a HashMap<String, StateDefinition>, 
+        root_states: &'a BTreeMap<String, StateDefinition>, 
         path: &str
     ) -> Option<&'a StateDefinition> {
         let parts: Vec<&str> = path.split('.').collect();
@@ -203,8 +210,8 @@ impl RuntimeMachine {
         &mut self,
         event: &str,
         event_payload: &Value,
-        guards: &HashMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-        actions: &HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
+        guards: &BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+        actions: &BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
     ) -> Option<String> {
         let mut state_path = self.current_state.clone();
         
@@ -300,7 +307,7 @@ impl RuntimeMachine {
         context: &mut Value,
         action: &Action,
         event_payload: &Value,
-        actions: &HashMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
+        actions: &BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
     ) {
         match action {
             Action::Named(name) => {
