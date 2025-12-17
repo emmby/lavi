@@ -1,3 +1,6 @@
+#![no_std]
+extern crate alloc;
+
 mod dto;
 mod mapper;
 
@@ -13,7 +16,7 @@ pub fn from_json_str(json: &str) -> Result<MachineDefinition, serde_json::Error>
 mod tests {
     use super::*;
     use portable_xstate_core::{RuntimeMachine, Value};
-    use std::collections::BTreeMap;
+    use alloc::collections::BTreeMap;
 
     #[test]
     fn test_traffic_light_runtime_via_json() {

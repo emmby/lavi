@@ -1,9 +1,13 @@
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int};
+#![no_std]
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::ffi::CString;
+use core::ffi::{CStr, c_char, c_int}; 
+use core::ptr;
 use portable_xstate_core::{RuntimeMachine, Value};
 use portable_xstate_json::from_json_str;
-use std::ptr;
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 pub struct MachineContext {
     machine: RuntimeMachine,
@@ -86,7 +90,14 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use alloc::ffi::CString;
+    use core::ffi::{CStr, c_char};
+    use alloc::vec;
+
+    // We can use std for testing if we want, but since we are checking no_std compat, let's stick to alloc/core as much as possible.
+    // However, cargo test runs with std available by default unless restricted.
+    // The issue is `use std::...` inside a `#![no_std]` crate failing if std isn't reachable.
+    // We can just use alloc/core to be safe and consistent.
 
     #[test]
     fn test_traffic_light_ffi() {

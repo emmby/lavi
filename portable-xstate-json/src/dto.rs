@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::vec::Vec;
+use alloc::vec;
 
 // --- DTO Definition (Schema) ---
 // These structs exactly mirror the JSON input
@@ -8,7 +11,7 @@ use std::collections::HashMap;
 pub struct MachineDefinitionDto {
     pub id: String,
     pub initial: String,
-    pub states: HashMap<String, StateDefinitionDto>,
+    pub states: BTreeMap<String, StateDefinitionDto>,
     #[serde(default)]
     pub context: Option<serde_json::Value>,
 }
@@ -66,10 +69,10 @@ pub struct StateDefinitionDto {
     #[serde(default)]
     pub initial: Option<String>,
     #[serde(default)]
-    pub states: HashMap<String, StateDefinitionDto>,
+    pub states: BTreeMap<String, StateDefinitionDto>,
 
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
-    pub on: HashMap<String, Vec<TransitionDefinitionDto>>, // Event -> List of Transitions
+    pub on: BTreeMap<String, Vec<TransitionDefinitionDto>>, // Event -> List of Transitions
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
@@ -95,7 +98,7 @@ where
     }
 }
 
-fn deserialize_map_vec_or_single<'de, D, T>(deserializer: D) -> Result<HashMap<String, Vec<T>>, D::Error>
+fn deserialize_map_vec_or_single<'de, D, T>(deserializer: D) -> Result<BTreeMap<String, Vec<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -107,9 +110,9 @@ where
         Single(T),
     }
 
-    let map: HashMap<String, VecOrSingle<T>> = HashMap::deserialize(deserializer)?;
+    let map: BTreeMap<String, VecOrSingle<T>> = BTreeMap::deserialize(deserializer)?;
     
-    let mut result = HashMap::new();
+    let mut result = BTreeMap::new();
     for (key, value) in map {
         let vec = match value {
             VecOrSingle::Vec(v) => v,
