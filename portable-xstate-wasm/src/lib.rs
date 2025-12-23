@@ -447,7 +447,7 @@ impl FsmRunner {
 
         let machine = if val.is_string() {
              let json_definition = val.as_string().unwrap();
-             let def = portable_xstate_json::from_json_str(&json_definition)
+             let def = portable_xstate_json::create_machine(&json_definition)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
              RuntimeMachine::new(def)
         } else {
@@ -460,7 +460,7 @@ impl FsmRunner {
                 .as_string()
                 .ok_or(JsValue::from_str("Machine definition JSON is not a string"))?;
 
-             let definition = portable_xstate_json::from_json_str(&json_string)
+             let definition = portable_xstate_json::create_machine(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
 
              RuntimeMachine::new(definition)

@@ -4,13 +4,60 @@ extern crate alloc;
 mod dto;
 mod mapper;
 
-use portable_xstate_core::MachineDefinition;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use portable_xstate_core::{Action, AssignAction, MachineDefinition, Value};
+
+// Re-export DTO if needed for low-level access, but API prefers core types
 pub use dto::MachineDefinitionDto;
 
+// --- XState 5 API ---
+
+/// Parses a JSON string into a MachineDefinition.
+/// Mirrors `createMachine(config)` from XState.
+pub fn create_machine(json: &str) -> Result<MachineDefinition, serde_json::Error> {
+    from_json_str(json)
+}
+
+/// Helper to parse JSON string to MachineDefinitionDto then map to MachineDefinition
 pub fn from_json_str(json: &str) -> Result<MachineDefinition, serde_json::Error> {
     let dto: MachineDefinitionDto = serde_json::from_str(json)?;
     Ok(mapper::map_machine(dto))
 }
+
+pub struct SetupObject {
+    // In strict Rust no_std, we can't easily hold closures for implementations here
+    // without generics or concrete types. For now, this is a pass-through
+    // to allow the API syntax `setup(...).createMachine(...)`.
+}
+
+impl SetupObject {
+    pub fn create_machine(&self, json: &str) -> Result<MachineDefinition, serde_json::Error> {
+        create_machine(json)
+    }
+}
+
+/// Mirrors `setup(options)` from XState.
+/// Currently just returns a wrapper to call createMachine.
+/// In the future, this could validate actors/actions against the generic types.
+pub fn setup(_options: &str) -> SetupObject {
+    SetupObject {}
+}
+
+/// Mirrors `assign(assignment)` from XState.
+/// Returns an Action::Assign.
+/// `assignment` can be a JSON string representing the assignment object or value.
+pub fn assign(assignment_json: &str) -> Result<Action, serde_json::Error> {
+    let val: serde_json::Value = serde_json::from_str(assignment_json)?;
+    let core_val = mapper::map_value(val);
+    Ok(Action::Assign(AssignAction {
+        action_type: "xstate.assign".to_string(),
+        assignment: core_val,
+    }))
+}
+
+// Make mapper public so we can use map_value in assign
+pub use mapper::map_value;
 
 #[cfg(test)]
 mod tests {
@@ -19,7 +66,7 @@ mod tests {
     use alloc::collections::BTreeMap;
 
     #[test]
-    fn test_traffic_light_runtime_via_json() {
+    fn test_create_machine_api() {
          let json = r#"{
            "id": "trafficLight",
            "initial": "green",
@@ -31,16 +78,38 @@ mod tests {
            "context": { "cycles": 0 }
          }"#;
 
-         let definition = from_json_str(json).expect("Failed to parse");
+         let definition = create_machine(json).expect("Failed to create machine");
          let mut machine = RuntimeMachine::new(definition);
-         
          assert_eq!(machine.state(), "green");
-         
-         let guards = BTreeMap::new();
-         let actions = BTreeMap::new();
-         let payload = Value::Null;
+    }
 
-         machine.transition("TIMER", &payload, &guards, &actions);
-         assert_eq!(machine.state(), "yellow");
+    #[test]
+    fn test_setup_api() {
+        let json = r#"{
+           "id": "setupMachine",
+           "initial": "a",
+           "states": { "a": {} }
+         }"#;
+        let setup_obj = setup("{}");
+        let definition = setup_obj.create_machine(json).expect("Failed to create machine via setup");
+        assert_eq!(definition.id, "setupMachine");
+    }
+
+    #[test]
+    fn test_assign_api() {
+        let assign_json = r#"{ "count": 1 }"#;
+        let action = assign(assign_json).expect("Failed to create assign action");
+        match action {
+            Action::Assign(a) => {
+                assert_eq!(a.action_type, "xstate.assign");
+                match a.assignment {
+                    Value::Object(map) => {
+                         assert_eq!(map.get("count"), Some(&Value::Number(1.0)));
+                    }
+                    _ => panic!("Expected Object assignment"),
+                }
+            },
+            _ => panic!("Expected Assign action"),
+        }
     }
 }

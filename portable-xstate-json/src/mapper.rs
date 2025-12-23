@@ -58,7 +58,7 @@ fn map_guard(dto: TransitionGuardDto) -> TransitionGuard {
     }
 }
 
-fn map_value(v: serde_json::Value) -> Value {
+pub fn map_value(v: serde_json::Value) -> Value {
     match v {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(b),
