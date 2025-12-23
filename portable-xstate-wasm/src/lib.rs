@@ -640,3 +640,15 @@ pub fn create_actor(machine_def: JsValue, options: JsValue) -> Result<JsValue, J
     // Convert FsmRunner to JsValue
     Ok(runner.into())
 }
+
+#[wasm_bindgen(js_name = createMachine)]
+pub fn create_machine(config: JsValue) -> Result<WasmMachine, JsValue> {
+    let runner = FsmRunner::new(config, JsValue::UNDEFINED)?;
+    
+    Ok(WasmMachine {
+        machine: runner.machine,
+        guards: runner.guards,
+        actions: runner.actions,
+    })
+}
+
