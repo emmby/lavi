@@ -64,6 +64,6 @@ Features for complex use-cases or debugging.
   - [ ] Persisting/Restoring nested actor states
 - [ ] **Inspection & Telemetry**
   - [ ] `inspect` API integration
-- [ ] **Tags** (`tags: [...]`)
+- [x] **Tags** (`tags: [...]`)
 - [ ] **Metadata** (`meta: { ... }`)
 - [ ] **Custom Delays/Timers**
