@@ -98,6 +98,7 @@ pub struct MachineDefinition {
     pub exit: Vec<Action>,
     pub context: Option<Value>,
     pub types: Option<Value>,
+    pub id_map: IndexMap<String, String>, // ID -> Path
 }
 
 #[derive(Debug, Clone)]
@@ -133,19 +134,21 @@ pub enum TransitionGuard {
 
 #[derive(Debug, Clone)]
 pub struct TransitionDefinition {
-    pub target: Option<String>,
+    pub target: Option<Vec<String>>,
     pub cond: Option<TransitionGuard>,
     pub actions: Vec<Action>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StateDefinition {
+    pub id: Option<String>,
     pub type_: Option<String>,
     pub initial: Option<String>,
     pub states: IndexMap<String, StateDefinition>,
     pub on: IndexMap<String, Vec<TransitionDefinition>>, 
     pub entry: Vec<Action>,
     pub exit: Vec<Action>,
+    pub tags: Vec<String>,
 }
 
 // --- Runtime ---
@@ -191,7 +194,7 @@ impl RuntimeMachine {
         Self::get_state_def_recursive(&self.definition.states, path)
     }
 
-    fn get_state_def_recursive<'a>(
+    pub fn get_state_def_recursive<'a>(
         root_states: &'a IndexMap<String, StateDefinition>, 
         path: &str
     ) -> Option<&'a StateDefinition> {
@@ -248,12 +251,29 @@ impl RuntimeMachine {
                     };
 
                     if should_transition {
-                        let target_base = transition.target.clone().unwrap_or(state_path.clone());
+                        let first_target = transition.target.as_ref().and_then(|t| t.first());
+                        let target_base = first_target.cloned().unwrap_or(state_path.clone());
                         let next_state_full_path = if transition.target.is_none() {
                             state_path.clone() // Internal / stay
                         } else {
                             // Resolve target path
-                            if self.definition.states.contains_key(&target_base) {
+                            if target_base.starts_with('#') {
+                                 let id = &target_base[1..];
+                                 if let Some(path) = self.definition.id_map.get(id) {
+                                     // Found ID, resolve initial state of that state? 
+                                     // Usually targetting an ID targets THAT state directly.
+                                     // But if it's compound, we should enter initial?
+                                     // XState semantics: Enter state, then initial.
+                                     // `resolve_initial_state` handles finding initial state OF the target.
+                                     Self::resolve_initial_state(&self.definition.states, path)
+                                 } else {
+                                     // ID not found, stay? or error?
+                                     // Return None implies no transition?
+                                     // Or stay current?
+                                     // For now, assume staying current is safer than crashing.
+                                     state_path.clone()
+                                 }
+                            } else if self.definition.states.contains_key(&target_base) {
                                 Self::resolve_initial_state(&self.definition.states, &target_base)
                             } else {
                                 if let Some(parent_dot) = state_path.rfind('.') {
