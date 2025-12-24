@@ -164,16 +164,6 @@ describe('machine', () => {
       expect(actorRef.getSnapshot().context).toEqual({ foo: 'bar' });
     });
 
-    it.skip('should override context (second argument)', () => {
-      // const differentMachine = configMachine.withConfig(
-      //   {},
-      //   { foo: 'different' }
-      // );
-      // expect(differentMachine.initialState.context).toEqual({
-      //   foo: 'different'
-      // });
-    });
-
     // https://github.com/davidkpiano/xstate/issues/674
     it('should throw if initial state is missing in a compound state', () => {
       expect(() => {

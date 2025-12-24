@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 use portable_xstate_core::{RuntimeMachine, Value};
 use crate::utils::{json_to_value, value_to_json};
 use indexmap::IndexMap;
-use std::collections::BTreeMap; // Keep BTreeMap for internal maps if not critical, or move them too.
+// use std::collections::BTreeMap; // Keep BTreeMap for internal maps if not critical, or move them too.
 // Actually FsmRunner uses BTreeMap for guards/actions. XState impls order matters?
 // Probably better to switch guards/actions to IndexMap too for consistency.
 use std::rc::Rc;
@@ -283,7 +283,7 @@ fn map_state_map(
     };
 
     for (key, def) in states_def {
-        let state_id = if parent_id.is_empty() || parent_id == "(machine)" {
+        let _state_id = if parent_id.is_empty() || parent_id == "(machine)" {
             key.clone() // Top level? Or machine.id.key? 
             // XState 4: machine.id + "." + key? 
             // Actually id logic is complex. Let's assume parent_id . key 

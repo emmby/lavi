@@ -4,9 +4,8 @@ extern crate alloc;
 pub mod dto;
 pub mod mapper;
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-use portable_xstate_core::{Action, AssignAction, MachineDefinition, Value};
+use alloc::string::ToString;
+use portable_xstate_core::{Action, AssignAction, MachineDefinition};
 
 // Re-export DTO if needed for low-level access, but API prefers core types
 pub use dto::MachineDefinitionDto;
@@ -63,7 +62,7 @@ pub use mapper::map_value;
 mod tests {
     use super::*;
     use portable_xstate_core::{RuntimeMachine, Value};
-    use alloc::collections::BTreeMap;
+    // use alloc::collections::BTreeMap; // Unused
 
     #[test]
     fn test_create_machine_api() {
@@ -79,7 +78,7 @@ mod tests {
          }"#;
 
          let definition = create_machine(json).expect("Failed to create machine");
-         let mut machine = RuntimeMachine::new(definition);
+         let machine = RuntimeMachine::new(definition);
          assert_eq!(machine.state(), "green");
     }
 

@@ -56,7 +56,7 @@ fn verify_scenario(scenario: JsValue) {
     let events_arr = js_sys::Array::from(&events);
     for i in 0..events_arr.length() {
         let event = events_arr.get(i);
-        runner.send(event);
+        let _ = runner.send(event);
     }
     
     inspector.forget(); 

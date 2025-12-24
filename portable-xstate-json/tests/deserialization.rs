@@ -1,4 +1,4 @@
-use portable_xstate_json::dto::{TransitionDefinitionDto, TransitionGuardDto};
+use portable_xstate_json::dto::TransitionDefinitionDto;
 use serde_json::from_str;
 
 #[test]
