@@ -7,20 +7,20 @@ Test links point to the `statelyai/xstate` reference implementation for verifica
 ## 1. Core Structure (Essential)
 High usage, required for almost every state machine.
 
-- [ ] **Machine Definition** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/machine.test.ts))
-  - [ ] `id` (Root machine identifier)
-  - [ ] `initial` (Initial state key)
-  - [ ] `context` (Initial extended state)
-  - [ ] `states` (State nodes definition)
-- [ ] **State Nodes** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/state.test.ts))
-  - [ ] Atomic States (Leaf nodes)
-  - [ ] Compound States (Nested states)
-  - [ ] Parallel States (Orthogonal regions) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/parallel.test.ts))
-  - [ ] Final States (`type: 'final'`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/final.test.ts))
+- [x] **Machine Definition**([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/machine.test.ts))
+  - [x] `id` (Root machine identifier)
+  - [x] `initial` (Initial state key)
+  - [x] `context` (Initial extended state)
+  - [x] `states` (State nodes definition)
+- [x] **State Nodes** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/state.test.ts))
+  - [x] Atomic States (Leaf nodes)
+  - [x] Compound States (Nested states)
+  - [x] Parallel States (Orthogonal regions) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/parallel.test.ts))
+  - [x] Final States (`type: 'final'`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/final.test.ts))
   - [ ] History States (`type: 'history'`, `history: 'shallow' | 'deep'`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/history.test.ts))
 - [ ] **Transitions** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/transition.test.ts))
-  - [ ] Event Transitions (`on: { EVENT: ... }`)
-  - [ ] Eventless Transitions (`always: [...]`)
+  - [x] Event Transitions (`on: { EVENT: ... }`)
+  - [x] Eventless Transitions (`always: [...]`)
   - [ ] Delayed Transitions (`after: { delay: target }`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/after.test.ts))
   - [ ] Wildcard Transitions (`*`)
   - [ ] Partial Wildcard Transitions (`models.*`)
@@ -29,20 +29,20 @@ High usage, required for almost every state machine.
 Essential for defining machine behavior and data flow.
 
 - [ ] **Guards** (`guard`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/guards.test.ts))
-  - [ ] Named Guards (String reference)
-  - [ ] Inline Guards (Function definition)
+  - [x] Named Guards (String reference)
+  - [x] Inline Guards (Function definition)
   - [ ] Higher-Order Guards (`and`, `or`, `not`)
 - [ ] **Actions** (`entry`, `exit`, `actions`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/actions.test.ts))
-  - [ ] Named Actions
-  - [ ] Inline Actions
+  - [x] Named Actions
+  - [x] Inline Actions
   - [ ] **Built-in Actions:**
-    - [ ] `assign` (Update context) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
+    - [x] `assign` (Update context) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
     - [ ] `raise` (Self-send event)
     - [ ] `log` (Console log)
     - [ ] `sendTo` (Send to specific actor) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/actor.test.ts))
     - [ ] `stop` (Stop child actor)
 - [ ] **Context & Input**
-  - [ ] Immutable Context Updates ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
+  - [x] Immutable Context Updates ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
   - [ ] `input` (Factory-pattern context initialization) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/input.test.ts))
 
 ## 3. Actor Model (Medium Priority)
