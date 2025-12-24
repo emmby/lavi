@@ -3,6 +3,7 @@
 This document outlines the standard operating procedure for enabling and passing the next set of tests in the `portable-xstate` project.
 
 ## 1. Select Target
+- Verify all tests pass.
 - Identify the next feature set from `XSTATE_5_FEATURES.md`.
 - **Copy Tests**: Copy the test content from the linked XState repository URL.
 - **STOP HERE**. Do not proceed until the user has confirmed the test content has been copied correctly. The user will check it in.
