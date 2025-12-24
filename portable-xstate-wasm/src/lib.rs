@@ -505,7 +505,7 @@ fn parse_implementations(
              
              if let Ok(guard_fn) = guard_fn_js.dyn_into::<js_sys::Function>() {
                  guards_out.insert(key_str, Rc::new(move |ctx, evt, params| {
-                     let _ = web_sys::console::error_1(&JsValue::from_str("Exec guard closure"));
+                     // let _ = web_sys::console::error_1(&JsValue::from_str("Exec guard closure"));
                      // panic!("CLOSURE EXECUTED"); 
                      // Convert Core Value -> JS Value via JSON
                      let ctx_json = value_to_json(ctx);
@@ -949,7 +949,7 @@ impl FsmRunner {
              // if json_string.len() < 1000 {
              //    let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input: {}", json_string)));
              // }
-             let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input (len {}): {}", json_string.len(), json_string)));
+             // let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input (len {}): {}", json_string.len(), json_string)));
 
              let definition = portable_xstate_json::create_machine(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
@@ -1074,10 +1074,10 @@ impl FsmRunner {
         }
         
         // Log current state
-        let _ = web_sys::console::error_1(&JsValue::from_str(&format!("FsmRunner::start - current_state: {}", self.machine.current_state)));
+        // let _ = web_sys::console::error_1(&JsValue::from_str(&format!("FsmRunner::start - current_state: {}", self.machine.current_state)));
         
-        let on_keys: Vec<&String> = self.machine.definition.on.keys().collect();
-        let _ = web_sys::console::error_1(&JsValue::from_str(&format!("FsmRunner::start - Root ON keys: {:?}", on_keys)));
+        // let on_keys: Vec<&String> = self.machine.definition.on.keys().collect();
+        // let _ = web_sys::console::error_1(&JsValue::from_str(&format!("FsmRunner::start - Root ON keys: {:?}", on_keys)));
 
         // 3. Emit Initial Snapshot
         if let Some(inspector) = &self.inspector {
@@ -1167,7 +1167,8 @@ impl FsmRunner {
 }
 
 #[wasm_bindgen(js_name = createActor)]
-pub fn create_actor(machine_def: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
+pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
+    let options = options.unwrap_or(JsValue::UNDEFINED);
     // 1. Check if machine_def is a WasmMachine (via createActor method)
     if machine_def.is_object() {
         let spawn_fn = js_sys::Reflect::get(&machine_def, &JsValue::from_str("createActor")).unwrap_or(JsValue::UNDEFINED);
@@ -1197,8 +1198,9 @@ pub fn create_actor(machine_def: JsValue, options: JsValue) -> Result<JsValue, J
 }
 
 #[wasm_bindgen(js_name = createMachine)]
-pub fn create_machine(config: JsValue) -> Result<WasmMachine, JsValue> {
-    let runner = FsmRunner::new(config.clone(), JsValue::UNDEFINED)?;
+pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<WasmMachine, JsValue> {
+    let options_val = options.unwrap_or(JsValue::UNDEFINED);
+    let runner = FsmRunner::new(config.clone(), options_val)?;
     
     Ok(WasmMachine {
         machine: runner.machine,
