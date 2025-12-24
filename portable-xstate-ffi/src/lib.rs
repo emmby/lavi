@@ -7,7 +7,7 @@ use core::ffi::{CStr, c_char, c_int};
 use core::ptr;
 use portable_xstate_core::{RuntimeMachine, Value};
 use portable_xstate_json::from_json_str;
-use alloc::collections::BTreeMap;
+use indexmap::IndexMap;
 
 pub struct MachineContext {
     machine: RuntimeMachine,
@@ -79,8 +79,8 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
         Err(_) => return -2,
     };
     
-    let guards = BTreeMap::new(); 
-    let actions = BTreeMap::new(); 
+    let guards = IndexMap::new(); 
+    let actions = IndexMap::new(); 
     let payload = Value::Null;
 
     ctx.machine.transition(event, &payload, &guards, &actions);

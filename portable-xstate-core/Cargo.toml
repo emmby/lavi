@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# We don't want to have any dependencies in this package
+# We don't want to have any dependencies in this package, except basic data structures
+indexmap = { version = "2.7", default-features = false }

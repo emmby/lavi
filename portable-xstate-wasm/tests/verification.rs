@@ -50,7 +50,7 @@ fn verify_scenario(scenario: JsValue) {
     
     // 3. Start WASM
     console::log_1(&"Starting WASM runner...".into());
-    runner.start();
+    let _ = runner.start();
 
     // 4. Run Events
     let events_arr = js_sys::Array::from(&events);

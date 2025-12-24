@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use alloc::collections::BTreeMap;
+use indexmap::IndexMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::vec;
@@ -9,14 +9,25 @@ use alloc::vec;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MachineDefinitionDto {
-    pub id: String,
-    pub initial: String,
-    pub states: BTreeMap<String, StateDefinitionDto>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub initial: Option<String>,
+    #[serde(default)]
+    pub states: IndexMap<String, StateDefinitionDto>,
+    #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
+    pub on: IndexMap<String, Vec<TransitionDefinitionDto>>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub entry: Vec<ActionDto>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub exit: Vec<ActionDto>,
     #[serde(default)]
     pub context: Option<serde_json::Value>,
+    #[serde(default)]
+    pub types: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ActionDto {
     Named(String),
@@ -24,14 +35,14 @@ pub enum ActionDto {
     Generic(GenericActionDto),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct AssignActionDto {
     #[serde(rename = "type")]
     pub action_type: String, // Expect "xstate.assign"
     pub assignment: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct GenericActionDto {
     #[serde(rename = "type")]
     pub action_type: String,
@@ -39,7 +50,7 @@ pub struct GenericActionDto {
     pub params: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct GuardObjectDto {
     #[serde(rename = "type")]
     pub guard_type: String,
@@ -47,15 +58,15 @@ pub struct GuardObjectDto {
     pub params: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum TransitionGuardDto {
     Name(String),
     Object(GuardObjectDto),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct TransitionDefinitionDto {
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct TransitionObjectDto {
     #[serde(default)]
     pub target: Option<String>,
     #[serde(default, alias = "guard")]
@@ -64,19 +75,31 @@ pub struct TransitionDefinitionDto {
     pub actions: Vec<ActionDto>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum TransitionDefinitionDto {
+    Target(String),
+    Object(TransitionObjectDto),
+}
+
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct StateDefinitionDto {
+    #[serde(default, rename = "type")]
+    pub type_: Option<String>,
     #[serde(default)]
     pub initial: Option<String>,
     #[serde(default)]
-    pub states: BTreeMap<String, StateDefinitionDto>,
+    pub states: IndexMap<String, StateDefinitionDto>,
 
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
-    pub on: BTreeMap<String, Vec<TransitionDefinitionDto>>, // Event -> List of Transitions
+    pub on: IndexMap<String, Vec<TransitionDefinitionDto>>, // Event -> List of Transitions
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub exit: Vec<ActionDto>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub always: Vec<TransitionDefinitionDto>,
 }
 
 // Helpers
@@ -98,7 +121,7 @@ where
     }
 }
 
-fn deserialize_map_vec_or_single<'de, D, T>(deserializer: D) -> Result<BTreeMap<String, Vec<T>>, D::Error>
+fn deserialize_map_vec_or_single<'de, D, T>(deserializer: D) -> Result<IndexMap<String, Vec<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -110,13 +133,14 @@ where
         Single(T),
     }
 
-    let map: BTreeMap<String, VecOrSingle<T>> = BTreeMap::deserialize(deserializer)?;
+    let map: IndexMap<String, Option<VecOrSingle<T>>> = IndexMap::deserialize(deserializer)?;
     
-    let mut result = BTreeMap::new();
+    let mut result = IndexMap::new();
     for (key, value) in map {
         let vec = match value {
-            VecOrSingle::Vec(v) => v,
-            VecOrSingle::Single(s) => vec![s],
+            Some(VecOrSingle::Vec(v)) => v,
+            Some(VecOrSingle::Single(s)) => vec![s],
+            None => vec![],
         };
         result.insert(key, vec);
     }

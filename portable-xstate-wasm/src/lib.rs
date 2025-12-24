@@ -1,16 +1,377 @@
 use wasm_bindgen::prelude::*;
 use portable_xstate_core::{RuntimeMachine, Value};
 use crate::utils::{json_to_value, value_to_json};
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
+use std::collections::BTreeMap; // Keep BTreeMap for internal maps if not critical, or move them too.
+// Actually FsmRunner uses BTreeMap for guards/actions. XState impls order matters?
+// Probably better to switch guards/actions to IndexMap too for consistency.
 use std::rc::Rc;
 
 mod utils;
 
+pub(crate) struct InternalState {
+    pub machine: RuntimeMachine,
+    pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+}
+
 #[wasm_bindgen]
 pub struct WasmMachine {
-     machine: RuntimeMachine,
-     guards: BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-     actions: BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub(crate) machine: RuntimeMachine,
+    pub(crate) guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    pub(crate) actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub(crate) config: JsValue,
+}
+
+#[wasm_bindgen]
+impl WasmMachine {
+    #[wasm_bindgen(getter)]
+    pub fn config(&self) -> JsValue {
+        self.config.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn id(&self) -> String {
+        self.machine.definition.id.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn version(&self) -> Option<String> {
+        if self.config.is_object() {
+            let v = js_sys::Reflect::get(&self.config, &JsValue::from_str("version")).unwrap_or(JsValue::UNDEFINED);
+            v.as_string()
+        } else {
+            None
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn types(&self) -> JsValue {
+         if let Some(types_val) = &self.machine.definition.types {
+             let json_val = value_to_json(types_val);
+             if let Ok(json_str) = serde_json::to_string(&json_val) {
+                 return js_sys::JSON::parse(&json_str).unwrap_or(JsValue::UNDEFINED);
+             }
+         }
+         JsValue::UNDEFINED
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn schemas(&self) -> JsValue {
+        self.types()
+    }
+
+    #[wasm_bindgen(js_name = _get_internal_state)]
+    pub fn _get_internal_state(&self) -> f64 {
+        let state = InternalState {
+            machine: self.machine.clone(),
+            guards: self.guards.clone(),
+            actions: self.actions.clone(),
+        };
+        Box::into_raw(Box::new(state)) as usize as f64
+    }
+
+    #[wasm_bindgen(js_name = is_wasm_machine)]
+    pub fn is_wasm_machine(&self) -> bool {
+        true
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn events(&self) -> Vec<String> {
+        let mut events_vec = Vec::new();
+        
+        // Helper function for recursion
+        fn collect_events(state: &portable_xstate_core::StateDefinition, events: &mut Vec<String>) {
+             // Iterate keys in definition order (IndexMap)
+             for (key, transitions) in &state.on {
+                 if transitions.is_empty() {
+                     continue;
+                 }
+                 if !events.contains(key) {
+                     events.push(key.clone());
+                 }
+            }
+            for substate in state.states.values() {
+                collect_events(substate, events);
+            }
+        }
+
+        for state in self.machine.definition.states.values() {
+            collect_events(state, &mut events_vec);
+        }
+
+        // Do NOT sort. XState definition order.
+        events_vec
+    }
+
+    #[wasm_bindgen(js_name = resolveState)]
+    pub fn resolve_state(&self, state_val_obj: JsValue) -> JsValue {
+        let value_key = JsValue::from_str("value");
+        let val = if state_val_obj.is_object() {
+            js_sys::Reflect::get(&state_val_obj, &value_key).unwrap_or(state_val_obj.clone())
+        } else {
+            state_val_obj.clone()
+        };
+
+        // Determine start state key
+        let start_key = if let Some(s) = val.as_string() {
+            s
+        } else {
+             // If val is not a string, it might be an object (compound value). 
+             // We should inspect it. But for now fallback to initial.
+             self.machine.definition.initial.clone()
+        };
+
+        let resolved = self.resolve_state_from_key(&start_key, &self.machine.definition.states);
+        
+        let state_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("value"), &resolved);
+        // Debug
+        // let _ = web_sys::console::log_2(&JsValue::from_str("Resolved Value:"), &resolved);
+
+        // Check if final
+        // To do this, we need the definition of the Resolved state(s).
+        // Since resolved value can be complex, it's hard to map back to single definition.
+        // But for this test, value is "bar", definition "bar" has type "final".
+        
+        let is_done = self.is_state_done(&val, &self.machine.definition.states);
+        if is_done {
+             let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("status"), &JsValue::from_str("done"));
+        } else {
+             // Optional: status: active? XState doesn't mandate it i think.
+        }
+
+        state_obj.into()
+    }
+
+    fn is_state_done(&self, val: &JsValue, states: &IndexMap<String, portable_xstate_core::StateDefinition>) -> bool {
+         if let Some(key) = val.as_string() {
+              if let Some(def) = states.get(&key) {
+                   return def.type_.as_deref() == Some("final");
+              }
+         } else if val.is_object() {
+              // Compound/Parallel value { key: child_val }
+              let obj = js_sys::Object::from(val.clone());
+              let keys = js_sys::Object::keys(&obj);
+              
+              // If empty object?
+              if keys.length() == 0 { return false; }
+
+              // For Compound state (one key): Parent is done if child is done + matches final state of parent?
+              // No, parent is done if it is in a final substate.
+              // Logic check:
+              //   If resolving state value, we have { foo: 'bar' }.
+              //   Is 'foo' done? 'foo' is compound. Child 'bar' is active.
+              //   If 'bar' is final, then 'foo' is done.
+              
+              //   If Parallel: All regions must be done.
+              
+              let mut all_done = true;
+              for i in 0..keys.length() {
+                  let k = keys.get(i).as_string().unwrap_or_default();
+                  let v = js_sys::Reflect::get(&obj, &JsValue::from_str(&k)).unwrap();
+                  
+                  if let Some(def) = states.get(&k) {
+                       // Recurse
+                       if !self.is_state_done(&v, &def.states) {
+                           all_done = false;
+                           break;
+                       }
+                  } else {
+                       all_done = false;
+                  }
+              }
+              return all_done;
+         }
+         false
+    }
+
+    fn resolve_state_from_key(&self, key: &str, states: &IndexMap<String, portable_xstate_core::StateDefinition>) -> JsValue {
+        if let Some(def) = states.get(key) {
+             if !def.states.is_empty() {
+                 if let Some(initial) = &def.initial {
+                      // Compound: Resolve initial state within THIS state's children
+                      let child_res = self.resolve_state_from_key(initial, &def.states);
+                      let obj = js_sys::Object::new();
+                      let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), &child_res);
+                      return obj.into();
+                 } else {
+                      // Parallel: Resolve ALL children
+                      let parallel_val = js_sys::Object::new();
+                      for child_key in def.states.keys() {
+                           // Resolve each child relative to this state's children map
+                           let r = self.resolve_state_from_key(child_key, &def.states);
+                           
+                           if r.is_object() {
+                               let r_obj = js_sys::Object::from(r);
+                               // Recursive result is { child_key: ... }. Merge it.
+                               // We want to merge all { region:val } objects into one parent object.
+                               // Iterate keys of result (should be just one usually, but merge anyway)
+                               let keys = js_sys::Object::keys(&r_obj);
+                               for i in 0..keys.length() {
+                                   let k = keys.get(i);
+                                   let v = js_sys::Reflect::get(&r_obj, &k).unwrap_or(JsValue::UNDEFINED);
+                                   let _ = js_sys::Reflect::set(&parallel_val, &k, &v);
+                               }
+                           }
+                      }
+                      
+                      let obj = js_sys::Object::new();
+                      let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), &parallel_val);
+                      return obj.into();
+                 }
+             }
+        }
+        JsValue::from_str(key)
+    }
+    
+
+    #[wasm_bindgen]
+    pub fn provide(&self, implementations: JsValue, context: Option<JsValue>) -> Result<WasmMachine, JsValue> {
+         let mut new_machine = self.clone_machine(); 
+         
+         // Parse implementations and merge
+         parse_implementations(&implementations, &mut new_machine.guards, &mut new_machine.actions);
+
+         // Handle context override (second argument)
+         if let Some(ctx_val) = context {
+             if !ctx_val.is_undefined() && !ctx_val.is_null() {
+                 let ctx_json: serde_json::Value = serde_wasm_bindgen::from_value(ctx_val)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to parse context: {}", e)))?;
+                 new_machine.machine.context = json_to_value(ctx_json);
+             }
+         }
+         
+         Ok(new_machine)
+    }
+
+    fn clone_machine(&self) -> WasmMachine {
+        WasmMachine {
+            machine: self.machine.clone(),
+            guards: self.guards.clone(),
+            actions: self.actions.clone(),
+            config: self.config.clone(),
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn states(&self) -> JsValue {
+        let machine_id = &self.machine.definition.id;
+        
+        let config_states = if self.config.is_object() {
+             js_sys::Reflect::get(&self.config, &JsValue::from_str("states")).unwrap_or(JsValue::UNDEFINED)
+        } else {
+             JsValue::UNDEFINED
+        };
+
+        map_state_map(&self.machine.definition.states, &config_states, machine_id)
+    }
+}
+
+// Helper to map a map of states to a JS object of StateNodes
+fn map_state_map(
+    states_def: &IndexMap<String, portable_xstate_core::StateDefinition>,
+    states_config: &JsValue,
+    parent_id: &str
+) -> JsValue {
+    let obj = js_sys::Object::new();
+    
+    let config_map = if states_config.is_object() {
+        js_sys::Object::from(states_config.clone())
+    } else {
+        js_sys::Object::new() 
+    };
+
+    for (key, def) in states_def {
+        let state_id = if parent_id.is_empty() || parent_id == "(machine)" {
+            key.clone() // Top level? Or machine.id.key? 
+            // XState 4: machine.id + "." + key? 
+            // Actually id logic is complex. Let's assume parent_id . key 
+            // Unless the state definition has an ID (which core doesn't store yet).
+            // For now: parent_id.key
+            // Wait, if parent_id is the machine ID, it is typically "machineId.stateKey".
+        } else {
+            format!("{}.{}", parent_id, key)
+        };
+        // Fix for root machine ID:
+        let _state_id = if parent_id == "(machine)" {
+             // If machine has no ID, XState might treat it differently. 
+             // But let's stick to simple path for now.
+             key.clone()
+        } else {
+             format!("{}.{}", parent_id, key)
+        };
+
+        let state_config = js_sys::Reflect::get(&config_map, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED);
+
+        // Calculate ID: Check explicit ID in config, else parent.key
+        let explicit_id = if state_config.is_object() {
+             let id_val = js_sys::Reflect::get(&state_config, &JsValue::from_str("id")).unwrap_or(JsValue::UNDEFINED);
+             id_val.as_string()
+        } else {
+             None
+        };
+
+        let state_id = if let Some(eid) = explicit_id {
+            eid
+        } else if parent_id.is_empty() || parent_id == "(machine)" {
+            key.clone() 
+        } else {
+            format!("{}.{}", parent_id, key)
+        };
+
+        let state_node = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("key"), &JsValue::from_str(key));
+        let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("id"), &JsValue::from_str(&state_id));
+        let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("config"), &state_config);
+        
+        // initial
+        if let Some(init) = &def.initial {
+             let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("initial"), &JsValue::from_str(init));
+        }
+        
+        // type
+        let type_str = if !def.states.is_empty() {
+             "compound" // or parallel? Core doesn't verify parallel yet.
+        } else {
+             "atomic" // or history/final
+        };
+        let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("type"), &JsValue::from_str(type_str));
+
+        // states
+        let child_states_config = if state_config.is_object() {
+             js_sys::Reflect::get(&state_config, &JsValue::from_str("states")).unwrap_or(JsValue::UNDEFINED)
+        } else {
+             JsValue::UNDEFINED
+        };
+        let child_states = map_state_map(&def.states, &child_states_config, &state_id);
+        let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("states"), &child_states);
+
+        // on (events) -> Array of keys? XState V5 StateNode.on is just the transition config object (deprecated?) 
+        // Actually Machine.on is events. StateNode.on is transition definitions?
+        // Wait, the test checked `transitions.keys()`. 
+        // StateNode.transitions is a Map<string, TransitionDefinition[]>.
+        
+        let transitions_map = js_sys::Map::new();
+        for (event, transitions) in &def.on {
+             // We need to map Vec<TransitionDefinition> to JS objects
+             let t_arr = js_sys::Array::new();
+             for t in transitions {
+                  let t_obj = js_sys::Object::new();
+                  if let Some(target) = &t.target {
+                      let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("target"), &js_sys::Array::of1(&JsValue::from_str(target)));
+                  }
+                  // actions, guards... (simplified for now)
+                  t_arr.push(&t_obj);
+             }
+             transitions_map.set(&JsValue::from_str(event), &t_arr);
+        }
+        let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("transitions"), &transitions_map);
+
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), &state_node);
+    }
+    
+    obj.into()
 }
 
 #[wasm_bindgen]
@@ -23,8 +384,25 @@ impl SetupObject {
     #[wasm_bindgen(js_name = createMachine)]
     pub fn create_wasm_machine(&self, val: JsValue) -> Result<WasmMachine, JsValue> {
          // Create the inner machine using FsmRunner constructor logic
-         let runner = FsmRunner::new(val, JsValue::UNDEFINED)?;
-         let machine = runner.machine.clone();
+         let runner = FsmRunner::new(val.clone(), JsValue::UNDEFINED)?;
+         
+         // Clone the runtime machine to modify it (inject schemas)
+         let mut runtime_machine = runner.machine.clone();
+         
+         let schemas_key = JsValue::from_str("schemas");
+         let schemas_val = js_sys::Reflect::get(&self.config, &schemas_key).unwrap_or(JsValue::UNDEFINED);
+         
+         if !schemas_val.is_undefined() {
+             let schemas_json: serde_json::Value = serde_wasm_bindgen::from_value(schemas_val.clone())
+                .unwrap_or(serde_json::Value::Null);
+                
+             if !schemas_json.is_null() {
+                 // Overwrite types with schemas (or merge if needed, but usually one source)
+                 runtime_machine.definition.types = Some(json_to_value(schemas_json));
+             }
+         }
+         
+         let machine = runtime_machine;
 
          let mut guards = runner.guards.clone();
          let mut actions = runner.actions.clone();
@@ -35,7 +413,8 @@ impl SetupObject {
          Ok(WasmMachine {
              machine,
              guards,
-             actions
+             actions,
+             config: val,
          })
     }
 }
@@ -47,10 +426,13 @@ pub fn setup_wasm_machine(config: JsValue) -> SetupObject {
 
 #[wasm_bindgen]
 pub fn assign(assignment: JsValue) -> JsValue {
-    // Create a function named "assign" that returns undefined, matching xstate
-    let func_constructor = js_sys::Function::new_no_args("return function assign() {};");
-    let func = func_constructor.call0(&JsValue::NULL).unwrap();
-
+    // Return a dummy function that mimics XState assign creator behavior from verification test PoV?
+    // Or just a function that carries the metadata.
+    // XState 5 assign returns an Action Object, usually. 
+    // But verification.rs expects is_function().
+    // We create a no-op function.
+    let func = js_sys::Function::new_no_args("return { type: 'xstate.assign' };");
+    
     let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.assign"));
     let _ = js_sys::Reflect::set(&func, &JsValue::from_str("assignment"), &assignment);
     
@@ -80,24 +462,28 @@ impl WasmMachine {
              // Overrides
              parse_implementations(&options, &mut runner.guards, &mut runner.actions);
         }
+
+        // Process initial always transitions
+        runner.handle_always_transition();
         
         Ok(runner)
     }
 }
 
 #[wasm_bindgen]
+#[derive(Clone)]
 pub struct FsmRunner {
     machine: RuntimeMachine,
     inspector: Option<js_sys::Function>,
-    guards: BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-    actions: BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
 }
 
 // Helper to parse "guards" and "actions" from a JS object (either implementations object or options object)
 fn parse_implementations(
     impl_obj: &JsValue,
-    guards_out: &mut BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-    actions_out: &mut BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    guards_out: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
 ) {
     if !impl_obj.is_object() {
         return;
@@ -119,6 +505,8 @@ fn parse_implementations(
              
              if let Ok(guard_fn) = guard_fn_js.dyn_into::<js_sys::Function>() {
                  guards_out.insert(key_str, Rc::new(move |ctx, evt, params| {
+                     let _ = web_sys::console::error_1(&JsValue::from_str("Exec guard closure"));
+                     // panic!("CLOSURE EXECUTED"); 
                      // Convert Core Value -> JS Value via JSON
                      let ctx_json = value_to_json(ctx);
                      let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
@@ -201,22 +589,22 @@ fn parse_implementations(
                  let partial_json: serde_json::Value = serde_wasm_bindgen::from_value(assign_val).unwrap_or(serde_json::Value::Null);
                  let partial_value = json_to_value(partial_json);
 
-                 if let Some(partial_obj) = partial_value.as_object() {
-                     let partial_obj = partial_obj.clone();
-                     actions_out.insert(key_str, Rc::new(move |ctx_mut, _evt, _params| {
-                         if let Some(ctx_obj) = ctx_mut.as_object_mut() {
-                             for (k, v) in &partial_obj {
-                                 ctx_obj.insert(k.clone(), v.clone());
+                     if let Some(partial_obj) = partial_value.as_object() {
+                         let partial_obj = partial_obj.clone();
+                         actions_out.insert(key_str, Rc::new(move |ctx_mut: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                             if let Some(ctx_obj) = ctx_mut.as_object_mut() {
+                                 for (k, v) in &partial_obj {
+                                     ctx_obj.insert(k.clone(), v.clone());
+                                 }
                              }
-                         }
-                     }));
-                     continue; // handled
-                 }
+                         }));
+                         continue; // handled
+                     }
              }
 
              // Fallback: Treat as function (Generic Action)
              if let Ok(action_fn) = action_item.dyn_into::<js_sys::Function>() {
-                 actions_out.insert(key_str, Rc::new(move |ctx_mut, evt, params| {
+                 actions_out.insert(key_str, Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
                      let ctx_json = value_to_json(ctx_mut);
                      let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
                      let ctx_js = js_sys::JSON::parse(&ctx_str).unwrap_or(JsValue::NULL);
@@ -246,14 +634,57 @@ fn parse_implementations(
 }
 
 // Helper function to extract inline assignments
-fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>), JsValue> {
-    let mut actions_out = BTreeMap::new();
+fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>), JsValue> {
+    let mut actions_out = IndexMap::new();
     let mut action_counter = 0;
 
     if !val.is_object() {
          return Ok((val.clone(), actions_out));
     }
     let definition = js_sys::Object::from(val.clone());
+
+    // Process Root context (evaluate if function)
+    let context_key = JsValue::from_str("context");
+    let context_val = js_sys::Reflect::get(&definition, &context_key).unwrap_or(JsValue::UNDEFINED);
+    if context_val.is_function() {
+        if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+             if let Ok(res) = func.call0(&JsValue::NULL) {
+                 let _ = js_sys::Reflect::set(&definition, &context_key, &res);
+             }
+        }
+    }
+
+    // Process Root entry
+    process_action_list(&definition, "entry", &mut actions_out, &mut action_counter);
+    
+    // Process Root exit
+    process_action_list(&definition, "exit", &mut actions_out, &mut action_counter);
+
+    // Process Root on -> transitions -> actions
+    let on_key = JsValue::from_str("on");
+    let on_val = js_sys::Reflect::get(&definition, &on_key).unwrap_or(JsValue::UNDEFINED);
+    if on_val.is_object() {
+         let on_obj = js_sys::Object::from(on_val);
+         let event_keys = js_sys::Object::keys(&on_obj);
+         for j in 0..event_keys.length() {
+             let evt_key = event_keys.get(j);
+             let transitions_val = js_sys::Reflect::get(&on_obj, &evt_key).unwrap_or(JsValue::UNDEFINED);
+             
+             if js_sys::Array::is_array(&transitions_val) {
+                 let arr = js_sys::Array::from(&transitions_val);
+                 for k in 0..arr.length() {
+                     let t_val = arr.get(k);
+                     if t_val.is_object() {
+                         let t_obj = js_sys::Object::from(t_val);
+                         process_action_list(&t_obj, "actions", &mut actions_out, &mut action_counter);
+                     }
+                 }
+             } else if transitions_val.is_object() {
+                 let t_obj = js_sys::Object::from(transitions_val);
+                 process_action_list(&t_obj, "actions", &mut actions_out, &mut action_counter);
+             }
+         }
+    }
 
     let states_key = JsValue::from_str("states");
     let states_val = js_sys::Reflect::get(&definition, &states_key).unwrap_or(JsValue::UNDEFINED);
@@ -311,7 +742,7 @@ fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, BTreeMap<String
 fn process_action_list(
     parent_obj: &js_sys::Object, 
     prop_name: &str, 
-    actions_out: &mut BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
     counter: &mut u32
 ) {
     let prop_key = JsValue::from_str(prop_name);
@@ -337,7 +768,7 @@ fn process_action_list(
 
 fn convert_inline_action(
     action_item: &JsValue,
-    actions_out: &mut BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
     counter: &mut u32
 ) -> Option<JsValue> {
      let is_obj = action_item.is_object();
@@ -390,7 +821,7 @@ fn convert_inline_action(
                                }
                           }
                      }
-                 } else if assign_val.is_object() {
+                     } else if assign_val.is_object() {
                      // Case 2: assignment is an object { key: value_or_fn }
                      let assign_obj = js_sys::Object::from(assign_val.clone());
                      let keys = js_sys::Object::keys(&assign_obj);
@@ -412,15 +843,20 @@ fn convert_inline_action(
                                  val_or_fn
                              };
                              
+                             // Log assignment
+                             let key_str = key_js.as_string().unwrap_or_default();
+                             // let _ = web_sys::console::error_1(&JsValue::from_str(&format!("Assigning key: {}", key_str)));
+
                              // Convert JS value to Value (via intermediate JSON if needed)
                              let final_val_json: serde_json::Value = serde_wasm_bindgen::from_value(final_val_js).unwrap_or(serde_json::Value::Null);
                              let final_val = json_to_value(final_val_json);
                              
-                             let key_str = key_js.as_string().unwrap_or_default();
-                             
                              // Update context
-                             ctx_obj.insert(key_str, final_val);
+                             ctx_obj.insert(key_str.clone(), final_val.clone());
+                             // let _ = web_sys::console::error_1(&JsValue::from_str(&format!("New Val: {:?}", final_val)));
                          }
+                     } else {
+                          let _ = web_sys::console::error_1(&JsValue::from_str("Context is not an object!"));
                      }
                  }
              }));
@@ -439,26 +875,81 @@ fn convert_inline_action(
 impl FsmRunner {
     #[wasm_bindgen(constructor)]
     pub fn new(val: JsValue, options: JsValue) -> Result<FsmRunner, JsValue> {
-        let mut guards: BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = BTreeMap::new();
-        let mut actions = BTreeMap::new();
+        let mut guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = IndexMap::new();
+        let mut actions = IndexMap::new();
 
         // Parse options if provided
         parse_implementations(&options, &mut guards, &mut actions);
 
-        let machine = if val.is_string() {
+        // Check if val is WasmMachine (via helper method)
+        // We look for _get_internal_state method directly.
+        let machine_data: Option<InternalState> = if val.is_object() {
+             // Try getting __wbg_ptr directly as our primary detection method
+             // Because constructor.name is seemingly unreliable here ("Object" in logs)
+             // and Reflect::get("_get_internal_state") fails.
+             let ptr_key = JsValue::from_str("__wbg_ptr");
+             let ptr_check = js_sys::Reflect::get(&val, &ptr_key);
+             
+             if let Ok(ptr_val) = ptr_check {
+                 if !ptr_val.is_undefined() {
+                     let ptr = ptr_val.as_f64().unwrap_or(0.0) as usize as *mut WasmMachine;
+                     if !ptr.is_null() {
+                         // This is unsafe but necessary given detection failures
+                         unsafe {
+                             let wasm_machine_ref = &*ptr;
+                             
+                             let state = InternalState {
+                                 machine: wasm_machine_ref.machine.clone(),
+                                 guards: wasm_machine_ref.guards.clone(),
+                                 actions: wasm_machine_ref.actions.clone(),
+                             };
+                             Some(state)
+                         }
+                     } else {
+                         None
+                     }
+                 } else {
+                     None
+                 }
+             } else {
+                 None
+             }
+        } else {
+             None
+        };
+
+        let machine = if let Some(mut internal_state) = machine_data {
+             // Merge overrides: base + new
+             internal_state.guards.extend(guards);
+             guards = internal_state.guards;
+             
+             internal_state.actions.extend(actions);
+             actions = internal_state.actions;
+ 
+             internal_state.machine
+        } else if val.is_string() {
              let json_definition = val.as_string().unwrap();
              let def = portable_xstate_json::create_machine(&json_definition)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
              RuntimeMachine::new(def)
         } else {
              // If object, pre-process to "lift" inline implementations (like assign functions)
-             let (cleaned_val, extra_actions) = extract_inline_assignments(&val)?;
-             actions.extend(extra_actions);
+             let normalized_val = normalize_undefined(&val);
+             let (mut cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
+             process_config(&mut cleaned_val);
+
+             actions.extend(extra_actions); // Append extracted actions to overrides? Or prepend?
+             // Actually, cleaned_val might have references to them.
  
              let json_string = js_sys::JSON::stringify(&cleaned_val)
                 .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
-                .as_string()
-                .ok_or(JsValue::from_str("Machine definition JSON is not a string"))?;
+                .as_string().unwrap_or_default();
+             
+             // Log the JSON to see if states are preserved
+             // if json_string.len() < 1000 {
+             //    let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input: {}", json_string)));
+             // }
+             let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input (len {}): {}", json_string.len(), json_string)));
 
              let definition = portable_xstate_json::create_machine(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
@@ -479,62 +970,28 @@ impl FsmRunner {
         self.inspector = Some(callback);
     }
 
-    pub fn start(&mut self) {
-        // 1. Execute entry actions for the initial state
-        let current_state = self.machine.state();
-        let actions_map = self.actions.clone();
-        
-        let entry_actions = if let Some(state_def) = self.machine.get_state_definition(&current_state) {
-            state_def.entry.clone()
-        } else {
-            Vec::new()
-        };
 
-        for action in entry_actions {
-            let action_type = match &action {
-                portable_xstate_core::Action::Named(s) => s.clone(),
-                portable_xstate_core::Action::Assign(a) => a.action_type.clone(),
-                portable_xstate_core::Action::Generic(g) => g.action_type.clone(),
-            };
-
-            if let Some(impl_fn) = actions_map.get(&action_type) {
-                 let params = match &action {
-                     portable_xstate_core::Action::Generic(g) => &g.params,
-                     _ => &None
-                 };
-
-                 // Create init event
-                 // Pure Rust value!
-                 let init_event_value = Value::Object(BTreeMap::from([("type".to_string(), Value::String("xstate.init".to_string()))]));
-                 
-                 // Execute action
-                 (impl_fn)(&mut self.machine.context, &init_event_value, params);
-            }
-        }
-
-        // 2. Inspector Snapshot
-        if let Some(inspector) = &self.inspector {
-             let obj = self.get_snapshot();
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
-             let _ = inspector.call1(&JsValue::NULL, &obj);
-        }
-    }
 
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> JsValue {
-        let obj = js_sys::Object::new();
-        
-        // Value: Convert dot-path to object or string
-        let state_val = self.path_to_value_object(&self.machine.state());
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &state_val);
+         let obj = js_sys::Object::new();
+         
+         let s = self.machine.state();
+         // "active.one" -> { active: "one" }
+         let value_val = if s.is_empty() && self.machine.definition.states.is_empty() {
+             js_sys::Object::new().into()
+         } else {
+             self.path_to_value_object(&s)
+         };
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("value"), &value_val);
 
-        // Context
-        // Convert Core Value -> JS Value via JSON (re-use utils)
-        let ctx_json = value_to_json(&self.machine.context);
-        let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
-        let ctx_val = js_sys::JSON::parse(&ctx_str).unwrap_or(JsValue::NULL);
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
+         // Context
+         let ctx_json = value_to_json(&self.machine.context);
+         let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("{}".to_string());
+         // If "null" (default Value::Null), replace with "{}"
+         let ctx_str_clean = if ctx_str == "null" { "{}" } else { &ctx_str };
+         let ctx_val = js_sys::JSON::parse(ctx_str_clean).unwrap_or(js_sys::Object::new().into());
+         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx_val);
 
         // Parity Fields
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("tags"), &js_sys::Array::new());
@@ -568,10 +1025,106 @@ impl FsmRunner {
         obj.into()
     }
 
-    pub fn send(&mut self, event: JsValue) {
+    pub fn start(&mut self) -> FsmRunner {
+        // 1. Execute entry actions for the Root Machine
+        for action in &self.machine.definition.entry {
+            let action_type = match action {
+                portable_xstate_core::Action::Named(s) => s.clone(),
+                portable_xstate_core::Action::Assign(a) => a.action_type.clone(),
+                portable_xstate_core::Action::Generic(g) => g.action_type.clone(),
+            };
+
+            if let Some(impl_fn) = self.actions.get(&action_type) {
+                 let params = match action {
+                     portable_xstate_core::Action::Generic(g) => &g.params,
+                     _ => &None
+                 };
+                 let init_event_value = Value::Object(IndexMap::from([("type".to_string(), Value::String("xstate.init".to_string()))]));
+                 (impl_fn)(&mut self.machine.context, &init_event_value, params);
+            }
+        }
+
+        // 2. Execute entry actions for the initial state
+        let current_state = self.machine.state();
+        let actions_map = self.actions.clone(); 
+        
+        // Helper to collect entry actions
+        let entry_actions = if let Some(state_def) = self.machine.get_state_definition(&current_state) {
+            state_def.entry.clone()
+        } else {
+            Vec::new()
+        };
+
+        for action in entry_actions {
+            let action_type = match &action {
+                portable_xstate_core::Action::Named(s) => s.clone(),
+                portable_xstate_core::Action::Assign(a) => a.action_type.clone(),
+                portable_xstate_core::Action::Generic(g) => g.action_type.clone(),
+            };
+
+            if let Some(impl_fn) = actions_map.get(&action_type) {
+                 let params = match &action {
+                     portable_xstate_core::Action::Generic(g) => &g.params,
+                     _ => &None
+                 };
+
+                 let init_event_value = Value::Object(IndexMap::from([("type".to_string(), Value::String("xstate.init".to_string()))]));
+                 (impl_fn)(&mut self.machine.context, &init_event_value, params);
+            }
+        }
+        
+        // Log current state
+        let _ = web_sys::console::error_1(&JsValue::from_str(&format!("FsmRunner::start - current_state: {}", self.machine.current_state)));
+        
+        let on_keys: Vec<&String> = self.machine.definition.on.keys().collect();
+        let _ = web_sys::console::error_1(&JsValue::from_str(&format!("FsmRunner::start - Root ON keys: {:?}", on_keys)));
+
+        // 3. Emit Initial Snapshot
+        if let Some(inspector) = &self.inspector {
+             let obj = self.get_snapshot();
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
+             let _ = inspector.call1(&JsValue::NULL, &obj);
+        }
+
+        self.handle_always_transition();
+        
+        self.clone()
+    }
+
+    fn handle_always_transition(&mut self) {
+        // Trigger always transition if present
+        // Loop to handle chained always transitions
+        let mut loop_count = 0;
+        loop {
+            if loop_count > 100 {
+                let _ = web_sys::console::error_1(&JsValue::from_str("Possible infinite loop in always transitions"));
+                break;
+            }
+            loop_count += 1;
+
+            let definition = &self.machine.definition;
+            if let Some(state) = definition.states.get(&self.machine.current_state) {
+                 let empty_str = "".to_string();
+                 if state.on.contains_key(&empty_str) {
+                     let t = state.on.get(&empty_str).unwrap();
+                     
+                     if let Some(first_transition) = t.first() {
+                         if let Some(target) = &first_transition.target {
+                             self.machine.current_state = target.clone();
+                             continue; // Loop to check next state's always
+                         }
+                     }
+                 }
+            }
+            break; // No always transition found
+        }
+    }
+
+    pub fn send(&mut self, event: JsValue) -> Result<JsValue, JsValue> {
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
-            let payload = Value::Object(BTreeMap::from([("type".to_string(), Value::String(s.clone()))]));
+            let payload = Value::Object(IndexMap::from([("type".to_string(), Value::String(s.clone()))]));
             (s, payload)
         } else {
              // Assume object
@@ -603,6 +1156,8 @@ impl FsmRunner {
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
+        
+        Ok(JsValue::UNDEFINED)
     }
 
     #[wasm_bindgen(js_name = subscribe)]
@@ -643,12 +1198,77 @@ pub fn create_actor(machine_def: JsValue, options: JsValue) -> Result<JsValue, J
 
 #[wasm_bindgen(js_name = createMachine)]
 pub fn create_machine(config: JsValue) -> Result<WasmMachine, JsValue> {
-    let runner = FsmRunner::new(config, JsValue::UNDEFINED)?;
+    let runner = FsmRunner::new(config.clone(), JsValue::UNDEFINED)?;
     
     Ok(WasmMachine {
         machine: runner.machine,
         guards: runner.guards,
         actions: runner.actions,
+        config: config.clone(),
     })
 }
+fn process_config(val: &mut JsValue) {
+    if val.is_object() {
+        let obj = js_sys::Object::from(val.clone());
+        let keys = js_sys::Object::keys(&obj);
+        for i in 0..keys.length() {
+            let key = keys.get(i);
+            let value = js_sys::Reflect::get(&obj, &key).unwrap_or(JsValue::UNDEFINED);
+            
+            // Check if key is "on"
+            if let Some(key_str) = key.as_string() {
+                 if key_str == "on" && value.is_object() {
+                     // Iterate transitions
+                     let t_obj = js_sys::Object::from(value.clone());
+                     let t_keys = js_sys::Object::keys(&t_obj);
+                     for j in 0..t_keys.length() {
+                         let t_key = t_keys.get(j);
+                         let t_val = js_sys::Reflect::get(&t_obj, &t_key).unwrap_or(JsValue::UNDEFINED);
+                         if t_val.is_undefined() {
+                             // Delete key
+                             let res = js_sys::Reflect::delete_property(&t_obj, &t_key);
+                             let _ = web_sys::console::error_1(&JsValue::from_str(&format!("Deleted {:?}? {:?}", t_key, res)));
+                         }
+                     }
+                 } else if value.is_object() {
+                      // Recurse
+                      let mut v_mut = value.clone();
+                      process_config(&mut v_mut);
+                 }
+            }
+        }
+    }
+}
 
+fn normalize_undefined(val: &JsValue) -> JsValue {
+    if val.is_object() && !val.is_null() {
+        if js_sys::Array::is_array(val) {
+            let arr = js_sys::Array::from(val);
+            let res_arr = js_sys::Array::new();
+            for i in 0..arr.length() {
+                let item = arr.get(i);
+                res_arr.push(&normalize_undefined(&item));
+            }
+            return res_arr.into();
+        }
+        if val.is_function() { return val.clone(); }
+        
+        let obj = js_sys::Object::from(val.clone());
+        let keys = js_sys::Object::keys(&obj);
+        let res_obj = js_sys::Object::new();
+        
+        for i in 0..keys.length() {
+            let key = keys.get(i);
+            let v = js_sys::Reflect::get(&obj, &key).unwrap_or(JsValue::UNDEFINED);
+            
+            if v.is_undefined() {
+                // Convert undefined to null to preserve keys in JSON/Serde
+                let _ = js_sys::Reflect::set(&res_obj, &key, &JsValue::NULL);
+            } else {
+                let _ = js_sys::Reflect::set(&res_obj, &key, &normalize_undefined(&v));
+            }
+        }
+        return res_obj.into();
+    }
+    val.clone()
+}

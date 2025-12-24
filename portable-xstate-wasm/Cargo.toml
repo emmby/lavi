@@ -11,6 +11,7 @@ wasm-bindgen = { workspace = true }
 serde = { workspace = true }
 portable-xstate-core = { workspace = true }
 portable-xstate-json = { workspace = true }
+indexmap = { version = "2.7", features = ["serde"] }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
 js-sys = "0.3"

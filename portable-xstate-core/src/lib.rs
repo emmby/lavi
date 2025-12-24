@@ -1,7 +1,7 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::collections::BTreeMap;
+use indexmap::IndexMap;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -17,7 +17,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Array(Vec<Value>),
-    Object(BTreeMap<String, Value>),
+    Object(IndexMap<String, Value>),
 }
 
 impl Value {
@@ -49,14 +49,14 @@ impl Value {
         }
     }
 
-    pub fn as_object(&self) -> Option<&BTreeMap<String, Value>> {
+    pub fn as_object(&self) -> Option<&IndexMap<String, Value>> {
         match self {
             Value::Object(map) => Some(map),
             _ => None,
         }
     }
 
-    pub fn as_object_mut(&mut self) -> Option<&mut BTreeMap<String, Value>> {
+    pub fn as_object_mut(&mut self) -> Option<&mut IndexMap<String, Value>> {
         match self {
             Value::Object(map) => Some(map),
             _ => None,
@@ -92,8 +92,12 @@ impl From<i64> for Value {
 pub struct MachineDefinition {
     pub id: String,
     pub initial: String,
-    pub states: BTreeMap<String, StateDefinition>,
+    pub states: IndexMap<String, StateDefinition>,
+    pub on: IndexMap<String, Vec<TransitionDefinition>>,
+    pub entry: Vec<Action>,
+    pub exit: Vec<Action>,
     pub context: Option<Value>,
+    pub types: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,9 +140,10 @@ pub struct TransitionDefinition {
 
 #[derive(Debug, Clone)]
 pub struct StateDefinition {
+    pub type_: Option<String>,
     pub initial: Option<String>,
-    pub states: BTreeMap<String, StateDefinition>,
-    pub on: BTreeMap<String, Vec<TransitionDefinition>>, 
+    pub states: IndexMap<String, StateDefinition>,
+    pub on: IndexMap<String, Vec<TransitionDefinition>>, 
     pub entry: Vec<Action>,
     pub exit: Vec<Action>,
 }
@@ -165,7 +170,7 @@ impl RuntimeMachine {
         }
     }
 
-    pub fn resolve_initial_state(states: &BTreeMap<String, StateDefinition>, start_key: &str) -> String {
+    pub fn resolve_initial_state(states: &IndexMap<String, StateDefinition>, start_key: &str) -> String {
         let mut current_key = start_key.to_string();
         
         loop {
@@ -187,7 +192,7 @@ impl RuntimeMachine {
     }
 
     fn get_state_def_recursive<'a>(
-        root_states: &'a BTreeMap<String, StateDefinition>, 
+        root_states: &'a IndexMap<String, StateDefinition>, 
         path: &str
     ) -> Option<&'a StateDefinition> {
         let parts: Vec<&str> = path.split('.').collect();
@@ -210,80 +215,86 @@ impl RuntimeMachine {
         &mut self,
         event: &str,
         event_payload: &Value,
-        guards: &BTreeMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-        actions: &BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
+        guards: &IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+        actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
     ) -> Option<String> {
         let mut state_path = self.current_state.clone();
         
         loop {
-            if let Some(state_def) = Self::get_state_def_recursive(&self.definition.states, &state_path) {
-                if let Some(transitions) = state_def.on.get(event) {
-                    for transition in transitions {
-                        let should_transition = match &transition.cond {
-                            Some(guard_def) => {
-                                let (guard_name, params) = match guard_def {
-                                    TransitionGuard::Name(s) => (s, &None),
-                                    TransitionGuard::Object(obj) => (&obj.guard_type, &obj.params),
-                                };
+            // Determine transitions based on current path (Root or State)
+            let transitions = if state_path.is_empty() {
+                self.definition.on.get(event)
+            } else {
+                Self::get_state_def_recursive(&self.definition.states, &state_path)
+                    .and_then(|def| def.on.get(event))
+            };
 
-                                if let Some(guard) = guards.get(guard_name) {
-                                    guard(&self.context, event_payload, params)
-                                } else {
-                                    false
-                                }
-                            }
-                            None => true,
-                        };
+            if let Some(transitions) = transitions {
+                for transition in transitions {
+                    let should_transition = match &transition.cond {
+                        Some(guard_def) => {
+                            let (guard_name, params) = match guard_def {
+                                TransitionGuard::Name(s) => (s, &None),
+                                TransitionGuard::Object(obj) => (&obj.guard_type, &obj.params),
+                            };
 
-                        if should_transition {
-                            let target_base = transition.target.clone().unwrap_or(state_path.clone());
-                            let next_state_full_path = if transition.target.is_none() {
-                                state_path.clone() // Internal / stay
+                            if let Some(guard) = guards.get(guard_name) {
+                                guard(&self.context, event_payload, params)
                             } else {
-                                // Resolve target path
-                                if self.definition.states.contains_key(&target_base) {
-                                    Self::resolve_initial_state(&self.definition.states, &target_base)
-                                } else {
-                                    if let Some(parent_dot) = state_path.rfind('.') {
-                                        let parent_path = &state_path[..parent_dot];
-                                        let sibling_path = format!("{}.{}", parent_path, target_base);
-                                        if Self::get_state_def_recursive(&self.definition.states, &sibling_path).is_some() {
-                                            Self::resolve_initial_state(&self.definition.states, &sibling_path)
-                                        } else {
-                                            target_base
-                                        }
+                                false
+                            }
+                        }
+                        None => true,
+                    };
+
+                    if should_transition {
+                        let target_base = transition.target.clone().unwrap_or(state_path.clone());
+                        let next_state_full_path = if transition.target.is_none() {
+                            state_path.clone() // Internal / stay
+                        } else {
+                            // Resolve target path
+                            if self.definition.states.contains_key(&target_base) {
+                                Self::resolve_initial_state(&self.definition.states, &target_base)
+                            } else {
+                                if let Some(parent_dot) = state_path.rfind('.') {
+                                    let parent_path = &state_path[..parent_dot];
+                                    let sibling_path = format!("{}.{}", parent_path, target_base);
+                                    if Self::get_state_def_recursive(&self.definition.states, &sibling_path).is_some() {
+                                        Self::resolve_initial_state(&self.definition.states, &sibling_path)
                                     } else {
                                         target_base
                                     }
-                                }
-                            };
-                            
-                            let is_internal = transition.target.is_none(); 
-
-                            if !is_internal {
-                                if let Some(current_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
-                                    for action in &current_state_def.exit {
-                                        Self::execute_action(&mut self.context, action, event_payload, actions);
-                                    }
+                                } else {
+                                    target_base
                                 }
                             }
+                        };
+                        
+                        let is_internal = transition.target.is_none(); 
 
-                            for action in &transition.actions {
-                                Self::execute_action(&mut self.context, action, event_payload, actions);
-                            }
-
-                            if !is_internal {
-                                self.current_state = next_state_full_path.clone();
-
-                                if let Some(new_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
-                                    for action in &new_state_def.entry {
-                                        Self::execute_action(&mut self.context, action, event_payload, actions);
-                                    }
+                        if !is_internal {
+                            if let Some(current_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
+                                for action in &current_state_def.exit {
+                                    Self::execute_action(&mut self.context, action, event_payload, actions);
                                 }
                             }
-
-                            return Some(self.current_state.clone());
                         }
+
+                        for action in &transition.actions {
+                            Self::execute_action(&mut self.context, action, event_payload, actions);
+                        }
+
+                        if !is_internal {
+                            self.current_state = next_state_full_path.clone();
+
+                            if let Some(new_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
+                                for action in &new_state_def.entry {
+                                    Self::execute_action(&mut self.context, action, event_payload, actions);
+                                }
+                            }
+                        }
+
+                        return Some(self.current_state.clone());
                     }
                 }
             }
@@ -291,6 +302,8 @@ impl RuntimeMachine {
             // Bubble up
             if let Some(dot_idx) = state_path.rfind('.') {
                 state_path = state_path[..dot_idx].to_string();
+            } else if !state_path.is_empty() {
+                state_path = "".to_string(); // Try root
             } else {
                 break; // Reached root, no handled event
             }
@@ -307,7 +320,7 @@ impl RuntimeMachine {
         context: &mut Value,
         action: &Action,
         event_payload: &Value,
-        actions: &BTreeMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
+        actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
     ) {
         match action {
             Action::Named(name) => {

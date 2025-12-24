@@ -1,8 +1,8 @@
 #![no_std]
 extern crate alloc;
 
-mod dto;
-mod mapper;
+pub mod dto;
+pub mod mapper;
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
