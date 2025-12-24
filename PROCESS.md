@@ -11,11 +11,7 @@ This document outlines the standard operating procedure for enabling and passing
 ## 2. Setup Test
 - **Minimal Compilation Fixes**: Create a new test file in `tests/` and make **minimal changes** to enable compilation (e.g. imports), but do NOT change logic.
 - **Verify Failure**: Run the test to ensure it fails as expected.
-- **Git Check-in**: Commit the failing test file by itself to establish a baseline.
-  ```bash
-  git add tests/<filename>.test.ts
-  git commit -m "chore: add <filename> test suite"
-  ```
+- **STOP HERE**. Do not proceed until the user has confirmed the test compiles and fails as expected. The user will check it in.
   *This ensures we can later verify that no test logic was altered.*
 
 ## 3. Run Tests
