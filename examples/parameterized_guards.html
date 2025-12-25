@@ -46,7 +46,7 @@
                     start: {
                         on: {
                             INC: {
-                                actions: [assign({ count: ({ context }) => context.count + 1 })]
+                                actions: ["increment"]
                             },
                             NEXT: [
                                 { 
@@ -79,7 +79,8 @@
                     }
                 },
                 actions: {
-                    resetCount: assign({ count: 0 })
+                    resetCount: assign({ count: 0 }),
+                    increment: assign(({ context }) => ({ count: context.count + 1 }))
                 }
             };
 

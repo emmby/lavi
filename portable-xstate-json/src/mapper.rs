@@ -27,8 +27,9 @@ fn resolve_initial(v: Option<serde_json::Value>) -> Option<String> {
 }
 
 pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
+    let machine_id = dto.id.as_deref().unwrap_or("(machine)");
     let mut id_map = IndexMap::new();
-    let states = map_states(dto.states, "", &mut id_map);
+    let states = map_states(dto.states, "", machine_id, &mut id_map);
     
     let initial = resolve_initial(dto.initial).or_else(|| {
         states.keys().next().cloned()
@@ -49,7 +50,8 @@ pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
 
 fn map_states(
     states: IndexMap<String, StateDefinitionDto>, 
-    parent_path: &str, 
+    parent_path: &str,
+    machine_id: &str,
     id_map: &mut IndexMap<String, String>
 ) -> IndexMap<String, StateDefinition> {
     states.into_iter().map(|(key, dto)| {
@@ -61,6 +63,11 @@ fn map_states(
 
         if let Some(id) = &dto.id {
             id_map.insert(id.clone(), current_path.clone());
+        } else {
+             // Generate default ID if missing: machine_id.path
+             // XState uses (machine).path
+             let default_id = format!("{}.{}", machine_id, current_path);
+             id_map.insert(default_id, current_path.clone());
         }
 
         // Destructure to avoid partial move
@@ -91,7 +98,7 @@ fn map_states(
              panic!("Compound state must specify an initial state (state: '{}').", key);
         }
 
-        let children = map_states(child_states, &current_path, id_map);
+        let children = map_states(child_states, &current_path, machine_id, id_map);
         
         let mut on_map: IndexMap<String, Vec<TransitionDefinition>> = on.into_iter()
             .map(|(k, v)| (k, v.into_iter().map(map_transition).collect()))

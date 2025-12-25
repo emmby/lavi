@@ -25,6 +25,11 @@ pub struct WasmMachine {
 
 #[wasm_bindgen]
 impl WasmMachine {
+    #[wasm_bindgen]
+    pub fn get_config(&self) -> JsValue {
+        self.config.clone()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn config(&self) -> JsValue {
         self.config.clone()
@@ -535,6 +540,47 @@ impl WasmMachine {
                          let v = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)).unwrap_or(JsValue::UNDEFINED);
                          if let Some(s) = v.as_string() {
                              runner.machine.history_value.insert(k, s);
+                         } else if js_sys::Array::is_array(&v) {
+                              // XState format: array of StateNode-like objects with IDs
+                              let arr: &js_sys::Array = v.unchecked_ref();
+                              let mut longest_path: Option<String> = None;
+                              for i in 0..arr.length() {
+                                  let item = arr.get(i);
+                                  let id_key = JsValue::from_str("id");
+                                  if let Ok(id_val) = js_sys::Reflect::get(&item, &id_key) {
+                                      if let Some(id_str) = id_val.as_string() {
+                                          if let Some(path) = runner.machine.definition.id_map.get(&id_str) {
+                                               match &longest_path {
+                                                   None => longest_path = Some(path.clone()),
+                                                   Some(current) => {
+                                                       if path.len() > current.len() {
+                                                           longest_path = Some(path.clone());
+                                                       }
+                                                   }
+                                               }
+                                          } else {
+                                              web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve StateNode for id: {}", id_str)));
+                                          }
+                                      }
+                                  }
+                              }
+                              if let Some(p) = longest_path {
+                                  // k is the History Node ID.
+                                  // We need to store it under the Parent Path.
+                                  // Resolve k -> Path -> Parent Path.
+                                  if let Some(history_node_path) = runner.machine.definition.id_map.get(&k) {
+                                      // Strip last segment to get parent
+                                      if let Some(idx) = history_node_path.rfind('.') {
+                                          let parent_path = &history_node_path[0..idx];
+                                          runner.machine.history_value.insert(parent_path.to_string(), p.clone());
+                                      } else {
+                                          // History node at root?
+                                          runner.machine.history_value.insert("".to_string(), p);
+                                      }
+                                  } else {
+                                      web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve History Node ID during hydration: {}", k)));
+                                  }
+                              }
                          }
                      }
                  }
@@ -594,9 +640,8 @@ fn parse_implementations(
              let guard_fn_js = js_sys::Reflect::get(&guards_map, &key_js).unwrap_or(JsValue::UNDEFINED);
              
              if let Ok(guard_fn) = guard_fn_js.dyn_into::<js_sys::Function>() {
+                 let _id = key_str.clone();
                  guards_out.insert(key_str, Rc::new(move |ctx, evt, params| {
-                     // let _ = web_sys::console::error_1(&JsValue::from_str("Exec guard closure"));
-                     // panic!("CLOSURE EXECUTED"); 
                      // Convert Core Value -> JS Value via JSON
                      let ctx_json = value_to_json(ctx);
                      let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
@@ -1030,7 +1075,9 @@ impl FsmRunner {
              let normalized_val = normalize_undefined(&val, 0);
              let (cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
              let mut dummy_guards = IndexMap::new();
-             process_config(&cleaned_val, &mut dummy_guards, 0);
+             let mut dummy_actions = IndexMap::new();
+             process_config(&cleaned_val, &mut dummy_guards, &mut dummy_actions, 0);
+             actions.extend(dummy_actions);
 
              actions.extend(extra_actions); // Append extracted actions to overrides? Or prepend?
              // Actually, cleaned_val might have references to them.
@@ -1065,6 +1112,132 @@ impl FsmRunner {
 
 
 
+    fn get_history_value_obj(&self) -> JsValue {
+         // Transform history_value to match XState structure: { historyNodeId: [StateNode, ...] }
+         let history_obj = js_sys::Object::new();
+         
+         // 1. Captured Active History (Precedence)
+         // Iterate current state path to find active compound states.
+         // If a state is active, its history is the current active child path.
+         let current_parts: Vec<&str> = self.machine.current_state.split('.').collect();
+         if !self.machine.current_state.is_empty() {
+             for i in 0..current_parts.len() {
+                 let _parent_path = current_parts[0..=i].join(".");
+                 // Check if this parent has history nodes
+                 // We need to iterate all states to find children of this parent that are history nodes?
+                 // Or looking up definition?
+                 // Efficient way: iterate id_map, check if history, check if parent matches current `parent_path` (or root).
+                 // Better: We are already iterating id_map below. We can combine logic.
+             }
+         }
+
+         // Helper: iterate id_map (Combines Stored + Active)
+         for (id, path) in &self.machine.definition.id_map {
+             if let Some(def) = self.machine.get_state_definition(path) {
+                 if def.type_ == Some("history".to_string()) {
+                     // Get parent path of the history node
+                     let parent_path = if let Some(idx) = path.rfind('.') {
+                         &path[0..idx]
+                     } else {
+                         "" 
+                     };
+                     
+                     // Determine target to serialize
+                     let mut target_to_serialize: Option<String> = None;
+                     
+                     // Check Active History first
+                     // If 'parent_path' is active (part of current_state), then active history is the *next* part of current_state.
+                     // e.g. current="on.second", parent="on". Next="on.second".
+                     // Check if current_state starts with parent_path + "."
+                     // Special case: root parent ("") matches everything.
+                     
+                     let is_active = if parent_path.is_empty() {
+                         !self.machine.current_state.is_empty()
+                     } else {
+                         self.machine.current_state == parent_path || self.machine.current_state.starts_with(&format!("{}.", parent_path))
+                     };
+                     
+                     if is_active {
+                          // Find the child that is active
+                          // If current_state = "on.second.nested", parent="on".
+                          // Child is "on.second".
+                          // Logic: take substring of current_state matching parent length + 1 segment.
+                          
+                          let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
+                          if self.machine.current_state.len() > prefix_len {
+                               let rest = &self.machine.current_state[prefix_len..];
+                               if let Some(end) = rest.find('.') {
+                                   // "on.second.nested" -> rest "second.nested" -> "second"
+                                   let child = &rest[0..end];
+                                   if parent_path.is_empty() {
+                                        target_to_serialize = Some(child.to_string());
+                                   } else {
+                                        target_to_serialize = Some(format!("{}.{}", parent_path, child));
+                                   }
+                               } else {
+                                   // "on.second" -> rest "second".
+                                   if parent_path.is_empty() {
+                                        target_to_serialize = Some(rest.to_string());
+                                   } else {
+                                        target_to_serialize = Some(format!("{}.{}", parent_path, rest));
+                                   }
+                               }
+                          }
+                     }
+                     
+                     // Fallback to Stored History if not active (or Deep history logic needs both?)
+                     // For Shallow, Active overrides Stored. (Simplification).
+                     // If target is still None, check stored.
+                     if target_to_serialize.is_none() {
+                         if let Some(stored) = self.machine.history_value.get(parent_path) {
+                             target_to_serialize = Some(stored.clone());
+                         }
+                     }
+                     
+                     // Check if active history matches parent's initial state.
+                     // If so, we can skip serializing it (optimization/cleanliness).
+                     if let Some(target) = &target_to_serialize {
+                         if let Some(p_def) = self.machine.get_state_definition(parent_path) {
+                             if let Some(initial_key) = &p_def.initial {
+                                 // Construct full initial path
+                                 let full_initial = if parent_path.is_empty() {
+                                     initial_key.clone()
+                                 } else {
+                                     format!("{}.{}", parent_path, initial_key)
+                                 };
+                                 
+                                 if *target == full_initial {
+                                     target_to_serialize = None;
+                                 }
+                             }
+                         }
+                     }
+                     
+                     // Serialize if we have a target
+                     if let Some(target_path) = target_to_serialize {
+                         let entry_arr = js_sys::Array::new();
+                         let state_node = js_sys::Object::new();
+                         
+                         // ID generation
+                         let target_id = format!("{}.{}", self.machine.definition.id, target_path); 
+                         
+                         let _ = js_sys::Reflect::set(&state_node, &"id".into(), &JsValue::from_str(&target_id));
+                         
+                         let path_arr = js_sys::Array::new();
+                         for part in target_path.split('.') {
+                             path_arr.push(&JsValue::from_str(part));
+                         }
+                         let _ = js_sys::Reflect::set(&state_node, &"path".into(), &path_arr);
+
+                         entry_arr.push(&state_node);
+                         let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(id), &entry_arr);
+                     }
+                 }
+             }
+         }
+         history_obj.into()
+    }
+
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> WasmSnapshot {
          let s = self.machine.state();
@@ -1082,12 +1255,8 @@ impl FsmRunner {
          let ctx_str_clean = if ctx_str == "null" { "{}" } else { &ctx_str };
          let ctx_val = js_sys::JSON::parse(ctx_str_clean).unwrap_or(js_sys::Object::new().into());
          
-         // History Value
-         let history_obj = js_sys::Object::new();
-         for (k, v) in &self.machine.history_value {
-             // web_sys::console::error_2(&JsValue::from_str(&format!("DEBUG CORE HISTORY: {} -> {}", k, v)), &JsValue::NULL);
-             let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(k), &JsValue::from_str(v));
-         }
+         // History Value (Use Helper)
+         let history_obj = self.get_history_value_obj();
 
          let status = if self.is_stopped { "stopped".to_string() } else if self.is_done() { "done".to_string() } else { "active".to_string() };
 
@@ -1263,6 +1432,8 @@ impl FsmRunner {
         
         // web_sys::console::error_2(&JsValue::from_str(&format!("BEFORE TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
+
+        // 2. Inspect Snapshot
         // web_sys::console::error_2(&JsValue::from_str(&format!("AFTER TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
 
         // 2. Inspect Snapshot
@@ -1413,40 +1584,45 @@ impl WasmSnapshot {
          // It compares the rest.
          // So we should try to match structure.
          let _ = js_sys::Reflect::set(&obj, &"children".into(), &js_sys::Object::new());
+         
+         // Transform history_value to match XState structure: { key: [StateNode, ...] }
+         // Since we don't have StateNode instances, we use objects with matching IDs.
+         // Use stored history value (already transformed in get_snapshot)
          let _ = js_sys::Reflect::set(&obj, &"historyValue".into(), &self.history_value);
          
          obj.into()
     }
 }
 
+
 #[wasm_bindgen(js_name = createActor)]
 pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
     let options = options.unwrap_or(JsValue::UNDEFINED);
 
-    // 1. Try to treat as WasmMachine instance (Removed because JsCast not supported, rely on method reflection below)
-    /*
-    let mut runner = if let Ok(wasm_machine) = machine_def.clone().dyn_into::<WasmMachine>() {
-        // ...
-    } else {
-    */
-    // Instead, rely on existing check for createActor method
-
-    // 2. Config Object or WasmMachine (via createActor method)
+    // 1. Check for createActor factory method (WasmMachine or deferred actor logic)
     if machine_def.is_object() {
-        let spawn_fn = js_sys::Reflect::get(&machine_def, &JsValue::from_str("createActor")).unwrap_or(JsValue::UNDEFINED);
-        if let Ok(func) = spawn_fn.dyn_into::<js_sys::Function>() {
-             let runner_val = func.call1(&machine_def, &options)?;
-             return Ok(runner_val);
-        }
+         let spawn_fn = js_sys::Reflect::get(&machine_def, &JsValue::from_str("createActor")).unwrap_or(JsValue::UNDEFINED);
+         if let Ok(func) = spawn_fn.dyn_into::<js_sys::Function>() {
+              // Call createActor(options)
+              // Note: If machine_def is WasmMachine, createActor expects (options). 
+              // If it's a factory, it might expect different args? 
+              // Our WasmMachine::create_actor takes (options).
+              // Deferred actor logic usually takes (options).
+              let runner_val = func.call1(&machine_def, &options)?;
+              return Ok(runner_val);
+         }
     }
 
+    // 2. Treat as Machine Config Object (POJO)
     // Process config to extract inline guards and remove undefineds
     let config = machine_def.clone();
     let mut inline_guards = IndexMap::new();
-    process_config(&config, &mut inline_guards, 0);
+    let mut inline_actions = IndexMap::new();
+    process_config(&config, &mut inline_guards, &mut inline_actions, 0);
     
     let mut runner = FsmRunner::new(config, options.clone())?;
     runner.guards.extend(inline_guards);
+    runner.actions.extend(inline_actions);
 
     // Apply common options (inspect, implementations, snapshot)
     if options.is_object() {
@@ -1500,6 +1676,46 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
                       let v = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)).unwrap_or(JsValue::UNDEFINED);
                       if let Some(s) = v.as_string() {
                           runner.machine.history_value.insert(k, s);
+                      } else if js_sys::Array::is_array(&v) {
+                          let arr: &js_sys::Array = v.unchecked_ref();
+                          let mut longest_path: Option<String> = None;
+                          for i in 0..arr.length() {
+                              let item = arr.get(i);
+                              let id_key = JsValue::from_str("id");
+                              if let Ok(id_val) = js_sys::Reflect::get(&item, &id_key) {
+                                  if let Some(id_str) = id_val.as_string() {
+                                      if let Some(path) = runner.machine.definition.id_map.get(&id_str) {
+                                           match &longest_path {
+                                               None => longest_path = Some(path.clone()),
+                                               Some(current) => {
+                                                   if path.len() > current.len() {
+                                                       longest_path = Some(path.clone());
+                                                   }
+                                               }
+                                           }
+                                      } else {
+                                          web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve StateNode for id: {}", id_str)));
+                                      }
+                                  }
+                              }
+                          }
+                          if let Some(p) = longest_path {
+                              // k is the History Node ID.
+                              // We need to store it under the Parent Path.
+                              // Resolve k -> Path -> Parent Path.
+                              if let Some(history_node_path) = runner.machine.definition.id_map.get(&k) {
+                                  // Strip last segment to get parent
+                                  if let Some(idx) = history_node_path.rfind('.') {
+                                      let parent_path = &history_node_path[0..idx];
+                                      runner.machine.history_value.insert(parent_path.to_string(), p.clone());
+                                  } else {
+                                      // History node at root?
+                                      runner.machine.history_value.insert("".to_string(), p);
+                                  }
+                              } else {
+                                  web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve History Node ID during hydration: {}", k)));
+                              }
+                          }
                       }
                   }
              }
@@ -1515,10 +1731,12 @@ pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<WasmM
     
     let config_processed = config.clone();
     let mut inline_guards = IndexMap::new();
-    process_config(&config_processed, &mut inline_guards, 0);
+    let mut inline_actions = IndexMap::new();
+    process_config(&config_processed, &mut inline_guards, &mut inline_actions, 0);
     
     let mut runner = FsmRunner::new(config_processed, options_val)?;
     runner.guards.extend(inline_guards);
+    runner.actions.extend(inline_actions);
     
     Ok(WasmMachine {
         machine: runner.machine,
@@ -1550,15 +1768,106 @@ fn core_value_to_js(val: &Value) -> JsValue {
     }
 }
 
-fn process_config(val: &JsValue, guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>, depth: usize) {
+fn process_config(
+    val: &JsValue, 
+    guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>, 
+    actions: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    depth: usize
+) {
     if depth > 100 { return; }
     if val.is_object() {
         if js_sys::Array::is_array(val) {
-            let arr = js_sys::Array::from(val);
+            let arr: &js_sys::Array = val.unchecked_ref();
             for i in 0..arr.length() {
                 let item = arr.get(i);
                 if item.is_object() {
-                    process_config(&item, guards, depth + 1);
+                    // Check if it's an assign action
+                    let type_key = JsValue::from_str("type");
+                    let type_val = js_sys::Reflect::get(&item, &type_key).unwrap_or(JsValue::UNDEFINED);
+                    if type_val == JsValue::from_str("xstate.assign") {
+                         let assign_key = JsValue::from_str("assignment");
+                         let assignment = js_sys::Reflect::get(&item, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                         
+                         // Check for object with function values { key: fn }
+                         if assignment.is_object() && !assignment.is_function() {
+                             let assign_obj = js_sys::Object::from(assignment.clone());
+                             let keys = js_sys::Object::keys(&assign_obj);
+                             let mut has_funcs = false;
+                             for k in 0..keys.length() {
+                                 let k_key = keys.get(k);
+                                 let k_val = js_sys::Reflect::get(&assign_obj, &k_key).unwrap_or(JsValue::UNDEFINED);
+                                 if k_val.is_function() {
+                                     has_funcs = true;
+                                     break;
+                                 }
+                             }
+                             
+                             if has_funcs {
+                                 // Convert to auto_action
+                                 let id = format!("auto_action_{}", actions.len());
+                                 let assignment_clone = assign_obj.clone();
+                                 let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                                     // 1. Convert ctx_mut to JS
+                                     let ctx_json = value_to_json(ctx_mut);
+                                     let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
+                                     let ctx_js = js_sys::JSON::parse(&ctx_str).unwrap_or(JsValue::NULL);
+                                     
+                                     // 2. Convert evt to JS
+                                     let evt_json = value_to_json(evt);
+                                     let evt_str = serde_json::to_string(&evt_json).unwrap_or("null".to_string());
+                                     let evt_js = js_sys::JSON::parse(&evt_str).unwrap_or(JsValue::NULL);
+                                     
+                                     let arg_obj = js_sys::Object::new();
+                                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                                     
+                                     // 3. Iterate keys and evaluate
+                                     let keys = js_sys::Object::keys(&assignment_clone);
+                                     // We need to merge into ctx_mut
+                                     if let Some(ctx_obj_mut) = ctx_mut.as_object_mut() {
+                                         for k in 0..keys.length() {
+                                             let key_js = keys.get(k);
+                                             let key_str = key_js.as_string().unwrap_or_default();
+                                             let val_js = js_sys::Reflect::get(&assignment_clone, &key_js).unwrap_or(JsValue::UNDEFINED);
+                                             
+                                             let final_val = if let Ok(func) = val_js.clone().dyn_into::<js_sys::Function>() {
+                                                 if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+                                                     res
+                                                 } else {
+                                                     JsValue::UNDEFINED
+                                                 }
+                                             } else {
+                                                 val_js
+                                             };
+                                             
+                                             // Convert final_val back to Value and insert
+                                             let val_json: serde_json::Value = serde_wasm_bindgen::from_value(final_val).unwrap_or(serde_json::Value::Null);
+                                             let val_core = json_to_value(val_json);
+                                             ctx_obj_mut.insert(key_str, val_core);
+                                         }
+                                     }
+                                 });
+                                 actions.insert(id.clone(), closure);
+                                 
+                                 // Replace item in array with { type: id }
+                                 let new_action_obj = js_sys::Object::new();
+                                 let _ = js_sys::Reflect::set(&new_action_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                                 let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_action_obj);
+                                 continue; 
+                             }
+                         }
+                    }
+
+                    process_config(&item, guards, actions, depth + 1);
+                } else if item.is_function() {
+                    let type_key = JsValue::from_str("type");
+                    if let Ok(type_val) = js_sys::Reflect::get(&item, &type_key) {
+                         if !type_val.is_undefined() {
+                              let item_obj = js_sys::Object::from(item.clone());
+                              let new_obj = js_sys::Object::assign(&js_sys::Object::new(), &item_obj);
+                              let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_obj);
+                         }
+                    }
                 }
             }
         } else {
@@ -1601,7 +1910,86 @@ fn process_config(val: &JsValue, guards: &mut IndexMap<String, Rc<dyn Fn(&Value,
                          let _ = js_sys::Reflect::set(&obj, &key, &replace_obj);
                      }
                 } else if value.is_object() {
-                    process_config(&value, guards, depth + 1);
+                    process_config(&value, guards, actions, depth + 1);
+                } else if value.is_function() {
+                    let type_key = JsValue::from_str("type");
+                    if let Ok(type_val) = js_sys::Reflect::get(&value, &type_key) {
+                         if !type_val.is_undefined() {
+                              let value_obj = js_sys::Object::from(value.clone());
+                              let new_obj = js_sys::Object::assign(&js_sys::Object::new(), &value_obj);
+                              
+                              let mut handled_as_action = false;
+                              if type_val == JsValue::from_str("xstate.assign") {
+                                   let assign_key = JsValue::from_str("assignment");
+                                   let assignment = js_sys::Reflect::get(&new_obj, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                                   
+                                   if assignment.is_object() && !assignment.is_function() {
+                                        let assign_obj = js_sys::Object::from(assignment.clone());
+                                        let keys = js_sys::Object::keys(&assign_obj);
+                                        let mut has_funcs = false;
+                                        for k in 0..keys.length() {
+                                            let k_key = keys.get(k);
+                                            let k_val = js_sys::Reflect::get(&assign_obj, &k_key).unwrap_or(JsValue::UNDEFINED);
+                                            if k_val.is_function() {
+                                                has_funcs = true;
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if has_funcs {
+                                            let id = format!("auto_action_{}", actions.len());
+                                            let assignment_clone = assign_obj.clone();
+                                            let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                                                 let ctx_json = value_to_json(ctx_mut);
+                                                 let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
+                                                 let ctx_js = js_sys::JSON::parse(&ctx_str).unwrap_or(JsValue::NULL);
+                                                 
+                                                 let evt_json = value_to_json(evt);
+                                                 let evt_str = serde_json::to_string(&evt_json).unwrap_or("null".to_string());
+                                                 let evt_js = js_sys::JSON::parse(&evt_str).unwrap_or(JsValue::NULL);
+                                                 
+                                                 let arg_obj = js_sys::Object::new();
+                                                 let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                                                 let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                                                 
+                                                 let keys = js_sys::Object::keys(&assignment_clone);
+                                                 if let Some(ctx_obj_mut) = ctx_mut.as_object_mut() {
+                                                     for k in 0..keys.length() {
+                                                         let key_js = keys.get(k);
+                                                         let key_str = key_js.as_string().unwrap_or_default();
+                                                         let val_js = js_sys::Reflect::get(&assignment_clone, &key_js).unwrap_or(JsValue::UNDEFINED);
+                                                         
+                                                         let final_val = if let Ok(func) = val_js.clone().dyn_into::<js_sys::Function>() {
+                                                             if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+                                                                 res
+                                                             } else {
+                                                                 JsValue::UNDEFINED
+                                                             }
+                                                         } else {
+                                                             val_js
+                                                         };
+                                                         
+                                                         let val_json: serde_json::Value = serde_wasm_bindgen::from_value(final_val).unwrap_or(serde_json::Value::Null);
+                                                         let val_core = json_to_value(val_json);
+                                                         ctx_obj_mut.insert(key_str, val_core);
+                                                     }
+                                                 }
+                                            });
+                                            actions.insert(id.clone(), closure);
+                                            
+                                            let new_action_obj = js_sys::Object::new();
+                                            let _ = js_sys::Reflect::set(&new_action_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                                            let _ = js_sys::Reflect::set(&obj, &key, &new_action_obj); // Changed `arr` to `obj` and `i as f64` to `key`
+                                            handled_as_action = true;
+                                        }
+                                   }
+                              }
+
+                              if !handled_as_action {
+                                  let _ = js_sys::Reflect::set(&obj, &key, &new_obj); // Changed `arr` to `obj` and `i as f64` to `key`
+                              }
+                         }
+                    }
                 }
             }
         }

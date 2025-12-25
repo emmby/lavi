@@ -12,7 +12,7 @@ fn test_deserialize_states() {
     }"#;
     let m: portable_xstate_json::dto::MachineDefinitionDto = from_str(json).expect("Failed to parse machine");
     
-    assert_eq!(m.initial, Some("a".to_string()));
+    assert_eq!(m.initial, Some(serde_json::Value::String("a".to_string())));
     assert_eq!(m.states.len(), 2, "Should have 2 states");
     assert!(m.states.contains_key("a"));
     assert!(m.states.contains_key("b"));

@@ -164,7 +164,9 @@ mod tests {
          
          // Should infer history type even if type field is missing
          assert_eq!(hist.history, Some(portable_xstate_core::HistoryType::Shallow));
-        #[test]
+    }
+    
+    #[test]
     fn test_explicit_deep_history_mapping() {
          let json = r#"{
            "initial": "first",
@@ -189,4 +191,4 @@ mod tests {
          assert_eq!(hist.history, Some(portable_xstate_core::HistoryType::Deep));
     }
 }
-}
+

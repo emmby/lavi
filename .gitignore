@@ -4,3 +4,4 @@
 *.swp
 .DS_Store
 **/out/
+test-results
