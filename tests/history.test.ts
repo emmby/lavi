@@ -4,7 +4,49 @@ import { describe, it, expect, vi } from 'vitest';
 // Mocks for missing portable-xstate artifacts
 // TODO: Remove these when portable-xstate is updated
 class StateNode {}
-const trackEntries = (machine: any) => () => []; 
+// Helper to verify action execution order.
+// Registers spies on all entry/exit actions found in the machine definition.
+const trackEntries = (machine: any) => {
+  const logs: string[] = [];
+  const registered = new Set<string>();
+
+  const traverse = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return;
+      
+      ['entry', 'exit'].forEach(prop => {
+          if (Array.isArray(obj[prop])) {
+              obj[prop].forEach((action: any) => {
+                  if (typeof action === 'string' && !registered.has(action)) {
+                       try {
+                           machine.registerAction(action, () => logs.push(action));
+                           registered.add(action);
+                       } catch(e) {}
+                  }
+              });
+          } else if (typeof obj[prop] === 'string') {
+              const action = obj[prop];
+              if (!registered.has(action)) {
+                   try {
+                       machine.registerAction(action, () => logs.push(action));
+                       registered.add(action);
+                   } catch(e) {}
+              }
+          }
+      });
+      
+      if (obj.states) {
+          Object.values(obj.states).forEach(traverse);
+      }
+      // Note: Scanning transitions ('on') is tedious and maybe not needed if entry/exit are sufficient for these tests.
+      // The history tests primarily check entry/exit logs.
+  };
+
+  if (machine.config) {
+      traverse(machine.config);
+  }
+  
+  return () => logs;
+};
 const fromCallback = (fn: any) => fn;
 
 
@@ -1461,7 +1503,10 @@ describe('revive history states', () => {
       const actorRef = createActor(machine, {
         snapshot: fakeSnapshot
       }).start();
+      const snapshotBefore = actorRef.getPersistedSnapshot();
       actorRef.send({ type: 'POWER' });
+      const snapshotAfter = actorRef.getPersistedSnapshot();
+      console.log('DEBUG TEST: val=', val, 'snapshotAfter.historyValue=', (snapshotAfter as any).historyValue);
 
       expect(actorRef.getSnapshot().value).toEqual({ on: 'first' });
       expect((actorRef.getPersistedSnapshot() as any).historyValue).toEqual({});

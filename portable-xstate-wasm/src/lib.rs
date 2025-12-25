@@ -137,9 +137,16 @@ impl WasmMachine {
         let is_done = self.is_state_done(&val, &self.machine.definition.states);
         if is_done {
              let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("status"), &JsValue::from_str("done"));
-        } else {
-             // Optional: status: active? XState doesn't mandate it i think.
         }
+
+        // Expose history value for testing? 
+        // Although the test checks `snapshot.historyValue`.
+        // So we should expose it.
+        let history_obj = js_sys::Object::new();
+        for (k, v) in &self.machine.history_value {
+             let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(k), &JsValue::from_str(v));
+        }
+        let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("historyValue"), &history_obj);
 
         state_obj.into()
     }
@@ -265,6 +272,12 @@ impl WasmMachine {
         };
 
         map_state_map(&self.machine.definition.states, &config_states, machine_id)
+    }
+    #[wasm_bindgen(js_name = registerAction)]
+    pub fn register_action(&mut self, name: String, callback: js_sys::Function) {
+        self.actions.insert(name, Rc::new(move |_ctx, _evt, _params| {
+             let _ = callback.call0(&JsValue::NULL);
+        }));
     }
 }
 
@@ -456,6 +469,7 @@ impl WasmMachine {
         };
 
         // Apply options
+        // Apply options
         if options.is_object() {
              let inspect_key = JsValue::from_str("inspect");
              let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
@@ -464,12 +478,82 @@ impl WasmMachine {
                   runner.set_inspector(func);
              }
              
+             // Restore snapshot
+             let snapshot_key = JsValue::from_str("snapshot");
+             let snapshot_val = js_sys::Reflect::get(&options, &snapshot_key).unwrap_or(JsValue::UNDEFINED);
+             // web_sys::console::error_2(&JsValue::from_str("DEBUG RESTORE SNAPSHOT:"), &snapshot_val);
+             if snapshot_val.is_object() && !snapshot_val.is_null() {
+                 let snap_obj = js_sys::Object::from(snapshot_val);
+                 
+                 // Value
+                 let value_key = JsValue::from_str("value");
+                 let value_val = js_sys::Reflect::get(&snap_obj, &value_key).unwrap_or(JsValue::UNDEFINED);
+                 if !value_val.is_undefined() {
+                     // Flatten object value to dotted string path
+                     fn flatten_state_value(val: &JsValue) -> Option<String> {
+                         if let Some(s) = val.as_string() {
+                             return Some(s);
+                         }
+                         if val.is_object() {
+                             let obj = js_sys::Object::from(val.clone());
+                             let keys = js_sys::Object::keys(&obj);
+                             if keys.length() > 0 {
+                                 let k = keys.get(0).as_string()?;
+                                 let v = js_sys::Reflect::get(&obj, &JsValue::from_str(&k)).ok()?;
+                                 if let Some(child_str) = flatten_state_value(&v) {
+                                      return Some(format!("{}.{}", k, child_str));
+                                 }
+                                 return Some(k);
+                             }
+                         }
+                         None
+                     }
+
+                     if let Some(s) = flatten_state_value(&value_val) {
+                         runner.machine.current_state = s;
+                     }
+                 } // else if object... handling parallel would require Core changes.
+
+                 
+                 // Context
+                 let context_key = JsValue::from_str("context");
+                 let context_val = js_sys::Reflect::get(&snap_obj, &context_key).unwrap_or(JsValue::UNDEFINED);
+                 if !context_val.is_undefined() {
+                     let ctx_json: serde_json::Value = serde_wasm_bindgen::from_value(context_val)
+                        .unwrap_or(serde_json::Value::Null);
+                     runner.machine.context = json_to_value(ctx_json);
+                 }
+
+                 // History Value
+                 let history_key = JsValue::from_str("historyValue");
+                 let history_val = js_sys::Reflect::get(&snap_obj, &history_key).unwrap_or(JsValue::UNDEFINED);
+                 if history_val.is_object() {
+                     let hist_map = js_sys::Object::from(history_val);
+                     let keys = js_sys::Object::keys(&hist_map);
+                     for i in 0..keys.length() {
+                         let k = keys.get(i).as_string().unwrap_or_default();
+                         let v = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)).unwrap_or(JsValue::UNDEFINED);
+                         if let Some(s) = v.as_string() {
+                             runner.machine.history_value.insert(k, s);
+                         }
+                     }
+                 }
+             }
+
              // Overrides
              parse_implementations(&options, &mut runner.guards, &mut runner.actions);
         }
 
-        // Process initial always transitions
-        runner.handle_always_transition();
+        // Process initial always transitions (ONLY if not restored? XState usually runs it)
+        // If we restored, maybe we shouldn't run initial?
+        // But `createActor` usually starts at initial unless `state` is provided.
+        // If `snapshot` provided, we are at that state.
+        // We shouldn't run initial transitions from root.
+        let snapshot_key = JsValue::from_str("snapshot");
+        let has_snapshot = js_sys::Reflect::has(&options, &snapshot_key).unwrap_or(false);
+        if !has_snapshot {
+            runner.handle_always_transition();
+        }
         
         Ok(runner)
     }
@@ -619,10 +703,6 @@ fn parse_implementations(
                      let evt_str = serde_json::to_string(&evt_json).unwrap_or("null".to_string());
                      let evt_js = js_sys::JSON::parse(&evt_str).unwrap_or(JsValue::NULL);
                      
-                     let arg_obj = js_sys::Object::new();
-                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
-                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-
                      let params_js = if let Some(p) = params {
                          let p_json = value_to_json(p);
                          let p_str = serde_json::to_string(&p_json).unwrap_or("null".to_string());
@@ -631,8 +711,15 @@ fn parse_implementations(
                          JsValue::UNDEFINED
                      };
 
-                     // Call action with (args, params)
-                     let _ = action_fn.call2(&JsValue::NULL, &arg_obj, &params_js);
+                     let arg_obj = js_sys::Object::new();
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("params"), &params_js);
+
+                      // Call action with ({ context, event, params })
+                      if let Err(e) = action_fn.call1(&JsValue::NULL, &arg_obj) {
+                          web_sys::console::error_2(&JsValue::from_str("Error executing generic action:"), &e);
+                     }
                  }));
              }
          }
@@ -757,7 +844,7 @@ fn process_action_list(
     if val.is_undefined() { return; }
 
     if js_sys::Array::is_array(&val) {
-        let arr: &js_sys::Array = val.unchecked_ref();
+        let arr = js_sys::Array::from(&val);
         for i in 0..arr.length() {
             let item = arr.get(i);
             if let Some(new_item) = convert_inline_action(&item, actions_out, counter) {
@@ -940,10 +1027,10 @@ impl FsmRunner {
              RuntimeMachine::new(def)
         } else {
              // If object, pre-process to "lift" inline implementations (like assign functions)
-             let normalized_val = normalize_undefined(&val);
+             let normalized_val = normalize_undefined(&val, 0);
              let (cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
              let mut dummy_guards = IndexMap::new();
-             process_config(&cleaned_val, &mut dummy_guards);
+             process_config(&cleaned_val, &mut dummy_guards, 0);
 
              actions.extend(extra_actions); // Append extracted actions to overrides? Or prepend?
              // Actually, cleaned_val might have references to them.
@@ -952,17 +1039,14 @@ impl FsmRunner {
                 .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
                 .as_string().unwrap_or_default();
              
-             // Log the JSON to see if states are preserved
-             // if json_string.len() < 1000 {
-             //    let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input: {}", json_string)));
-             // }
-             // let _ = web_sys::console::error_1(&JsValue::from_str(&format!("JSON Parse Input (len {}): {}", json_string.len(), json_string)));
+             // web_sys::console::error_2(&JsValue::from_str("DEBUG JSON:"), &JsValue::from_str(&json_string));
 
-             let definition = portable_xstate_json::create_machine(&json_string)
+             let machine_def = portable_xstate_json::create_machine(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
-
-             RuntimeMachine::new(definition)
+             
+             RuntimeMachine::new(machine_def)
         };
+
             
             
         Ok(FsmRunner { 
@@ -998,6 +1082,13 @@ impl FsmRunner {
          let ctx_str_clean = if ctx_str == "null" { "{}" } else { &ctx_str };
          let ctx_val = js_sys::JSON::parse(ctx_str_clean).unwrap_or(js_sys::Object::new().into());
          
+         // History Value
+         let history_obj = js_sys::Object::new();
+         for (k, v) in &self.machine.history_value {
+             // web_sys::console::error_2(&JsValue::from_str(&format!("DEBUG CORE HISTORY: {} -> {}", k, v)), &JsValue::NULL);
+             let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(k), &JsValue::from_str(v));
+         }
+
          let status = if self.is_stopped { "stopped".to_string() } else if self.is_done() { "done".to_string() } else { "active".to_string() };
 
          WasmSnapshot {
@@ -1006,6 +1097,7 @@ impl FsmRunner {
              status,
              machine_ref: self.machine.clone(),
              guards: self.guards.clone(),
+             history_value: history_obj.into(),
          }
     }
     
@@ -1169,7 +1261,9 @@ impl FsmRunner {
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
         
+        // web_sys::console::error_2(&JsValue::from_str(&format!("BEFORE TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
+        // web_sys::console::error_2(&JsValue::from_str(&format!("AFTER TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
 
         // 2. Inspect Snapshot
         if let Some(inspector) = &self.inspector {
@@ -1207,6 +1301,7 @@ pub struct WasmSnapshot {
     status: String,
     machine_ref: RuntimeMachine, // Cloned for now
     guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    history_value: JsValue,
 }
 
 #[wasm_bindgen]
@@ -1224,6 +1319,11 @@ impl WasmSnapshot {
     #[wasm_bindgen(getter)]
     pub fn status(&self) -> String {
         self.status.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = historyValue)]
+    pub fn history_value(&self) -> JsValue {
+        self.history_value.clone()
     }
 
     #[wasm_bindgen]
@@ -1270,7 +1370,7 @@ impl WasmSnapshot {
                 // We need recursive lookup helper here.
                 
                 // Helper to find state definition by path string "a.b.c"
-                if let Some(def) = RuntimeMachine::get_state_def_recursive(&self.machine_ref.definition.states, &current_path) {
+                if let Some(def) = portable_xstate_core::RuntimeMachine::get_state_def_recursive(&self.machine_ref.definition.states, &current_path) {
                      if def.tags.iter().any(|t| t == tag) {
                          return true;
                      }
@@ -1313,7 +1413,7 @@ impl WasmSnapshot {
          // It compares the rest.
          // So we should try to match structure.
          let _ = js_sys::Reflect::set(&obj, &"children".into(), &js_sys::Object::new());
-         let _ = js_sys::Reflect::set(&obj, &"historyValue".into(), &js_sys::Object::new());
+         let _ = js_sys::Reflect::set(&obj, &"historyValue".into(), &self.history_value);
          
          obj.into()
     }
@@ -1322,6 +1422,16 @@ impl WasmSnapshot {
 #[wasm_bindgen(js_name = createActor)]
 pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
     let options = options.unwrap_or(JsValue::UNDEFINED);
+
+    // 1. Try to treat as WasmMachine instance (Removed because JsCast not supported, rely on method reflection below)
+    /*
+    let mut runner = if let Ok(wasm_machine) = machine_def.clone().dyn_into::<WasmMachine>() {
+        // ...
+    } else {
+    */
+    // Instead, rely on existing check for createActor method
+
+    // 2. Config Object or WasmMachine (via createActor method)
     if machine_def.is_object() {
         let spawn_fn = js_sys::Reflect::get(&machine_def, &JsValue::from_str("createActor")).unwrap_or(JsValue::UNDEFINED);
         if let Ok(func) = spawn_fn.dyn_into::<js_sys::Function>() {
@@ -1333,11 +1443,12 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
     // Process config to extract inline guards and remove undefineds
     let config = machine_def.clone();
     let mut inline_guards = IndexMap::new();
-    process_config(&config, &mut inline_guards);
+    process_config(&config, &mut inline_guards, 0);
     
     let mut runner = FsmRunner::new(config, options.clone())?;
     runner.guards.extend(inline_guards);
-    
+
+    // Apply common options (inspect, implementations, snapshot)
     if options.is_object() {
         let inspect_key = JsValue::from_str("inspect");
         let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
@@ -1377,6 +1488,21 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
                   let c_json: serde_json::Value = serde_wasm_bindgen::from_value(ctx).unwrap_or(serde_json::Value::Null);
                   runner.machine.context = json_to_value(c_json);
              }
+
+             // History Value restoration for createActor
+             let history_key = JsValue::from_str("historyValue");
+             let history_val = js_sys::Reflect::get(&snap_val, &history_key).unwrap_or(JsValue::UNDEFINED);
+             if history_val.is_object() && !history_val.is_null() {
+                  let hist_map = js_sys::Object::from(history_val);
+                  let keys = js_sys::Object::keys(&hist_map);
+                  for i in 0..keys.length() {
+                      let k = keys.get(i).as_string().unwrap_or_default();
+                      let v = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)).unwrap_or(JsValue::UNDEFINED);
+                      if let Some(s) = v.as_string() {
+                          runner.machine.history_value.insert(k, s);
+                      }
+                  }
+             }
         }
     }
 
@@ -1389,7 +1515,7 @@ pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<WasmM
     
     let config_processed = config.clone();
     let mut inline_guards = IndexMap::new();
-    process_config(&config_processed, &mut inline_guards);
+    process_config(&config_processed, &mut inline_guards, 0);
     
     let mut runner = FsmRunner::new(config_processed, options_val)?;
     runner.guards.extend(inline_guards);
@@ -1424,14 +1550,15 @@ fn core_value_to_js(val: &Value) -> JsValue {
     }
 }
 
-fn process_config(val: &JsValue, guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>) {
+fn process_config(val: &JsValue, guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>, depth: usize) {
+    if depth > 100 { return; }
     if val.is_object() {
         if js_sys::Array::is_array(val) {
             let arr = js_sys::Array::from(val);
             for i in 0..arr.length() {
                 let item = arr.get(i);
                 if item.is_object() {
-                    process_config(&item, guards);
+                    process_config(&item, guards, depth + 1);
                 }
             }
         } else {
@@ -1474,21 +1601,22 @@ fn process_config(val: &JsValue, guards: &mut IndexMap<String, Rc<dyn Fn(&Value,
                          let _ = js_sys::Reflect::set(&obj, &key, &replace_obj);
                      }
                 } else if value.is_object() {
-                    process_config(&value, guards);
+                    process_config(&value, guards, depth + 1);
                 }
             }
         }
     }
 }
 
-fn normalize_undefined(val: &JsValue) -> JsValue {
+fn normalize_undefined(val: &JsValue, depth: usize) -> JsValue {
+    if depth > 100 { return val.clone(); }
     if val.is_object() && !val.is_null() {
         if js_sys::Array::is_array(val) {
             let arr = js_sys::Array::from(val);
             let res_arr = js_sys::Array::new();
             for i in 0..arr.length() {
                 let item = arr.get(i);
-                res_arr.push(&normalize_undefined(&item));
+                res_arr.push(&normalize_undefined(&item, depth + 1));
             }
             return res_arr.into();
         }
@@ -1506,7 +1634,7 @@ fn normalize_undefined(val: &JsValue) -> JsValue {
                 // Convert undefined to null to preserve keys in JSON/Serde
                 let _ = js_sys::Reflect::set(&res_obj, &key, &JsValue::NULL);
             } else {
-                let _ = js_sys::Reflect::set(&res_obj, &key, &normalize_undefined(&v));
+                let _ = js_sys::Reflect::set(&res_obj, &key, &normalize_undefined(&v, depth + 1));
             }
         }
         return res_obj.into();

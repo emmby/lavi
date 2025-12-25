@@ -111,4 +111,82 @@ mod tests {
             _ => panic!("Expected Assign action"),
         }
     }
+
+    #[test]
+    fn test_history_mapping() {
+         let json = r#"{
+           "initial": "first",
+           "states": {
+             "first": {},
+             "second": {
+                "initial": "nested",
+                "states": {
+                  "nested": {},
+                  "hist": { "type": "history" }
+                },
+                "on": { "SWITCH": "hist" }
+             }
+           }
+         }"#;
+         let definition = create_machine(json).expect("Failed to parse history machine");
+         
+         // Verify "second" state exists
+         let second = definition.states.get("second").expect("Missing second state");
+         
+         // Verify "hist" in "second"
+         assert!(second.states.contains_key("hist"), "Missing hist state in second");
+         
+         let hist = second.states.get("hist").unwrap();
+         assert_eq!(hist.type_.as_deref(), Some("history"));
+         assert_eq!(hist.history, Some(portable_xstate_core::HistoryType::Shallow));
+    }
+
+    #[test]
+    fn test_implicit_history_mapping() {
+         let json = r#"{
+           "initial": "first",
+           "states": {
+             "first": {},
+             "second": {
+                "initial": "nested",
+                "states": {
+                  "nested": {},
+                  "hist": { "history": true }
+                },
+                "on": { "SWITCH": "hist" }
+             }
+           }
+         }"#;
+         let definition = create_machine(json).expect("Failed to parse history machine");
+         
+         let second = definition.states.get("second").expect("Missing second state");
+         let hist = second.states.get("hist").unwrap();
+         
+         // Should infer history type even if type field is missing
+         assert_eq!(hist.history, Some(portable_xstate_core::HistoryType::Shallow));
+        #[test]
+    fn test_explicit_deep_history_mapping() {
+         let json = r#"{
+           "initial": "first",
+           "states": {
+             "first": {},
+             "second": {
+                "initial": "nested",
+                "states": {
+                  "nested": {},
+                  "hist": { "type": "history", "history": "deep" }
+                },
+                "on": { "SWITCH": "hist" }
+             }
+           }
+         }"#;
+         let definition = create_machine(json).expect("Failed to parse history machine");
+         
+         let second = definition.states.get("second").expect("Missing second state");
+         let hist = second.states.get("hist").unwrap();
+         
+         assert_eq!(hist.type_.as_deref(), Some("history"));
+         assert_eq!(hist.history, Some(portable_xstate_core::HistoryType::Deep));
+    }
+}
 }

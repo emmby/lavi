@@ -5,5 +5,4 @@ edition = "2021"
 
 [dependencies]
 # We don't want to have any dependencies in this package, except basic data structures
-indexmap = { version = "2.7", default-features = false }
-serde = { workspace = true, features = ["derive", "alloc"] }
+indexmap = { version = "2.7" }

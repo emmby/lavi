@@ -12,7 +12,7 @@ pub struct MachineDefinitionDto {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
-    pub initial: Option<String>,
+    pub initial: Option<serde_json::Value>,
     #[serde(default)]
     pub states: IndexMap<String, StateDefinitionDto>,
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
@@ -90,7 +90,7 @@ pub struct StateDefinitionDto {
     #[serde(default, rename = "type")]
     pub type_: Option<String>,
     #[serde(default)]
-    pub initial: Option<String>,
+    pub initial: Option<serde_json::Value>,
     #[serde(default)]
     pub states: IndexMap<String, StateDefinitionDto>,
 
@@ -104,6 +104,8 @@ pub struct StateDefinitionDto {
     pub always: Vec<TransitionDefinitionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub history: Option<serde_json::Value>,
 }
 
 // Helpers
@@ -125,11 +127,13 @@ where
     enum VecOrSingle<T> {
         Vec(Vec<T>),
         Single(T),
+        Null,
     }
 
     match VecOrSingle::deserialize(deserializer)? {
         VecOrSingle::Vec(v) => Ok(v),
         VecOrSingle::Single(s) => Ok(vec![s]),
+        VecOrSingle::Null => Ok(vec![]),
     }
 }
 
@@ -149,6 +153,7 @@ where
      enum VecOrSingle<T> {
          Vec(Vec<T>),
          Single(T),
+         Null,
      }
 
      let map: IndexMap<String, Option<VecOrSingle<T>>> = IndexMap::deserialize(deserializer)?;
@@ -158,7 +163,7 @@ where
          let vec = match value {
              Some(VecOrSingle::Vec(v)) => v,
              Some(VecOrSingle::Single(s)) => vec![s],
-             None => vec![],
+             Some(VecOrSingle::Null) | None => vec![],
          };
          result.insert(key, vec);
      }
@@ -169,7 +174,6 @@ where
 mod tests {
     use super::*;
     use serde_json::from_str;
-    use alloc::string::ToString;
 
     #[test]
     fn test_deserialize_target_vec() {
@@ -184,5 +188,36 @@ mod tests {
         let json = "{\"target\": \"#bar\"}";
         let dto: TransitionObjectDto = from_str(json).unwrap();
         assert!(dto.target.is_some());
+    }
+    #[test]
+    fn test_deserialize_generic_action_with_params() {
+        let json = r#"{"type": "notify", "params": {"message": "hello"}}"#;
+        let dto: ActionDto = from_str(json).expect("should deserialize");
+        if let ActionDto::Generic(g) = dto {
+            assert_eq!(g.action_type, "notify");
+            assert!(g.params.is_some());
+        } else {
+            panic!("Expected Generic action");
+        }
+    }
+
+
+    #[test]
+    fn test_deserialize_transition_with_actions() {
+        let json = r#"
+        {
+            "target": "active",
+            "actions": [
+                { "type": "notify", "params": { "message": "hello" } }
+            ]
+        }
+        "#;
+        let dto: TransitionObjectDto = from_str(json).expect("should deserialize");
+        assert_eq!(dto.actions.len(), 1);
+        if let ActionDto::Generic(g) = &dto.actions[0] {
+             assert_eq!(g.action_type, "notify");
+        } else {
+             panic!("Expected Generic action");
+        }
     }
 }

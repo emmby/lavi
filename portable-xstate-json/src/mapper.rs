@@ -1,6 +1,6 @@
 use portable_xstate_core::{
     MachineDefinition, StateDefinition, TransitionDefinition, Action, AssignAction, GenericAction,
-    GuardObject, TransitionGuard, Value
+    GuardObject, TransitionGuard, Value, HistoryType
 };
 use indexmap::IndexMap;
 use alloc::vec::Vec;
@@ -12,11 +12,25 @@ use crate::dto::{
     TransitionGuardDto
 };
 
+fn resolve_initial(v: Option<serde_json::Value>) -> Option<String> {
+    match v {
+        Some(serde_json::Value::String(s)) => Some(s),
+        Some(serde_json::Value::Object(o)) => {
+            if let Some(serde_json::Value::String(target)) = o.get("target") {
+                Some(target.clone())
+            } else {
+                None
+            }
+        },
+        _ => None
+    }
+}
+
 pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
     let mut id_map = IndexMap::new();
     let states = map_states(dto.states, "", &mut id_map);
     
-    let initial = dto.initial.clone().or_else(|| {
+    let initial = resolve_initial(dto.initial).or_else(|| {
         states.keys().next().cloned()
     }).unwrap_or_default();
 
@@ -51,12 +65,27 @@ fn map_states(
 
         // Destructure to avoid partial move
         let StateDefinitionDto {
-            id, type_, initial, states: child_states, on, entry, exit, always, tags 
+            id, type_, initial, states: child_states, on, entry, exit, always, tags, history
         } = dto;
+
+        let initial = resolve_initial(initial);
 
         // Validation: Compound states must have initial state (unless type is parallel)
         let is_compound = !child_states.is_empty();
         let is_parallel = type_.as_deref() == Some("parallel");
+        
+        // Infer Type
+        let type_ = type_.or_else(|| {
+             if history.is_some() {
+                 Some("history".to_string())
+             } else if is_compound {
+                 Some("compound".to_string()) 
+             } else if is_parallel {
+                 Some("parallel".to_string()) 
+             } else {
+                 Some("atomic".to_string())
+             }
+        });
         
         if is_compound && !is_parallel && initial.is_none() {
              panic!("Compound state must specify an initial state (state: '{}').", key);
@@ -75,13 +104,28 @@ fn map_states(
 
         let state_def = StateDefinition {
             id,
-            type_,
+            type_: type_.clone(),
             initial,
             states: children,
             on: on_map,
             entry: entry.into_iter().map(map_action).collect(),
             exit: exit.into_iter().map(map_action).collect(),
             tags,
+            history: if type_.as_deref() == Some("history") || history.is_some() {
+                match history {
+                     Some(serde_json::Value::String(s)) if s == "deep" => Some(HistoryType::Deep),
+                     Some(serde_json::Value::Object(o)) => {
+                         if let Some(serde_json::Value::String(h)) = o.get("history") {
+                             if h == "deep" { Some(HistoryType::Deep) } else { Some(HistoryType::Shallow) }
+                         } else {
+                             Some(HistoryType::Shallow)
+                         }
+                     },
+                     _ => Some(HistoryType::Shallow),
+                }
+            } else {
+                None
+            },
         };
         
         (key, state_def)
@@ -120,15 +164,17 @@ fn map_transition(dto: TransitionDefinitionDto) -> TransitionDefinition {
 
 fn map_action(dto: ActionDto) -> Action {
     match dto {
-        ActionDto::Named(name) => Action::Named(name),
-        ActionDto::Assign(assign) => Action::Assign(AssignAction {
-            action_type: assign.action_type,
-            assignment: map_value(assign.assignment),
+        ActionDto::Named(s) => Action::Named(s),
+        ActionDto::Assign(a) => Action::Assign(AssignAction {
+            action_type: a.action_type,
+            assignment: map_value(a.assignment),
         }),
-        ActionDto::Generic(generic) => Action::Generic(GenericAction {
-            action_type: generic.action_type,
-            params: generic.params.map(map_value),
-        }),
+        ActionDto::Generic(g) => {
+            Action::Generic(GenericAction {
+                action_type: g.action_type,
+                params: g.params.map(|p| map_value(p)),
+            })
+        }
     }
 }
 

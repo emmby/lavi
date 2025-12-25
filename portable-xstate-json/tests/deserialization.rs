@@ -1,5 +1,5 @@
-use portable_xstate_json::dto::TransitionDefinitionDto;
-use serde_json::from_str;
+use portable_xstate_json::dto::{StateDefinitionDto, TransitionDefinitionDto};
+use serde_json::{from_str, json};
 
 #[test]
 fn test_deserialize_states() {
@@ -29,4 +29,60 @@ fn test_deserialize_always_string() {
         TransitionDefinitionDto::Target(t) => assert_eq!(t, "target"),
         _ => panic!("Expected Target variant"),
     }
+}
+
+#[test]
+fn test_reproduce_vec_or_single_error() {
+    let machine_json = json!({
+        "id": "guards-machine",
+        "initial": "start",
+        "context": { "count": 0 },
+        "states": {
+            "start": {
+                "on": {
+                    "INC": {
+                        "target": null,
+                        "cond": null,
+                        "actions": [{ "type": "generated_assign_1", "params": null }]
+                    },
+                    "NEXT": [
+                        { 
+                            "target": "high", 
+                            "cond": { "type": "greaterThan", "params": { "min": 5 } } 
+                        },
+                        {
+                            "target": "medium",
+                            "cond": { "type": "greaterThan", "params": { "min": 2 } }
+                        },
+                        { 
+                            "target": "start" 
+                        }
+                    ]
+                }
+            },
+            "medium": {
+                "on": { "RESET": { "target": "start", "actions": ["resetCount"] } }
+            },
+            "high": {
+                "on": { "RESET": { "target": "start", "actions": ["resetCount"] } }
+            }
+        }
+    });
+
+    let result: Result<StateDefinitionDto, _> = serde_json::from_value(machine_json);
+    if let Err(e) = &result {
+        println!("Error: {}", e);
+    }
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_vec_or_single_null() {
+    let json = json!({
+        "on": {
+            "EVENT": null
+        }
+    });
+    let result: Result<StateDefinitionDto, _> = serde_json::from_value(json);
+    assert!(result.is_ok());
 }

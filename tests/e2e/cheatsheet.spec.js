@@ -13,7 +13,6 @@ const fs = require('fs');
 const path = require('path');
 
 test.describe('XState Cheatsheet Examples', () => {
-
   // 1. Creating a state machine (Toggle)
   // Original: https://stately.ai/docs/cheatsheet#creating-a-state-machine
   test('Creating a state machine (Toggle) [WASM]', async ({ page }) => {
@@ -22,15 +21,15 @@ test.describe('XState Cheatsheet Examples', () => {
     // Import the WASM module
     // Note: In a real Node environment we might need to handle WASM loading differently (e.g. fs.readFile)
     // or rely on a bundler. Playwright's test runner supports ESM.
-    const { FsmRunner, default: init } = await import('../../portable-xstate-wasm/pkg/portable_xstate.js');
+    const { FsmRunner, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
     
     // Initialize WASM
     // In Node (non-browser), wasm-pack generated code might try to fetch/load wasm_bg.wasm.
     // We might need to pass the bytes if fetch isn't available or if path is wrong.
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
-    await init({ module_or_path: wasmModule });
+    if (typeof init === 'function') await init({ module_or_path: wasmModule });
     
     const machineDef = {
       id: 'toggle',
@@ -188,13 +187,13 @@ test.describe('XState Cheatsheet Examples', () => {
   // TODO: Replace xstate with wasm
   test('Parent states [WASM]', async () => {
     // Import WASM module
-    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg/portable_xstate.js');
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
 
     // Initialize WASM
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
-    await init({ module_or_path: wasmModule });
+    if (typeof init === 'function') await init({ module_or_path: wasmModule });
 
     const machine = wasmSetup({ /* ... */}).createMachine({
       id: 'parent',
@@ -237,15 +236,15 @@ test.describe('XState Cheatsheet Examples', () => {
   // TODO: Replace xstate with wasm
   test('Actions [WASM]', async () => {
     // Import WASM module
-    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg/portable_xstate.js');
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
 
     // Initialize WASM (boilerplate)
     const fs = require('fs');
     const path = require('path');
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
-    await init({ module_or_path: wasmModule });
+    if (typeof init === 'function') await init({ module_or_path: wasmModule });
 
     const logs = [];
     
@@ -254,7 +253,9 @@ test.describe('XState Cheatsheet Examples', () => {
       actions: {
         activate: () => logs.push('Activating'),
         deactivate: () => logs.push('Deactivating'),
-        notify: (_, params) => logs.push(params?.message ?? 'Default message'),
+        notify: ({ params }) => {
+            logs.push(params?.message ?? 'Default message');
+        },
       },
     }).createMachine({
       id: 'toggle',
@@ -266,7 +267,9 @@ test.describe('XState Cheatsheet Examples', () => {
           on: {
             toggle: {
               target: 'inactive',
-              actions: [{ type: 'notify' }],
+              actions: [
+                { type: 'notify', params: { message: 'Default message' } },
+              ],
             },
           },
         },
@@ -308,15 +311,15 @@ test.describe('XState Cheatsheet Examples', () => {
   // to verify parameterized guards ('isAfterTime') and context-based guards ('canBeToggled') in WASM.
   test('Guards [WASM]', async () => {
     // Import WASM module
-    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg/portable_xstate.js');
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
 
     // Initialize WASM
     const fs = require('fs');
     const path = require('path');
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
-    await init({ module_or_path: wasmModule });
+    if (typeof init === 'function') await init({ module_or_path: wasmModule });
 
     const logs = [];
     const machine = wasmSetup({

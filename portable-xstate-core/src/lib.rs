@@ -1,91 +1,119 @@
 #![no_std]
+
 extern crate alloc;
 
-use indexmap::IndexMap;
-use alloc::rc::Rc;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use alloc::format;
-
-
-// --- Domain Model ---
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use alloc::vec;
+use indexmap::IndexMap;
+// use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq)]
+// #[serde(untagged)]
 pub enum Value {
-    Null,
-    Bool(bool),
-    Number(f64),
     String(String),
-    Array(Vec<Value>),
+    Number(f64),
+    Bool(bool),
     Object(IndexMap<String, Value>),
+    Array(Vec<Value>),
+    Null,
 }
 
 impl Value {
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            Value::Bool(b) => Some(*b),
-            _ => None,
-        }
-    }
-
-    pub fn as_i64(&self) -> Option<i64> {
-        match self {
-            Value::Number(n) => Some(*n as i64),
-            _ => None,
-        }
-    }
-    
-    pub fn as_f64(&self) -> Option<f64> {
-         match self {
-            Value::Number(n) => Some(*n),
-            _ => None,
-        }
-    }
-
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
             _ => None,
         }
     }
-
     pub fn as_object(&self) -> Option<&IndexMap<String, Value>> {
         match self {
-            Value::Object(map) => Some(map),
+            Value::Object(o) => Some(o),
             _ => None,
         }
     }
-
     pub fn as_object_mut(&mut self) -> Option<&mut IndexMap<String, Value>> {
         match self {
-            Value::Object(map) => Some(map),
+            Value::Object(o) => Some(o),
             _ => None,
         }
     }
-    
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.as_object().and_then(|obj| obj.get(key))
+        match self {
+            Value::Object(o) => o.get(key),
+            _ => None,
+        }
     }
 }
 
-// Convert common types to Value (helpers)
-impl From<bool> for Value {
-    fn from(v: bool) -> Self { Value::Bool(v) }
+// --- DTOs (Domain Transfer Objects) ---
+
+#[derive(Debug, Clone, PartialEq)]
+// #[serde(untagged)]
+pub enum Action {
+    Named(String),
+    Assign(AssignAction),
+    Generic(GenericAction),
 }
-impl From<String> for Value {
-    fn from(v: String) -> Self { Value::String(v) }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignAction {
+    // #[serde(rename = "type")]
+    pub action_type: String,
+    pub assignment: Value,
 }
-impl From<&str> for Value {
-    fn from(v: &str) -> Self { Value::String(v.to_string()) }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericAction {
+    // #[serde(rename = "type")]
+    pub action_type: String,
+    // #[serde(default)]
+    pub params: Option<Value>,
 }
-impl From<i32> for Value {
-    fn from(v: i32) -> Self { Value::Number(v as f64) }
+
+#[derive(Debug, Clone, PartialEq)]
+// #[serde(untagged)]
+pub enum TransitionGuard {
+    Name(String),
+    Object(GuardObject),
 }
-impl From<f64> for Value {
-    fn from(v: f64) -> Self { Value::Number(v) }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuardObject {
+    // #[serde(rename = "type")]
+    pub guard_type: String,
+    // #[serde(default)]
+    pub params: Option<Value>,
 }
-impl From<i64> for Value {
-    fn from(v: i64) -> Self { Value::Number(v as f64) }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransitionDefinition {
+    pub target: Option<Vec<String>>,
+    pub cond: Option<TransitionGuard>,
+    pub actions: Vec<Action>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HistoryType {
+    Shallow,
+    Deep,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateDefinition {
+    pub id: Option<String>,
+    pub type_: Option<String>,
+    pub initial: Option<String>,
+    pub states: IndexMap<String, StateDefinition>,
+    pub on: IndexMap<String, Vec<TransitionDefinition>>, 
+    pub entry: Vec<Action>,
+    pub exit: Vec<Action>,
+
+    pub tags: Vec<String>,
+    pub history: Option<HistoryType>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,57 +126,7 @@ pub struct MachineDefinition {
     pub exit: Vec<Action>,
     pub context: Option<Value>,
     pub types: Option<Value>,
-    pub id_map: IndexMap<String, String>, // ID -> Path
-}
-
-#[derive(Debug, Clone)]
-pub enum Action {
-    Named(String),
-    Assign(AssignAction),
-    Generic(GenericAction),
-}
-
-#[derive(Debug, Clone)]
-pub struct AssignAction {
-    pub action_type: String, // Expect "xstate.assign"
-    pub assignment: Value,
-}
-
-#[derive(Debug, Clone)]
-pub struct GenericAction {
-    pub action_type: String,
-    pub params: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GuardObject {
-    pub guard_type: String,
-    pub params: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub enum TransitionGuard {
-    Name(String),
-    Object(GuardObject),
-}
-
-#[derive(Debug, Clone)]
-pub struct TransitionDefinition {
-    pub target: Option<Vec<String>>,
-    pub cond: Option<TransitionGuard>,
-    pub actions: Vec<Action>,
-}
-
-#[derive(Debug, Clone)]
-pub struct StateDefinition {
-    pub id: Option<String>,
-    pub type_: Option<String>,
-    pub initial: Option<String>,
-    pub states: IndexMap<String, StateDefinition>,
-    pub on: IndexMap<String, Vec<TransitionDefinition>>, 
-    pub entry: Vec<Action>,
-    pub exit: Vec<Action>,
-    pub tags: Vec<String>,
+    pub id_map: IndexMap<String, String>,
 }
 
 // --- Runtime ---
@@ -157,7 +135,9 @@ pub struct StateDefinition {
 pub struct RuntimeMachine {
     pub definition: MachineDefinition,
     pub current_state: String,
+
     pub context: Value,
+    pub history_value: IndexMap<String, String>,
 }
 
 impl RuntimeMachine {
@@ -170,170 +150,250 @@ impl RuntimeMachine {
             definition,
             current_state,
             context,
+            history_value: IndexMap::new(),
         }
     }
 
-    pub fn resolve_initial_state(states: &IndexMap<String, StateDefinition>, start_key: &str) -> String {
-        let mut current_key = start_key.to_string();
-        
-        loop {
-            if let Some(def) = Self::get_state_def_recursive(states, &current_key) {
-                 if let Some(ref init) = def.initial {
-                     current_key = format!("{}.{}", current_key, init);
-                 } else {
-                     break;
-                 }
+    fn resolve_initial_state(states: &IndexMap<String, StateDefinition>, initial: &str) -> String {
+        let mut current_path = initial.to_string();
+        while let Some(def) = Self::get_state_def_recursive(states, &current_path) {
+            if let Some(sub_initial) = &def.initial {
+                current_path = format!("{}.{}", current_path, sub_initial);
             } else {
                 break;
             }
         }
-        current_key
+        current_path
+    }
+
+    pub fn state(&self) -> String {
+        self.current_state.clone()
+    }
+
+    pub fn context(&self) -> Value {
+        self.context.clone()
     }
 
     pub fn get_state_definition(&self, path: &str) -> Option<&StateDefinition> {
         Self::get_state_def_recursive(&self.definition.states, path)
     }
 
-    pub fn get_state_def_recursive<'a>(
-        root_states: &'a IndexMap<String, StateDefinition>, 
-        path: &str
-    ) -> Option<&'a StateDefinition> {
+    pub fn get_state_def_recursive<'a>(states: &'a IndexMap<String, StateDefinition>, path: &str) -> Option<&'a StateDefinition> {
+        if path.is_empty() {
+            return None;
+        }
         let parts: Vec<&str> = path.split('.').collect();
-        let mut current_map = root_states;
-        let mut last_def = None;
+        let mut current_states = states;
+        let mut final_def = None;
 
-        for part in parts.iter() {
-            if let Some(def) = current_map.get(*part) {
-                last_def = Some(def);
-                current_map = &def.states;
+        for (i, part) in parts.iter().enumerate() {
+            if let Some(def) = current_states.get(*part) {
+                if i == parts.len() - 1 {
+                    final_def = Some(def);
+                } else {
+                    current_states = &def.states;
+                }
             } else {
                 return None;
             }
         }
-        last_def
+        final_def
     }
 
+    fn resolve_target(&self, source_path: &str, target: &str) -> Option<String> {
+        // 1. Check ID map
+        if let Some(path) = self.definition.id_map.get(target) {
+            return Some(path.clone());
+        }
+
+        // 2. Resolve relative to source (ancestors)
+        let mut parts: Vec<&str> = source_path.split('.').collect();
+        while !parts.is_empty() {
+             // Try prefix + target
+             let prefix = parts.join(".");
+             let candidate = if prefix.is_empty() { target.to_string() } else { format!("{}.{}", prefix, target) };
+             if Self::get_state_def_recursive(&self.definition.states, &candidate).is_some() {
+                 return Some(candidate);
+             }
+             // Pop last part and try again
+             parts.pop();
+        }
+        
+        // 3. Try as absolute path from root
+        if Self::get_state_def_recursive(&self.definition.states, target).is_some() {
+            return Some(target.to_string());
+        }
+        
+        None
+    }
 
     pub fn transition(
         &mut self,
-        event: &str,
+        event_type: &str,
         event_payload: &Value,
         guards: &IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
         actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>>,
     ) -> Option<String> {
-        let mut state_path = self.current_state.clone();
-        
-        loop {
-            // Determine transitions based on current path (Root or State)
-            let transitions = if state_path.is_empty() {
-                self.definition.on.get(event)
-            } else {
-                Self::get_state_def_recursive(&self.definition.states, &state_path)
-                    .and_then(|def| def.on.get(event))
-            };
+        let state_path = self.current_state.clone();
+        let mut parts: Vec<String> = state_path.split('.').map(|s: &str| s.to_string()).collect();
 
-            if let Some(transitions) = transitions {
-                for transition in transitions {
-                    let should_transition = match &transition.cond {
-                        Some(guard_def) => {
-                            let (guard_name, params) = match guard_def {
-                                TransitionGuard::Name(s) => (s, &None),
-                                TransitionGuard::Object(obj) => (&obj.guard_type, &obj.params),
-                            };
-
-                            if let Some(guard) = guards.get(guard_name) {
-                                guard(&self.context, event_payload, params)
-                            } else {
-                                false
-                            }
-                        }
-                        None => true,
-                    };
-
-                    if should_transition {
-                        let first_target = transition.target.as_ref().and_then(|t| t.first());
-                        let target_base = first_target.cloned().unwrap_or(state_path.clone());
-                        let next_state_full_path = if transition.target.is_none() {
-                            state_path.clone() // Internal / stay
-                        } else {
-                            // Resolve target path
-                            if target_base.starts_with('#') {
-                                 let id = &target_base[1..];
-                                 if let Some(path) = self.definition.id_map.get(id) {
-                                     // Found ID, resolve initial state of that state? 
-                                     // Usually targetting an ID targets THAT state directly.
-                                     // But if it's compound, we should enter initial?
-                                     // XState semantics: Enter state, then initial.
-                                     // `resolve_initial_state` handles finding initial state OF the target.
-                                     Self::resolve_initial_state(&self.definition.states, path)
-                                 } else {
-                                     // ID not found, stay? or error?
-                                     // Return None implies no transition?
-                                     // Or stay current?
-                                     // For now, assume staying current is safer than crashing.
-                                     state_path.clone()
+        // Search for transition from current state up to root
+        while !parts.is_empty() {
+            let mut current_search_path = parts.join(".");
+            if let Some(state_def) = Self::get_state_def_recursive(&self.definition.states, &current_search_path) {
+                if let Some(transitions) = state_def.on.get(event_type) {
+                    for transition in transitions {
+                        // Check guard
+                        let mut guard_ok = true;
+                        if let Some(cond) = &transition.cond {
+                             match cond {
+                                 TransitionGuard::Name(name) => {
+                                     if let Some(guard_fn) = guards.get(name) {
+                                         guard_ok = guard_fn(&self.context, event_payload, &None);
+                                     }
+                                 },
+                                 TransitionGuard::Object(obj) => {
+                                     if let Some(guard_fn) = guards.get(&obj.guard_type) {
+                                         guard_ok = guard_fn(&self.context, event_payload, &obj.params);
+                                     }
                                  }
-                            } else if self.definition.states.contains_key(&target_base) {
-                                Self::resolve_initial_state(&self.definition.states, &target_base)
-                            } else {
-                                if let Some(parent_dot) = state_path.rfind('.') {
-                                    let parent_path = &state_path[..parent_dot];
-                                    let sibling_path = format!("{}.{}", parent_path, target_base);
-                                    if Self::get_state_def_recursive(&self.definition.states, &sibling_path).is_some() {
-                                        Self::resolve_initial_state(&self.definition.states, &sibling_path)
+                             }
+                        }
+
+                        if !guard_ok { continue; }
+
+                        // Transition matched!
+                        if let Some(targets) = &transition.target {
+                            // Support only first target for now
+                            let raw_target = &targets[0];
+                            let mut target_state = self.resolve_target(&current_search_path, raw_target).unwrap_or_else(|| raw_target.clone());
+                            
+                            // History State Resolution
+                            if let Some(target_def) = Self::get_state_def_recursive(&self.definition.states, &target_state) {
+                                if target_def.type_.as_deref() == Some("history") {
+                                    let history_parent = if let Some(dot_idx) = target_state.rfind('.') {
+                                        target_state[..dot_idx].to_string()
                                     } else {
-                                        target_base
+                                        "".to_string()
+                                    };
+
+                                    if let Some(prev_state) = self.history_value.get(&history_parent) {
+                                        target_state = prev_state.clone();
+
+                                        // Deep History: Recursively resolve children history
+                                        if let Some(history_type) = &target_def.history {
+                                            match history_type {
+                                                HistoryType::Deep => {
+                                                    loop {
+                                                        // target_state is now e.g. "on.second"
+                                                        // Check if "on.second" has a history entry
+                                                        if let Some(deep_res) = self.history_value.get(&target_state) {
+                                                            target_state = deep_res.clone();
+                                                        } else {
+                                                            break;
+                                                        }
+                                                    }
+                                                },
+                                                _ => {}
+                                            }
+                                        }
+                                    } else {
+                                        // History fallback
+                                        if let Some(hist_initial) = &target_def.initial {
+                                             target_state = format!("{}.{}", target_state, hist_initial);
+                                        } else if let Some(always_transitions) = target_def.on.get("") {
+                                              if let Some(t) = always_transitions.first() {
+                                                  if let Some(targ) = &t.target {
+                                                      target_state = targ[0].clone();
+                                                  }
+                                              }
+                                        } else {
+                                            // Fallback to parent initial
+                                            if let Some(parent_def) = Self::get_state_def_recursive(&self.definition.states, &history_parent) {
+                                                if let Some(pi) = &parent_def.initial {
+                                                     target_state = format!("{}.{}", history_parent, pi);
+                                                }
+                                            }
+                                        }
                                     }
-                                } else {
-                                    target_base
                                 }
                             }
-                        };
+
+                            let next_state_full_path = Self::resolve_initial_state(&self.definition.states, &target_state);
+                            
+                            // Calculate LCA (Least Common Ancestor) for entry/exit
+                            let current_parts: Vec<&str> = self.current_state.split('.').filter(|s| !s.is_empty()).collect();
+                            let target_parts: Vec<&str> = next_state_full_path.split('.').filter(|s| !s.is_empty()).collect();
+                            
+                            let mut lca_len = 0;
+                            // LCA calculation: common prefix steps
+                            while lca_len < current_parts.len() && lca_len < target_parts.len() && current_parts[lca_len] == target_parts[lca_len] {
+                                lca_len += 1;
+                            }
+                            
+                            // 3. Exit Actions (Exited states: from deepest up to LCA)
+                            if !self.current_state.is_empty() {
+                                // Update history for exited states
+                                for i in lca_len..current_parts.len() {
+                                     // std::println!("DEBUG: i={}, current_parts={:?}, current_state={}", i, current_parts, self.current_state);
+                                     if i > 0 {
+                                         let parent_path = current_parts[0..i].join(".");
+                                         let exited_path = current_parts[0..=i].join(".");
+                                         // std::println!("DEBUG: inserting history: {} -> {}", parent_path, exited_path);
+                                         self.history_value.insert(parent_path, exited_path);
+                                     }
+                                }
+
+                                // Exit actions (reverse order, deepest first)
+                                for i in (lca_len..current_parts.len()).rev() {
+                                     let exited_path = current_parts[0..=i].join(".");
+                                     if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &exited_path) {
+                                         for action in &def.exit {
+                                             Self::execute_action(&mut self.context, action, event_payload, actions);
+                                         }
+                                     }
+                                }
+                            }
+
+                            // 4. Transition actions
+                            for action in &transition.actions {
+                                Self::execute_action(&mut self.context, action, event_payload, actions);
+                            }
+                            
+                            // 5. Update State
+                            self.current_state = next_state_full_path.clone(); 
+                            
+                             // 6. Entry Actions (Entered states: from LCA down to target)
+                            for i in lca_len..target_parts.len() {
+                                 let entered_path = target_parts[0..=i].join(".");
+                                 if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &entered_path) {
+                                     for action in &def.entry {
+                                          Self::execute_action(&mut self.context, action, event_payload, actions);
+                                     }
+                                 }
+                            }
+                        } else {
+                            // Internal transition: only transition actions
+                            for action in &transition.actions {
+                                Self::execute_action(&mut self.context, action, event_payload, actions);
+                            }
+                        }
                         
-                        let is_internal = transition.target.is_none(); 
-
-                        if !is_internal {
-                            if let Some(current_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
-                                for action in &current_state_def.exit {
-                                    Self::execute_action(&mut self.context, action, event_payload, actions);
-                                }
-                            }
-                        }
-
-                        for action in &transition.actions {
-                            Self::execute_action(&mut self.context, action, event_payload, actions);
-                        }
-
-                        if !is_internal {
-                            self.current_state = next_state_full_path.clone();
-
-                            if let Some(new_state_def) = Self::get_state_def_recursive(&self.definition.states, &self.current_state) {
-                                for action in &new_state_def.entry {
-                                    Self::execute_action(&mut self.context, action, event_payload, actions);
-                                }
-                            }
-                        }
-
                         return Some(self.current_state.clone());
                     }
                 }
             }
             
             // Bubble up
-            if let Some(dot_idx) = state_path.rfind('.') {
-                state_path = state_path[..dot_idx].to_string();
-            } else if !state_path.is_empty() {
-                state_path = "".to_string(); // Try root
+            if let Some(dot_idx) = current_search_path.rfind('.') {
+               current_search_path = current_search_path[..dot_idx].to_string();
+               parts = current_search_path.split('.').map(|s: &str| s.to_string()).collect();
             } else {
-                break; // Reached root, no handled event
+               parts = vec![];
             }
         }
         
         None
-    }
-    
-    pub fn state(&self) -> &str {
-        &self.current_state
     }
 
     fn execute_action(
@@ -349,21 +409,152 @@ impl RuntimeMachine {
                 }
             }
             Action::Generic(generic_action) => {
-                 if let Some(action_fn) = actions.get(&generic_action.action_type) {
-                     action_fn(context, event_payload, &generic_action.params);
-                 }
+                if let Some(action_fn) = actions.get(&generic_action.action_type) {
+                    action_fn(context, event_payload, &generic_action.params);
+                }
             }
             Action::Assign(assign_action) => {
-                // Handle static assignment
-                if let Some(ctx_obj) = context.as_object_mut() {
-                    // Check if assignment is a partial object and merge it
-                    if let Some(partial) = assign_action.assignment.as_object() {
-                        for (k, v) in partial {
-                            ctx_obj.insert(k.clone(), v.clone());
+                if let Some(obj) = assign_action.assignment.as_object() {
+                    if let Some(ctx_obj) = context.as_object_mut() {
+                        for (k, v) in obj {
+                             ctx_obj.insert(k.clone(), v.clone());
                         }
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexMap;
+
+    #[test]
+    fn test_initial_state_resolution() {
+        let mut states = IndexMap::default();
+        states.insert("a".to_string(), StateDefinition {
+            id: None, type_: None, initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        
+        let path = RuntimeMachine::resolve_initial_state(&states, &"a".to_string());
+        assert_eq!(path, "a");
+    }
+
+    #[test]
+    fn test_nested_initial_state_resolution() {
+        let mut child_states = IndexMap::default();
+        child_states.insert("b".to_string(), StateDefinition {
+            id: None, type_: None, initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        
+        let mut states = IndexMap::default();
+        states.insert("a".to_string(), StateDefinition {
+            id: None, type_: None, initial: Some("b".to_string()), states: child_states, on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        
+        let path = RuntimeMachine::resolve_initial_state(&states, &"a".to_string());
+        assert_eq!(path, "a.b");
+    }
+
+    #[test]
+    fn test_bubble_up_transition() {
+        let mut child_states = IndexMap::default();
+        child_states.insert("b".to_string(), StateDefinition {
+            id: None, type_: None, initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        
+        let mut a_on = IndexMap::default();
+        a_on.insert("EVENT".to_string(), vec![TransitionDefinition {
+            target: Some(vec!["other".to_string()]),
+            cond: None,
+            actions: vec![],
+        }]);
+
+        let mut states = IndexMap::default();
+        states.insert("a".to_string(), StateDefinition {
+            id: None, type_: None, initial: Some("b".to_string()), states: child_states, on: a_on, entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        states.insert("other".to_string(), StateDefinition {
+            id: None, type_: None, initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+
+        let definition = MachineDefinition {
+            id: "m".to_string(),
+            initial: "a".to_string(),
+            states,
+            on: IndexMap::default(),
+            entry: vec![],
+            exit: vec![],
+            context: None,
+            types: None,
+            id_map: IndexMap::default(),
+        };
+
+        let mut machine = RuntimeMachine::new(definition);
+        assert_eq!(machine.state(), "a.b");
+
+        // Event should bubble up from 'a.b' to 'a'
+        machine.transition("EVENT", &Value::Null, &IndexMap::default(), &IndexMap::default());
+        assert_eq!(machine.state(), "other");
+    }
+
+    #[test]
+    fn test_history_transition() {
+        let mut nested_states = IndexMap::default();
+        nested_states.insert("one".to_string(), StateDefinition {
+             id: None, type_: None, initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        nested_states.insert("two".to_string(), StateDefinition {
+             id: None, type_: None, initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        nested_states.insert("hist".to_string(), StateDefinition {
+             id: None, type_: Some("history".to_string()), initial: None, states: IndexMap::default(), on: IndexMap::default(), entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+
+        let mut a_on = IndexMap::default();
+        a_on.insert("EXIT".to_string(), vec![TransitionDefinition {
+            target: Some(vec!["b".to_string()]),
+            cond: None,
+            actions: vec![],
+        }]);
+
+        let mut states = IndexMap::default();
+        states.insert("a".to_string(), StateDefinition {
+            id: None, type_: None, initial: Some("one".to_string()), states: nested_states, on: a_on, entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+        
+        let mut b_on = IndexMap::default();
+        b_on.insert("REENTER".to_string(), vec![TransitionDefinition {
+            target: Some(vec!["a.hist".to_string()]),
+            cond: None,
+            actions: vec![],
+        }]);
+        states.insert("b".to_string(), StateDefinition {
+            id: None, type_: None, initial: None, states: IndexMap::default(), on: b_on, entry: vec![], exit: vec![], tags: vec![], history: None
+        });
+
+        let definition = MachineDefinition {
+            id: "m".to_string(),
+            initial: "a".to_string(),
+            states,
+            on: IndexMap::default(),
+            entry: vec![],
+            exit: vec![],
+            context: None,
+            types: None,
+            id_map: IndexMap::default(),
+        };
+
+        let mut machine = RuntimeMachine::new(definition);
+        assert_eq!(machine.state(), "a.one");
+
+        machine.transition("EXIT", &Value::Null, &IndexMap::default(), &IndexMap::default());
+        assert_eq!(machine.state(), "b");
+
+        machine.transition("REENTER", &Value::Null, &IndexMap::default(), &IndexMap::default());
+        // Default history for 'a' was 'one' (initial state)
+        assert_eq!(machine.state(), "a.one");
     }
 }
