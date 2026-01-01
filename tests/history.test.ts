@@ -1,9 +1,6 @@
-import { createActor, createMachine } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createActor, createMachine, StateNode } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 import { describe, it, expect, vi } from 'vitest';
 
-// Mocks for missing portable-xstate artifacts
-// TODO: Remove these when portable-xstate is updated
-class StateNode {}
 // Helper to verify action execution order.
 // Registers spies on all entry/exit actions found in the machine definition.
 const trackEntries = (machine: any) => {
@@ -45,7 +42,11 @@ const trackEntries = (machine: any) => {
       traverse(machine.config);
   }
   
-  return () => logs;
+  return () => {
+    const copy = [...logs];
+    logs.length = 0;
+    return copy;
+  };
 };
 const fromCallback = (fn: any) => fn;
 

@@ -56,7 +56,7 @@ pub fn assign(assignment_json: &str) -> Result<Action, serde_json::Error> {
 }
 
 // Make mapper public so we can use map_value in assign
-pub use mapper::map_value;
+pub use mapper::{map_value, map_value_to_state_value};
 
 #[cfg(test)]
 mod tests {
@@ -78,8 +78,8 @@ mod tests {
          }"#;
 
          let definition = create_machine(json).expect("Failed to create machine");
-         let machine = RuntimeMachine::new(definition);
-         assert_eq!(machine.state(), "green");
+         let machine = RuntimeMachine::new(&definition).expect("Failed to create runtime machine");
+         assert_eq!(machine.current_state, portable_xstate_core::StateValue::Atomic("green".to_string()));
     }
 
     #[test]

@@ -27,7 +27,10 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
         Err(_) => return ptr::null_mut(),
     };
 
-    let machine = RuntimeMachine::new(def);
+    let machine = match RuntimeMachine::new(&def) {
+        Ok(m) => m,
+        Err(_) => return ptr::null_mut(),
+    };
     let ctx = Box::new(MachineContext {
         machine,
     });
@@ -49,8 +52,16 @@ pub extern "C" fn fsm_get_state(ptr: *mut MachineContext, buf: *mut c_char, len:
         if ptr.is_null() { return -1; }
         &mut *ptr
     };
-    let state = ctx.machine.state();
-    let c_str_state = match CString::new(state) {
+    let state_value = &ctx.machine.current_state;
+    // Extract first active path from StateValue
+    let active_paths = state_value.get_active_paths();
+    let state_str = if !active_paths.is_empty() {
+        &active_paths[0]
+    } else {
+        ""
+    };
+    
+    let c_str_state = match CString::new(state_str) {
         Ok(s) => s,
         Err(_) => return -2,
     };

@@ -21,7 +21,7 @@ test.describe('XState Cheatsheet Examples', () => {
     // Import the WASM module
     // Note: In a real Node environment we might need to handle WASM loading differently (e.g. fs.readFile)
     // or rely on a bundler. Playwright's test runner supports ESM.
-    const { FsmRunner, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
+    const { Actor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
     
     // Initialize WASM
     // In Node (non-browser), wasm-pack generated code might try to fetch/load wasm_bg.wasm.
@@ -48,7 +48,7 @@ test.describe('XState Cheatsheet Examples', () => {
     
     // const jsonStr = JSON.stringify(machineDef);
     // Pass object directly to let WASM handle inline functions (if implemented)
-    const machine = new FsmRunner(machineDef);
+    const machine = new Actor(machineDef);
     machine.start();
     
     // Initial state check

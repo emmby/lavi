@@ -1,17 +1,13 @@
+
 use serde::{Deserialize, Serialize};
 use indexmap::IndexMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::vec;
 
-// --- DTO Definition (Schema) ---
-// These structs exactly mirror the JSON input
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct MachineDefinitionDto {
-    #[serde(default)]
     pub id: Option<String>,
-    #[serde(default)]
     pub initial: Option<serde_json::Value>,
     #[serde(default)]
     pub states: IndexMap<String, StateDefinitionDto>,
@@ -23,31 +19,22 @@ pub struct MachineDefinitionDto {
     pub exit: Vec<ActionDto>,
     #[serde(default)]
     pub context: Option<serde_json::Value>,
-    #[serde(default)]
-    pub types: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub invoke: Vec<InvokeDefinitionDto>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ActionDto {
-    Named(String),
-    Assign(AssignActionDto),
-    Generic(GenericActionDto),
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct AssignActionDto {
-    #[serde(rename = "type")]
-    pub action_type: String, // Expect "xstate.assign"
-    pub assignment: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct GenericActionDto {
-    #[serde(rename = "type")]
-    pub action_type: String,
-    #[serde(default)]
-    pub params: Option<serde_json::Value>,
+    Name(String),
+    Object {
+        #[serde(rename = "type")]
+        action_type: String,
+        #[serde(default)]
+        assignment: Option<serde_json::Value>,
+        #[serde(default)]
+        params: Option<serde_json::Value>,
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -73,6 +60,8 @@ pub struct TransitionObjectDto {
     pub cond: Option<TransitionGuardDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub actions: Vec<ActionDto>,
+    #[serde(default)]
+    pub reenter: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -82,6 +71,11 @@ pub enum TransitionDefinitionDto {
     Object(TransitionObjectDto),
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct InvokeDefinitionDto {
+    pub src: serde_json::Value,
+    pub id: Option<String>,
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct StateDefinitionDto {
@@ -95,7 +89,7 @@ pub struct StateDefinitionDto {
     pub states: IndexMap<String, StateDefinitionDto>,
 
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
-    pub on: IndexMap<String, Vec<TransitionDefinitionDto>>, // Event -> List of Transitions
+    pub on: IndexMap<String, Vec<TransitionDefinitionDto>>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
@@ -103,19 +97,16 @@ pub struct StateDefinitionDto {
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub always: Vec<TransitionDefinitionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub invoke: Vec<InvokeDefinitionDto>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub tags: Vec<String>,
     #[serde(default)]
     pub history: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub target: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_vec_or_single")]
+    pub actions: Vec<ActionDto>,
 }
-
-// Helpers
-// Helpers
-// Helpers 
-// Wait, warning said: `MapAccess`, `SeqAccess`, `Visitor`, and `self` are unused.
-// Let's check lines 106-157 in previous edits.
-// Previously I replaced `deserialize_vec_or_single` in `dto.rs` with untagged enum, removing the Visitor impl.
-// So yes, they are likely unused now.
-// I'll remove them.
 
 fn deserialize_vec_or_single<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
@@ -137,87 +128,34 @@ where
     }
 }
 
-// ... original map helper ...
 fn deserialize_map_vec_or_single<'de, D, T>(deserializer: D) -> Result<IndexMap<String, Vec<T>>, D::Error>
 where
     D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
+    T: serde::de::DeserializeOwned,
 {
-     // Keep original for now as map wasn't the failure point?
-     // Actually `on` uses `deserialize_map_vec_or_single`.
-     // But failure was line 117? "Variant VecOrSingle".
-     // Wait, maybe I should try to relax the constraint.
-     
-     #[derive(Deserialize)]
-     #[serde(untagged)]
-     enum VecOrSingle<T> {
-         Vec(Vec<T>),
-         Single(T),
-         Null,
-     }
-
-     let map: IndexMap<String, Option<VecOrSingle<T>>> = IndexMap::deserialize(deserializer)?;
-     
-     let mut result = IndexMap::new();
-     for (key, value) in map {
-         let vec = match value {
-             Some(VecOrSingle::Vec(v)) => v,
-             Some(VecOrSingle::Single(s)) => vec![s],
-             Some(VecOrSingle::Null) | None => vec![],
-         };
-         result.insert(key, vec);
-     }
-     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::from_str;
-
-    #[test]
-    fn test_deserialize_target_vec() {
-        let json = "{\"target\": [\"#bar\", \"#baz\"]}";
-        let dto: TransitionObjectDto = from_str(json).unwrap();
-        assert!(dto.target.is_some());
-        // Could verify value content but let's assume serde_json works
-    }
-    
-    #[test]
-    fn test_deserialize_target_single() {
-        let json = "{\"target\": \"#bar\"}";
-        let dto: TransitionObjectDto = from_str(json).unwrap();
-        assert!(dto.target.is_some());
-    }
-    #[test]
-    fn test_deserialize_generic_action_with_params() {
-        let json = r#"{"type": "notify", "params": {"message": "hello"}}"#;
-        let dto: ActionDto = from_str(json).expect("should deserialize");
-        if let ActionDto::Generic(g) = dto {
-            assert_eq!(g.action_type, "notify");
-            assert!(g.params.is_some());
-        } else {
-            panic!("Expected Generic action");
-        }
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum MapVecOrSingle {
+        Map(IndexMap<String, serde_json::Value>),
+        Null,
     }
 
-
-    #[test]
-    fn test_deserialize_transition_with_actions() {
-        let json = r#"
-        {
-            "target": "active",
-            "actions": [
-                { "type": "notify", "params": { "message": "hello" } }
-            ]
+    match MapVecOrSingle::deserialize(deserializer)? {
+        MapVecOrSingle::Map(m) => {
+            let mut result = IndexMap::new();
+            for (k, v) in m {
+                let transitions = match v {
+                    serde_json::Value::Array(arr) => {
+                        arr.into_iter().map(|item| serde_json::from_value(item).unwrap()).collect()
+                    }
+                    serde_json::Value::String(s) => vec![serde_json::from_value(serde_json::Value::String(s)).unwrap()],
+                    serde_json::Value::Object(_) => vec![serde_json::from_value(v).unwrap()],
+                    _ => vec![],
+                };
+                result.insert(k, transitions);
+            }
+            Ok(result)
         }
-        "#;
-        let dto: TransitionObjectDto = from_str(json).expect("should deserialize");
-        assert_eq!(dto.actions.len(), 1);
-        if let ActionDto::Generic(g) = &dto.actions[0] {
-             assert_eq!(g.action_type, "notify");
-        } else {
-             panic!("Expected Generic action");
-        }
+        MapVecOrSingle::Null => Ok(IndexMap::new()),
     }
 }

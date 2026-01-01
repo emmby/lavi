@@ -1,9 +1,10 @@
 use portable_xstate_core::{
-    MachineDefinition, StateDefinition, TransitionDefinition, Action, AssignAction, GenericAction,
-    GuardObject, TransitionGuard, Value, HistoryType
+    MachineDefinition, StateDefinition, TransitionDefinition, Action, 
+    GuardObject, TransitionGuard, Value, HistoryType, StateType
 };
 use indexmap::IndexMap;
 use alloc::vec::Vec;
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::string::{String, ToString};
 use alloc::format;
@@ -12,17 +13,33 @@ use crate::dto::{
     TransitionGuardDto
 };
 
-fn resolve_initial(v: Option<serde_json::Value>) -> Option<String> {
+fn resolve_initial_info(v: Option<serde_json::Value>) -> (Option<String>, Vec<Action>) {
     match v {
-        Some(serde_json::Value::String(s)) => Some(s),
+        Some(serde_json::Value::String(s)) => (Some(s), vec![]),
         Some(serde_json::Value::Object(o)) => {
-            if let Some(serde_json::Value::String(target)) = o.get("target") {
-                Some(target.clone())
+            let target = if let Some(serde_json::Value::String(t)) = o.get("target") {
+                Some(t.clone())
+            } else if let Some(serde_json::Value::Array(t_arr)) = o.get("target") {
+                if let Some(serde_json::Value::String(first)) = t_arr.get(0) {
+                     Some(first.clone())
+                } else { None }
             } else {
                 None
-            }
+            };
+            let actions = if let Some(serde_json::Value::Array(a_arr)) = o.get("actions") {
+                a_arr.clone().into_iter().map(|item| {
+                    let dto_res: Result<ActionDto, _> = serde_json::from_value(item);
+                    if let Ok(dto) = dto_res { map_action(dto) } else { Action::Named("unknown".to_string()) }
+                }).collect()
+            } else if let Some(a_obj) = o.get("actions") {
+                 let dto_res: Result<ActionDto, _> = serde_json::from_value(a_obj.clone());
+                 if let Ok(dto) = dto_res { vec![map_action(dto)] } else { vec![] }
+            } else {
+                vec![]
+            };
+            (target, actions)
         },
-        _ => None
+        _ => (None, vec![])
     }
 }
 
@@ -31,19 +48,25 @@ pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
     let mut id_map = IndexMap::new();
     let states = map_states(dto.states, "", machine_id, &mut id_map);
     
-    let initial = resolve_initial(dto.initial).or_else(|| {
+    let (initial_str, initial_actions) = resolve_initial_info(dto.initial);
+    let initial = initial_str.or_else(|| {
         states.keys().next().cloned()
     }).unwrap_or_default();
 
     MachineDefinition {
         id: dto.id.unwrap_or_else(|| String::from("(machine)")),
         initial, 
+        initial_actions,
         states,
-        on: dto.on.into_iter().map(|(k, v)| (k, v.into_iter().map(map_transition).collect())).collect(),
+        on: dto.on.into_iter().map(|(k, v): (String, _)| (k, v.into_iter().map(map_transition).collect())).collect(),
         entry: dto.entry.into_iter().map(map_action).collect(),
         exit: dto.exit.into_iter().map(map_action).collect(),
+        invoke: dto.invoke.into_iter().map(|inv| portable_xstate_core::InvokeDefinition {
+            src: map_value(inv.src),
+            id: inv.id,
+        }).collect(),
         context: dto.context.map(map_value),
-        types: dto.types.map(map_value),
+        types: None,
         id_map,
     }
 }
@@ -54,7 +77,7 @@ fn map_states(
     machine_id: &str,
     id_map: &mut IndexMap<String, String>
 ) -> IndexMap<String, StateDefinition> {
-    states.into_iter().map(|(key, dto)| {
+    states.into_iter().map(|(key, dto): (String, _)| {
         let current_path = if parent_path.is_empty() { 
             key.clone() 
         } else { 
@@ -64,25 +87,20 @@ fn map_states(
         if let Some(id) = &dto.id {
             id_map.insert(id.clone(), current_path.clone());
         } else {
-             // Generate default ID if missing: machine_id.path
-             // XState uses (machine).path
              let default_id = format!("{}.{}", machine_id, current_path);
              id_map.insert(default_id, current_path.clone());
         }
 
-        // Destructure to avoid partial move
         let StateDefinitionDto {
-            id, type_, initial, states: child_states, on, entry, exit, always, tags, history
+            id, type_, initial, states: child_states, on, entry, exit, always, tags, invoke, history, target, actions, ..
         } = dto;
 
-        let initial = resolve_initial(initial);
+        let (initial, initial_actions) = resolve_initial_info(initial);
 
-        // Validation: Compound states must have initial state (unless type is parallel)
         let is_compound = !child_states.is_empty();
         let is_parallel = type_.as_deref() == Some("parallel");
         
-        // Infer Type
-        let type_ = type_.or_else(|| {
+        let inferred_type = type_.or_else(|| {
              if history.is_some() {
                  Some("history".to_string())
              } else if is_compound {
@@ -94,14 +112,10 @@ fn map_states(
              }
         });
         
-        if is_compound && !is_parallel && initial.is_none() {
-             panic!("Compound state must specify an initial state (state: '{}').", key);
-        }
-
         let children = map_states(child_states, &current_path, machine_id, id_map);
         
         let mut on_map: IndexMap<String, Vec<TransitionDefinition>> = on.into_iter()
-            .map(|(k, v)| (k, v.into_iter().map(map_transition).collect()))
+            .map(|(k, v): (String, _)| (k, v.into_iter().map(map_transition).collect()))
             .collect();
 
         if !always.is_empty() {
@@ -109,27 +123,45 @@ fn map_states(
             on_map.insert("".to_string(), mapped); 
         }
 
+        let is_deep_history = match &history {
+            Some(serde_json::Value::String(s)) if s == "deep" => true,
+            Some(serde_json::Value::Object(o)) => {
+                matches!(o.get("history"), Some(serde_json::Value::String(h)) if h == "deep")
+            },
+            _ => false,
+        };
+        
+        let state_type = match inferred_type.as_deref() {
+            Some("parallel") => StateType::Parallel,
+            Some("history") => StateType::History { deep: is_deep_history },
+            Some("final") => StateType::Final,
+            _ if !children.is_empty() => StateType::Compound,
+            _ => StateType::Atomic,
+        };
+
         let state_def = StateDefinition {
             id,
-            type_: type_.clone(),
-            initial,
+            type_: inferred_type.clone(),
+            state_type,
+            initial, 
+            initial_actions,
             states: children,
             on: on_map,
             entry: entry.into_iter().map(map_action).collect(),
             exit: exit.into_iter().map(map_action).collect(),
             tags,
-            history: if type_.as_deref() == Some("history") || history.is_some() {
-                match history {
-                     Some(serde_json::Value::String(s)) if s == "deep" => Some(HistoryType::Deep),
-                     Some(serde_json::Value::Object(o)) => {
-                         if let Some(serde_json::Value::String(h)) = o.get("history") {
-                             if h == "deep" { Some(HistoryType::Deep) } else { Some(HistoryType::Shallow) }
-                         } else {
-                             Some(HistoryType::Shallow)
-                         }
-                     },
-                     _ => Some(HistoryType::Shallow),
-                }
+            invoke: invoke.into_iter().map(|inv| portable_xstate_core::InvokeDefinition {
+                src: map_value(inv.src),
+                id: inv.id,
+            }).collect(),
+            history: if inferred_type.as_deref() == Some("history") || history.is_some() {
+                if is_deep_history { Some(HistoryType::Deep) } else { Some(HistoryType::Shallow) }
+            } else {
+                None
+            },
+            history_actions: actions.into_iter().map(map_action).collect(),
+            history_target: if !target.is_empty() {
+                Some(target[0].clone())
             } else {
                 None
             },
@@ -145,18 +177,14 @@ fn map_transition(dto: TransitionDefinitionDto) -> TransitionDefinition {
             target: Some(vec![target]),
             cond: None,
             actions: Vec::new(),
+            reenter: false,
         },
         TransitionDefinitionDto::Object(dto) => TransitionDefinition {
             target: dto.target.and_then(|t| {
                 match t {
                     serde_json::Value::String(s) => Some(vec![s]),
                     serde_json::Value::Array(arr) => {
-                        let mut v = Vec::new();
-                        for item in arr {
-                             if let serde_json::Value::String(s) = item {
-                                 v.push(s);
-                             }
-                        }
+                        let v: Vec<String> = arr.into_iter().filter_map(|item| item.as_str().map(|s| s.to_string())).collect();
                         if v.is_empty() { None } else { Some(v) }
                     },
                     _ => None,
@@ -164,22 +192,31 @@ fn map_transition(dto: TransitionDefinitionDto) -> TransitionDefinition {
             }),
             cond: dto.cond.map(map_guard),
             actions: dto.actions.into_iter().map(map_action).collect(),
+            reenter: dto.reenter,
         },
     }
 }
 
-
 fn map_action(dto: ActionDto) -> Action {
     match dto {
-        ActionDto::Named(s) => Action::Named(s),
-        ActionDto::Assign(a) => Action::Assign(AssignAction {
-            action_type: a.action_type,
-            assignment: map_value(a.assignment),
-        }),
-        ActionDto::Generic(g) => {
-            Action::Generic(GenericAction {
-                action_type: g.action_type,
-                params: g.params.map(|p| map_value(p)),
+        ActionDto::Name(s) => Action::Named(s),
+        ActionDto::Object { action_type, assignment, params } => {
+            if action_type == "xstate.assign" {
+                if let Some(a) = assignment {
+                    return Action::Assign(portable_xstate_core::AssignAction {
+                        action_type,
+                        assignment: map_value(a),
+                    });
+                } else if let Some(p) = params.clone() {
+                    return Action::Assign(portable_xstate_core::AssignAction {
+                        action_type,
+                        assignment: map_value(p),
+                    });
+                }
+            }
+            Action::Generic(portable_xstate_core::GenericAction {
+                action_type,
+                params: params.map(|p| map_value(p)),
             })
         }
     }
@@ -199,17 +236,31 @@ pub fn map_value(v: serde_json::Value) -> Value {
     match v {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(b),
-        serde_json::Value::Number(n) => {
-             if let Some(f) = n.as_f64() {
-                 Value::Number(f)
-             } else if let Some(i) = n.as_i64() {
-                 Value::Number(i as f64)
-             } else {
-                 Value::Number(0.0) // Fallback
-             }
-        },
+        serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => Value::String(s),
         serde_json::Value::Array(arr) => Value::Array(arr.into_iter().map(map_value).collect()),
         serde_json::Value::Object(obj) => Value::Object(obj.into_iter().map(|(k, v)| (k, map_value(v))).collect()),
+    }
+}
+ 
+pub fn map_value_to_state_value(v: serde_json::Value) -> portable_xstate_core::StateValue {
+    match v {
+        serde_json::Value::String(s) => portable_xstate_core::StateValue::Atomic(s),
+        serde_json::Value::Object(obj) => {
+             // Handle parallel state case or nested compound
+             // XState 5 represents compound as { parent: 'child' } 
+             // and parallel as { root: { r1: 's1', r2: 's2' } }
+             if obj.len() == 1 {
+                 let (k, v) = obj.into_iter().next().unwrap();
+                 portable_xstate_core::StateValue::Compound(k, Box::new(map_value_to_state_value(v)))
+             } else {
+                 let mut regions = IndexMap::new();
+                 for (k, v) in obj {
+                     regions.insert(k, map_value_to_state_value(v));
+                 }
+                 portable_xstate_core::StateValue::Parallel(regions)
+             }
+        },
+        _ => portable_xstate_core::StateValue::Atomic("".to_string()),
     }
 }

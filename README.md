@@ -78,7 +78,7 @@ Or run them individually:
 ## Usage in JavaScript
 
 ```javascript
-import init, { FsmRunner } from './path/to/pkg/portable_xstate.js';
+import init, { Actor } from './path/to/pkg/portable_xstate.js';
 
 async function main() {
     await init();
@@ -91,7 +91,8 @@ async function main() {
         }
     });
 
-    const machine = new FsmRunner(machineDef);
+    // Create and start the machine
+    const machine = new Actor(machineDef);
     console.log(machine.getSnapshot().value); // "idle"
     
     // Send an event
