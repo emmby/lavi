@@ -468,10 +468,14 @@ pub fn setup_wasm_machine(config: JsValue) -> SetupObject {
 
 #[wasm_bindgen]
 pub fn assign(assignment: JsValue) -> JsValue {
-    let obj = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.assign"));
-    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("assignment"), &assignment);
-    obj.into()
+    // Create a function that does nothing when called, but has 'type' and 'assignment' properties.
+    // This satisfies XState (which expects a function) and our processing (which expects properties).
+    let func = js_sys::Function::new_no_args("return undefined;");
+    let type_key = JsValue::from_str("type");
+    let assign_key = JsValue::from_str("assignment");
+    let _ = js_sys::Reflect::set(&func, &type_key, &JsValue::from_str("xstate.assign"));
+    let _ = js_sys::Reflect::set(&func, &assign_key, &assignment);
+    func.into()
 }
 
 #[wasm_bindgen]
@@ -498,7 +502,6 @@ impl StateNode {
              }
              // Restore snapshot
              parse_implementations(&options, &mut runner.guards, &mut runner.actions); 
-if options.is_object() { let keys = js_sys::Object::keys(&js_sys::Object::from(options.clone()));  }
              let mut snapshot_val = JsValue::UNDEFINED;
              let snapshot_key = JsValue::from_str("snapshot");
              if let Ok(val) = js_sys::Reflect::get(&options, &snapshot_key) {
@@ -845,6 +848,33 @@ fn extract_recursive(obj: &js_sys::Object, actions_out: &mut IndexMap<String, Rc
          }
     }
 
+    // Process entry/exit
+    process_action_list(obj, "entry", actions_out, counter);
+    process_action_list(obj, "exit", actions_out, counter);
+
+    // Process on
+    let on_key = JsValue::from_str("on");
+    let on_val = js_sys::Reflect::get(obj, &on_key).unwrap_or(JsValue::UNDEFINED);
+    if on_val.is_object() && !on_val.is_null() {
+        let on_obj = js_sys::Object::from(on_val);
+        let event_keys = js_sys::Object::keys(&on_obj);
+        for i in 0..event_keys.length() {
+            let event_key = event_keys.get(i);
+            let trans_val = js_sys::Reflect::get(&on_obj, &event_key).unwrap_or(JsValue::UNDEFINED);
+            if js_sys::Array::is_array(&trans_val) {
+                let arr = js_sys::Array::from(&trans_val);
+                for j in 0..arr.length() {
+                    let item = arr.get(j);
+                    if item.is_object() {
+                        process_action_list(&js_sys::Object::from(item), "actions", actions_out, counter);
+                    }
+                }
+            } else if trans_val.is_object() && !trans_val.is_null() {
+                process_action_list(&js_sys::Object::from(trans_val), "actions", actions_out, counter);
+            }
+        }
+    }
+
     // Process always
     let always_key = JsValue::from_str("always");
     let always_val = js_sys::Reflect::get(obj, &always_key).unwrap_or(JsValue::UNDEFINED);
@@ -878,8 +908,6 @@ fn extract_recursive(obj: &js_sys::Object, actions_out: &mut IndexMap<String, Rc
             let s_node = js_sys::Reflect::get(&states_obj, &s_key).unwrap_or(JsValue::UNDEFINED);
             if s_node.is_object() {
                 let s_obj = js_sys::Object::from(s_node);
-                process_action_list(&s_obj, "entry", actions_out, counter);
-                process_action_list(&s_obj, "exit", actions_out, counter);
                 extract_recursive(&s_obj, actions_out, counter);
             }
         }
@@ -895,7 +923,9 @@ fn process_action_list(
     let prop_key = JsValue::from_str(prop_name);
     let val = js_sys::Reflect::get(parent_obj, &prop_key).unwrap_or(JsValue::UNDEFINED);
 
-    if val.is_undefined() { return; }
+    if val.is_undefined() { 
+        return; 
+    }
 
     if js_sys::Array::is_array(&val) {
         let arr = js_sys::Array::from(&val);
@@ -915,7 +945,7 @@ fn process_action_list(
 
 fn convert_inline_action(
     action_item: &JsValue,
-    actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>, // Changed to ActionFunction in instruction, but keeping original type for consistency with surrounding code.
     counter: &mut u32
 ) -> Option<JsValue> {
      let is_obj = action_item.is_object();
@@ -969,6 +999,7 @@ fn convert_inline_action(
                               let key_str = key_js.as_string().unwrap_or_default();
                               let final_val_json: serde_json::Value = serde_wasm_bindgen::from_value(final_val_js).unwrap_or(serde_json::Value::Null);
                               let final_val = json_to_value(final_val_json);
+                              ctx_obj.insert(key_str, final_val);
                           }
                       }
                   }
@@ -1035,13 +1066,7 @@ impl Actor {
 
         let machine_data: Option<InternalState> = if val.is_object() {
              let ptr_key = JsValue::from_str("__wbg_ptr");
-    if val.is_object() {
-        let keys_array = js_sys::Object::keys(&js_sys::Object::from(val.clone()));
-        // Also try to check 'ptr' property
-        let kp = JsValue::from_str("ptr");
-        let vp = js_sys::Reflect::get(&val, &kp).unwrap_or(JsValue::UNDEFINED);
-    }
-    let ptr_check = js_sys::Reflect::get(&val, &ptr_key);
+             let ptr_check = js_sys::Reflect::get(&val, &ptr_key);
              if let Ok(ptr_val) = ptr_check {
                  if !ptr_val.is_undefined() {
                      let ptr = ptr_val.as_f64().unwrap_or(0.0) as usize as *mut StateNode; 
@@ -1130,14 +1155,7 @@ impl Actor {
                              actor.machine.context = portable_xstate_json::map_value(c_json);
                         }
                     }
-                    let h_key = JsValue::from_str("historyValue");
-                    let c_key = JsValue::from_str("context");
-                    if let Ok(c) = js_sys::Reflect::get(&state_val, &c_key) {
-                        if !c.is_undefined() {
-                             let c_json: serde_json::Value = serde_wasm_bindgen::from_value(c).unwrap_or(serde_json::Value::Null);
-                             actor.machine.context = portable_xstate_json::map_value(c_json);
-                        }
-                    }
+                    
                      let _h_key = JsValue::from_str("historyValue"); // avoid unused var warning if logic changes
                      let mut history_found = false;
                      let h_key_lookup = JsValue::from_str("historyValue");
@@ -1436,8 +1454,7 @@ impl Actor {
     }
 
     pub fn send(&mut self, event: JsValue) -> Result<JsValue, JsValue> {
-        let action_keys = self.actions.keys().map(|k| JsValue::from_str(k)).collect::<js_sys::Array>(); 
-        let guard_keys = self.guards.keys().map(|k| JsValue::from_str(k)).collect::<js_sys::Array>(); 
+        
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
             let payload = Value::Object(IndexMap::from([("type".to_string(), Value::String(s.clone()))]));
@@ -1909,7 +1926,7 @@ fn process_config(
                 process_config(&item, guards, actions, depth + 1, counter, "");
             }
         }
-    } else if val.is_object() && !val.is_null() && !val.is_function() {
+    } else if (val.is_object() || val.is_function()) && !val.is_null() {
         let obj = js_sys::Object::from(val.clone());
         let keys = js_sys::Object::keys(&obj);
         for i in 0..keys.length() {
@@ -1945,10 +1962,66 @@ fn process_config(
                          process_config(&child_val, guards, actions, depth + 1, counter, &child_path);
                      }
                  }
-            } else if value.is_object() && !value.is_null() && !value.is_function() {
-                // Check if it's an assign action
+            } else if value.is_object() && !value.is_null() {
+                // Check if it's a function that should be an auto_action
+                if value.is_function() {
+                    let type_key = JsValue::from_str("type");
+                    let type_val = js_sys::Reflect::get(&value, &type_key).unwrap_or(JsValue::UNDEFINED);
+                    
+                    if type_val == JsValue::from_str("xstate.assign") {
+                         // It's a function-object from assign()
+                         let id = format!("auto_action_{}", actions.len());
+                         let func: js_sys::Function = value.clone().dyn_into().unwrap();
+                         let assign_key = JsValue::from_str("assignment");
+                         let mut assignment = js_sys::Reflect::get(&value, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                         if assignment.is_undefined() {
+                              assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                         }
+                         
+                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                             if assignment.is_object() {
+                                 let assign_obj = js_sys::Object::from(assignment.clone());
+                                 evaluate_assignment(&assign_obj, ctx_mut, evt);
+                             }
+                         });
+                         actions.insert(id.clone(), closure);
+                         let new_obj = js_sys::Object::new();
+                         let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                         let _ = js_sys::Reflect::set(&obj, &key, &new_obj);
+                         continue;
+                    } else if key_str != "guard" && key_str != "cond" {
+                         // It's a plain function used as an action (not a guard)
+                         let id = format!("auto_action_{}", actions.len());
+                         let func: js_sys::Function = value.clone().dyn_into().unwrap();
+                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                              let res = execute_js_action(&func, ctx_mut, evt, _params);
+                              if res.is_object() {
+                                   let t_key = JsValue::from_str("type");
+                                   let t_val = js_sys::Reflect::get(&res, &t_key).unwrap_or(JsValue::UNDEFINED);
+                                   if t_val == JsValue::from_str("xstate.assign") {
+                                        let a_key = JsValue::from_str("assignment");
+                                        let mut a_val = js_sys::Reflect::get(&res, &a_key).unwrap_or(JsValue::UNDEFINED);
+                                        if a_val.is_undefined() {
+                                             a_val = js_sys::Reflect::get(&func, &a_key).unwrap_or(JsValue::UNDEFINED);
+                                        }
+                                        if a_val.is_object() {
+                                             let a_obj = js_sys::Object::from(a_val);
+                                             evaluate_assignment(&a_obj, ctx_mut, evt);
+                                        }
+                                   }
+                              }
+                         });
+                         actions.insert(id.clone(), closure);
+                         let new_obj = js_sys::Object::new();
+                         let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                         let _ = js_sys::Reflect::set(&obj, &key, &new_obj);
+                         continue;
+                    }
+                }
+
+                // Check if it's an assign action object
                 let type_key = JsValue::from_str("type");
-                let type_val = js_sys::Reflect::get(&value, &type_key).unwrap_or(JsValue::UNDEFINED); if !type_val.is_undefined() {  }
+                let type_val = js_sys::Reflect::get(&value, &type_key).unwrap_or(JsValue::UNDEFINED);
                 let mut processed = false;
                 if type_val == JsValue::from_str("xstate.assign") {    
                      let assign_key = JsValue::from_str("assignment");
@@ -1979,32 +2052,6 @@ fn process_config(
                 if !processed {
                     process_config(&value, guards, actions, depth + 1, counter, "");
                 }
-            } else if value.is_function() && (key_str == "entry" || key_str == "exit" || key_str == "actions") {
-                 let id = format!("auto_action_{}", actions.len());
-                 let func: js_sys::Function = value.dyn_into().unwrap();
-                 let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                      let res = execute_js_action(&func, ctx_mut, evt, _params); 
-                      if res.is_object() { 
-                           let type_key = JsValue::from_str("type");
-                           let type_val = js_sys::Reflect::get(&res, &type_key).unwrap_or(JsValue::UNDEFINED);
-                           if type_val == JsValue::from_str("xstate.assign") { 
-                                let assign_key = JsValue::from_str("assignment");
-                                let mut assignment = js_sys::Reflect::get(&res, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                                 if assignment.is_undefined() {
-                                     assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED); 
-                                }
-
-                                if assignment.is_object() {
-                                     let assign_obj = js_sys::Object::from(assignment);
-                                     evaluate_assignment(&assign_obj, ctx_mut, evt);
-                                }
-                           }
-                      }
-                 });
-                 actions.insert(id.clone(), closure);
-                 let new_obj = js_sys::Object::new();
-                 let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                 let _ = js_sys::Reflect::set(&obj, &key, &new_obj);
             }
         }
     }

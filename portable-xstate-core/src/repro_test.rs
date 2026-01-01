@@ -6,7 +6,6 @@ mod tests {
     use indexmap::IndexMap;
     use alloc::vec;
     use alloc::string::ToString;
-    use alloc::boxed::Box;
 
     #[test]
     fn test_parallel_history_repro_rust() {
@@ -213,5 +212,45 @@ entry: vec![],
         
         let active_final = machine.current_state.get_active_paths();
         assert!(active_final.contains(&"on.A.C.D".to_string()), "History failed to restore C.D!");
+    }
+
+    #[test]
+    fn test_combinatorial_machine() {
+        let definition = MachineDefinition {
+            id: "toggle".to_string(),
+            initial: "".to_string(),
+            initial_actions: vec![],
+            context: Some(Value::Object(indexmap::indexmap! {
+                "value".to_string() => Value::Number(42.0)
+            })),
+            types: None,
+            invoke: vec![],
+            states: IndexMap::new(),
+            on: indexmap::indexmap! {
+                "INC".to_string() => vec![TransitionDefinition {
+                    target: None,
+                    cond: None,
+                    actions: vec![Action::Assign(AssignAction {
+                        action_type: "xstate.assign".to_string(),
+                        assignment: Value::Object(indexmap::indexmap! {
+                            "value".to_string() => Value::Number(43.0) // simplified for now
+                        }),
+                    })],
+                    reenter: false,
+                }],
+            },
+            entry: vec![],
+            exit: vec![],
+            id_map: IndexMap::new(),
+        };
+
+        let mut machine = RuntimeMachine::new(&definition).unwrap();
+        // Combinatorial machines (no states) should have an empty object state or something that represents root
+        // In our current implementation, empty states -> Parallel(IndexMap::new())
+        
+        machine.transition("INC", &Value::Null, &IndexMap::new(), &IndexMap::new());
+        
+        let ctx = machine.context.as_object().unwrap();
+        assert_eq!(ctx.get("value").unwrap(), &Value::Number(43.0));
     }
 }
