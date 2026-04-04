@@ -6,7 +6,7 @@ const char* STOPLIGHT_JSON = R"({
   "id": "trafficLight",
   "initial": "green",
   "states": {
-    "green": { "on": { "TIMER": [ { "target": "yellow" } ] } },
+    "green": { "on": { "TIMER": [ { "target": "yellow", "actions": ["doTimerAction"] } ] } },
     "yellow": { "on": { "TIMER": [ { "target": "red" } ] } },
     "red": { "on": { "TIMER": [ { "target": "green" } ] } }
   },
@@ -17,16 +17,31 @@ int main() {
     std::cout << "Starting C++ Integration Test..." << std::endl;
 
     try {
-        PortableXState machine(STOPLIGHT_JSON);
+        xstate::PortableXState machine(STOPLIGHT_JSON);
 
         std::string state = machine.getState();
         std::cout << "Initial State: " << state << std::endl;
         assert(state == "green");
 
+        bool cpp_action_called = false;
+        machine.registerAction("doTimerAction", [&cpp_action_called](const xstate::Value& context, const xstate::Value& event) {
+            std::cout << "C++ Action called!" << std::endl;
+            auto cycles = context.getProperty("cycles");
+            assert(!cycles.isNull());
+            double cycles_val = -1;
+            assert(cycles.getNumber(cycles_val) && cycles_val == 0.0);
+            
+            auto missing = context.getProperty("missing_key");
+            assert(missing.isNull());
+
+            cpp_action_called = true;
+        });
+
         machine.send("TIMER");
         state = machine.getState();
         std::cout << "New State: " << state << std::endl;
         assert(state == "yellow");
+        assert(cpp_action_called == true);
 
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;

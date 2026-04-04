@@ -4,6 +4,53 @@
 #include "portable_xstate.h"
 #include <string>
 #include <stdexcept>
+#include <functional>
+#include <map>
+#include <vector>
+
+namespace xstate {
+
+class Value {
+    const fsm_value_t* ptr;
+public:
+    explicit Value(const fsm_value_t* p) : ptr(p) {}
+    
+    bool getString(std::string& out) const {
+        if (!ptr || !fsm_value_is_string(ptr)) return false;
+        size_t req_len = fsm_value_get_string(ptr, nullptr, 0);
+        if (req_len == 0 && fsm_value_get_string(ptr, nullptr, 0) == 0) { // Check if truly empty
+            out = "";
+            return true;
+        }
+        std::vector<char> buf(req_len + 1);
+        size_t copied = fsm_value_get_string(ptr, buf.data(), buf.size());
+        if (copied > 0) {
+            out.assign(buf.data(), copied);
+            return true;
+        }
+        return false;
+    }
+    bool getNumber(double& out) const {
+        if (!ptr || !fsm_value_is_number(ptr)) return false;
+        out = fsm_value_get_number(ptr);
+        return true;
+    }
+    bool getBool(bool& out) const {
+        if (!ptr || !fsm_value_is_bool(ptr)) return false;
+        out = fsm_value_get_bool(ptr);
+        return true;
+    }
+    
+    bool isNull() const {
+        return ptr == nullptr;
+    }
+    Value getProperty(const std::string& key) const {
+        if (!ptr) return Value(nullptr);
+        return Value(fsm_value_get_property(ptr, key.c_str()));
+    }
+};
+
+using ActionCallback = std::function<void(const Value& context, const Value& event)>;
 
 /**
  * @brief C++ Wrapper for the Portable XState machine.
@@ -13,6 +60,16 @@
 class PortableXState {
 private:
     MachineContext* machine;
+    std::map<std::string, ActionCallback> m_callbacks;
+    
+    static void c_callback_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
+        if (!user_data) return;
+        auto* instance = static_cast<PortableXState*>(user_data);
+        auto it = instance->m_callbacks.find(name ? name : "");
+        if (it != instance->m_callbacks.end() && it->second) {
+            it->second(Value(ctx), Value(evt));
+        }
+    }
 
 public:
     /**
@@ -53,6 +110,11 @@ public:
             if (machine) fsm_free(machine);
             machine = other.machine;
             other.machine = nullptr;
+            m_callbacks = std::move(other.m_callbacks);
+            // Re-register callbacks with this instance as user_data
+            for (const auto& pair : m_callbacks) {
+                fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
+            }
         }
         return *this;
     }
@@ -78,6 +140,19 @@ public:
     void send(const char* event) {
         fsm_send_event(machine, event);
     }
+
+    /**
+     * @brief Register a callback for an XState action.
+     * 
+     * @param name The name of the action.
+     * @param callback The std::function callback.
+     */
+    void registerAction(const std::string& name, ActionCallback callback) {
+        m_callbacks[name] = std::move(callback);
+        fsm_register_action(machine, name.c_str(), c_callback_thunk, this);
+    }
 };
+
+} // namespace xstate
 
 #endif // PORTABLE_XSTATE_HPP
