@@ -11,6 +11,8 @@ mod tests {
     fn test_parallel_history_repro_rust() {
         let definition = MachineDefinition {
             id: "machine".to_string(),
+            type_: None,
+            state_type: StateType::Compound,
             initial: "off".to_string(), initial_actions: vec![],
             context: None,
             types: None,
@@ -218,6 +220,8 @@ entry: vec![],
     fn test_combinatorial_machine() {
         let definition = MachineDefinition {
             id: "toggle".to_string(),
+            type_: None,
+            state_type: StateType::Parallel, // Combinatorial is implicit parallel of empty states
             initial: "".to_string(),
             initial_actions: vec![],
             context: Some(Value::Object(indexmap::indexmap! {

@@ -8,6 +8,8 @@ use alloc::vec;
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct MachineDefinitionDto {
     pub id: Option<String>,
+    #[serde(default, rename = "type")]
+    pub type_: Option<String>,
     pub initial: Option<serde_json::Value>,
     #[serde(default)]
     pub states: IndexMap<String, StateDefinitionDto>,

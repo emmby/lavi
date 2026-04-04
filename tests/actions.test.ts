@@ -79,7 +79,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry actions of an initial state (parallel)', () => {
+    it('should return the entry actions of an initial state (parallel)', () => {
       const machine = createMachine({
         type: 'parallel',
         states: {
@@ -522,7 +522,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip("should reenter targeted ancestor (as it's a descendant of the transition domain)", () => {
+    it("should reenter targeted ancestor (as it's a descendant of the transition domain)", () => {
       const machine = createMachine({
         initial: 'loaded',
         states: {

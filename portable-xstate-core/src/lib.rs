@@ -193,6 +193,8 @@ pub struct GenericAction {
 #[derive(Clone)]
 pub struct MachineDefinition {
     pub id: String,
+    pub type_: Option<String>,
+    pub state_type: StateType,
     pub initial: String, pub initial_actions: Vec<Action>,
     pub states: IndexMap<String, StateDefinition>,
     pub on: IndexMap<String, Vec<TransitionDefinition>>,
@@ -215,7 +217,17 @@ pub struct RuntimeMachine {
 impl RuntimeMachine {
     pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
         let mut dummy = vec![];
-        let initial_state = if !definition.initial.is_empty() {
+        let initial_state = if matches!(definition.state_type, StateType::Parallel) {
+             let mut regions = IndexMap::new();
+             for (r_name, r_def) in &definition.states {
+                 if matches!(r_def.state_type, StateType::History{..}) || r_def.history.is_some() { continue; }
+                 let r_parts: Vec<&str> = vec![r_name];
+                 if let Some(val) = Self::resolve_state_value_from_path(definition, &r_parts, 0, &mut dummy) {
+                      regions.insert(r_name.clone(), val);
+                 }
+             }
+             StateValue::Parallel(regions)
+        } else if !definition.initial.is_empty() {
              Self::resolve_initial_state(definition, &definition.initial, &mut dummy)
                 .ok_or_else(|| format!("Could not resolve initial state: {}", definition.initial))?
         } else {
@@ -265,18 +277,9 @@ impl RuntimeMachine {
                 let mut merged_map = new_map.clone();
                 for (key, new_sub_val) in new_map {
                     let sub_path = if current_path.is_empty() { key.clone() } else { format!("{}.{}", current_path, key) };
-                    
-                    // Check if targeted
-                    // 1. target_path starts with sub_path (Deep target inside this branch)
-                    // 2. sub_path starts with target_path (Direct match or ancestor?)
-                    //    If sub_path == target_path, we are targeting this branch directly. Use NEW.
-                    
                     let is_targeted = if target_path.len() >= sub_path.len() {
                          target_path.starts_with(&sub_path) && (target_path.len() == sub_path.len() || target_path.chars().nth(sub_path.len()) == Some('.'))
                     } else {
-                         // target_path < sub_path. e.g. target "on", sub "on.A".
-                         // This means the Parallel state itself was targeted (e.g. initial).
-                         // In this case, we use NEW (reset).
                          true
                     };
 
@@ -286,11 +289,25 @@ impl RuntimeMachine {
                             merged_map.insert(key.clone(), merged_sub);
                         }
                     } else {
-                        // Not targeted. Preserve OLD if exists.
                         if let Some(old_sub_val) = old_map.get(key) {
                             merged_map.insert(key.clone(), old_sub_val.clone());
                         }
                     }
+                }
+                StateValue::Parallel(merged_map)
+            },
+            (StateValue::Parallel(old_map), StateValue::Compound(new_key, _)) => {
+                let mut merged_map = old_map.clone();
+                if let Some(old_sub_val) = old_map.get(new_key) {
+                     let sub_path = if current_path.is_empty() { new_key.clone() } else { format!("{}.{}", current_path, new_key) };
+                     merged_map.insert(new_key.clone(), Self::merge_state_value(old_sub_val, new, current_path, target_path));
+                }
+                StateValue::Parallel(merged_map)
+            },
+            (StateValue::Parallel(old_map), StateValue::Atomic(new_key)) => {
+                let mut merged_map = old_map.clone();
+                if old_map.contains_key(new_key) {
+                     merged_map.insert(new_key.clone(), new.clone());
                 }
                 StateValue::Parallel(merged_map)
             },
@@ -604,18 +621,46 @@ impl RuntimeMachine {
                             let current_leaves = self.current_state.get_active_paths();
                             let next_leaves = finalized_state.get_active_paths();
                             
+                            let current_parts: Vec<&str> = current_path.split('.').filter(|s| !s.is_empty()).collect();
+                            let mut global_max_lca_limit = current_parts.len();
+                            if let Some(targets) = &t.target {
+                                let mut lowest_domain_depth = current_parts.len();
+                                for raw in targets {
+                                     let current_search_path = if current_path.is_empty() { "".to_string() } else { current_path.clone() };
+                                     let target_full = self.resolve_target(&current_search_path, raw).unwrap_or_else(|| raw.clone());
+                                     let target_parts: Vec<&str> = target_full.split('.').filter(|s| !s.is_empty()).collect();
+                                     let mut dom_lca = 0;
+                                     while dom_lca < current_parts.len() && dom_lca < target_parts.len() && current_parts[dom_lca] == target_parts[dom_lca] { dom_lca += 1; }
+                                     
+                                     let mut domain_depth = dom_lca;
+                                     if dom_lca == current_parts.len() && dom_lca == target_parts.len() {
+                                          if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
+                                     } else if dom_lca == target_parts.len() {
+                                          domain_depth = dom_lca.saturating_sub(1);
+                                     } else if dom_lca == current_parts.len() {
+                                          if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
+                                     }
+                                     if domain_depth < lowest_domain_depth { lowest_domain_depth = domain_depth; }
+                                }
+                                global_max_lca_limit = lowest_domain_depth;
+                            } else {
+                                if t.reenter { global_max_lca_limit = current_parts.len().saturating_sub(1); }
+                            }
+                            
                             let mut exited_paths = Vec::new();
-                            for leaf in &current_leaves {
-                                 let leaf_parts: Vec<&str> = leaf.split('.').collect();
+                            for leaf in current_leaves.iter().rev() {
+                                 let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
                                  let mut max_lca = 0;
                                  for next_leaf in &next_leaves {
-                                      let next_parts: Vec<&str> = next_leaf.split('.').collect();
+                                      let next_parts: Vec<&str> = next_leaf.split('.').filter(|s| !s.is_empty()).collect();
                                       let mut lca = 0;
                                       while lca < leaf_parts.len() && lca < next_parts.len() && leaf_parts[lca] == next_parts[lca] { lca += 1; }
-                                      if t.reenter {
-                                          let limit = if current_path.is_empty() { 0 } else { current_path.split('.').count().saturating_sub(1) };
-                                          if lca > limit { lca = limit; }
+                                      
+                                      let mut is_in_domain = true;
+                                      for (idx, p) in current_parts.iter().enumerate() {
+                                          if idx >= leaf_parts.len() || leaf_parts[idx] != *p { is_in_domain = false; break; }
                                       }
+                                      if is_in_domain && lca > global_max_lca_limit { lca = global_max_lca_limit; }
                                       if lca > max_lca { max_lca = lca; }
                                  }
                                  for i in ((max_lca + 1)..=leaf_parts.len()).rev() {
@@ -637,16 +682,18 @@ impl RuntimeMachine {
                             for action in &t.actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
                             let mut entered_paths = Vec::new();
                             for leaf in &next_leaves {
-                                 let leaf_parts: Vec<&str> = leaf.split('.').collect();
+                                 let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
                                  let mut max_lca = 0;
-                                 for curr_leaf in &current_leaves {
-                                      let curr_parts: Vec<&str> = curr_leaf.split('.').collect();
+                                 for curr_leaf in current_leaves.iter().rev() {
+                                      let curr_parts: Vec<&str> = curr_leaf.split('.').filter(|s| !s.is_empty()).collect();
                                       let mut lca = 0;
                                       while lca < leaf_parts.len() && lca < curr_parts.len() && leaf_parts[lca] == curr_parts[lca] { lca += 1; }
-                                      if t.reenter {
-                                          let limit = if current_path.is_empty() { 0 } else { current_path.split('.').count().saturating_sub(1) };
-                                          if lca > limit { lca = limit; }
+                                      
+                                      let mut is_in_domain = true;
+                                      for (idx, p) in current_parts.iter().enumerate() {
+                                          if idx >= leaf_parts.len() || leaf_parts[idx] != *p { is_in_domain = false; break; }
                                       }
+                                      if is_in_domain && lca > global_max_lca_limit { lca = global_max_lca_limit; }
                                       if lca > max_lca { max_lca = lca; }
                                  }
                                  for i in (max_lca + 1)..=leaf_parts.len() {
