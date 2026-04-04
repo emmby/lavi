@@ -15,6 +15,7 @@ pub struct fsm_value_t {
     _private: [u8; 0],
 }
 
+#[allow(non_camel_case_types)]
 pub type fsm_action_callback_t = Option<extern "C" fn(
     action_name: *const c_char,
     context: *const fsm_value_t,
@@ -30,6 +31,7 @@ pub struct RegisteredAction {
 pub struct MachineContext {
     machine: RuntimeMachine,
     callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
+    actions: IndexMap<alloc::string::String, portable_xstate_core::ActionFunction>,
 }
 
 #[no_mangle]
@@ -53,6 +55,7 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
     let ctx = Box::new(MachineContext {
         machine,
         callbacks: BTreeMap::new(),
+        actions: IndexMap::new(),
     });
     Box::into_raw(ctx)
 }
@@ -111,29 +114,9 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
     };
     
     let guards = IndexMap::new(); 
-    let mut actions = IndexMap::new(); 
-    
-    for (name, reg) in &ctx.callbacks {
-        let action_name_cstr = alloc::ffi::CString::new(name.clone()).unwrap();
-        let callback = reg.callback;
-        let user_data = reg.user_data;
-        
-        let action_fn: portable_xstate_core::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
-            if let Some(cb) = callback {
-                cb(
-                    action_name_cstr.as_ptr(),
-                    context as *const Value as *const fsm_value_t,
-                    event as *const Value as *const fsm_value_t,
-                    user_data
-                );
-            }
-        });
-        actions.insert(name.clone(), action_fn);
-    }
-    
     let payload = Value::Null;
 
-    ctx.machine.transition(event, &payload, &guards, &actions);
+    ctx.machine.transition(event, &payload, &guards, &ctx.actions);
     0
 }
 
@@ -166,14 +149,21 @@ pub extern "C" fn fsm_value_is_bool(val: *const fsm_value_t) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn fsm_value_get_string(val: *const fsm_value_t) -> *const c_char {
-    if val.is_null() { return core::ptr::null(); }
+pub extern "C" fn fsm_value_get_string(val: *const fsm_value_t, buf: *mut c_char, buf_len: usize) -> usize {
+    if val.is_null() { return 0; }
     let v = unsafe { &*(val as *const Value) };
     if let Some(s) = v.as_string() {
-        let c_str = alloc::ffi::CString::new(s.clone()).unwrap();
-        return c_str.into_raw() as *const c_char;
+        let len = s.len();
+        if !buf.is_null() && buf_len > 0 {
+            let bytes_to_copy = core::cmp::min(len, buf_len - 1);
+            unsafe {
+                core::ptr::copy_nonoverlapping(s.as_ptr(), buf as *mut u8, bytes_to_copy);
+                *buf.add(bytes_to_copy) = 0;
+            }
+        }
+        return len;
     }
-    core::ptr::null()
+    0
 }
 
 #[no_mangle]
@@ -224,10 +214,27 @@ pub extern "C" fn fsm_register_action(
         Err(_) => return -3,
     };
     
-    ctx.callbacks.insert(alloc::string::String::from(name), RegisteredAction {
+    let name_string = alloc::string::String::from(name);
+    
+    ctx.callbacks.insert(name_string.clone(), RegisteredAction {
         callback,
         user_data,
     });
+    
+    // Process the ActionFunction immediately
+    let action_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
+    let action_fn: portable_xstate_core::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
+        if let Some(cb) = callback {
+            cb(
+                action_name_cstr.as_ptr(),
+                context as *const Value as *const fsm_value_t,
+                event as *const Value as *const fsm_value_t,
+                user_data
+            );
+        }
+    });
+    
+    ctx.actions.insert(name_string, action_fn);
     
     0
 }

@@ -2,6 +2,7 @@
 #define PORTABLE_XSTATE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,7 +24,7 @@ bool fsm_value_is_number(const fsm_value_t* val);
 bool fsm_value_is_bool(const fsm_value_t* val);
 
 // Accessors
-const char* fsm_value_get_string(const fsm_value_t* val);
+size_t fsm_value_get_string(const fsm_value_t* val, char* buf, size_t buf_len);
 double fsm_value_get_number(const fsm_value_t* val);
 bool fsm_value_get_bool(const fsm_value_t* val);
 const fsm_value_t* fsm_value_get_property(const fsm_value_t* val, const char* key);

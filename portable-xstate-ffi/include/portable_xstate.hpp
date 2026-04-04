@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <functional>
 #include <map>
+#include <vector>
 
 namespace xstate {
 
@@ -16,9 +17,15 @@ public:
     
     bool getString(std::string& out) const {
         if (!ptr || !fsm_value_is_string(ptr)) return false;
-        const char* s = fsm_value_get_string(ptr);
-        if (s) {
-            out = s;
+        size_t req_len = fsm_value_get_string(ptr, nullptr, 0);
+        if (req_len == 0 && fsm_value_get_string(ptr, nullptr, 0) == 0) { // Check if truly empty
+            out = "";
+            return true;
+        }
+        std::vector<char> buf(req_len + 1);
+        size_t copied = fsm_value_get_string(ptr, buf.data(), buf.size());
+        if (copied > 0) {
+            out.assign(buf.data(), copied);
             return true;
         }
         return false;
