@@ -74,6 +74,18 @@ Or run them individually:
 - `npm run test:wasm` (WASM/XState)
 - `npm run test:e2e` (HTML Examples via Playwright)
 
+### Running tests via Devcontainer CLI
+
+If you are not using VS Code but still want an isolated, reproducible environment to run tests, you can use the `@devcontainers/cli`:
+
+```bash
+# Start the devcontainer
+npx -y @devcontainers/cli up --workspace-folder .
+
+# Run the test suite headlessly inside the container
+npx -y @devcontainers/cli exec --workspace-folder . npm run build
+npx -y @devcontainers/cli exec --workspace-folder . npm test
+```
 
 ## Usage in JavaScript
 
