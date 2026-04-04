@@ -49,7 +49,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['enter: __root__', 'enter: green']);
     });
 
-    it.skip('should return the entry actions of an initial state (deep)', () => {
+    it('should return the entry actions of an initial state (deep)', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -110,7 +110,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry and exit actions of a transition', () => {
+    it('should return the entry and exit actions of a transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -133,7 +133,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: yellow']);
     });
 
-    it.skip('should return the entry and exit actions of a deep transition', () => {
+    it('should return the entry and exit actions of a deep transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -165,7 +165,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry and exit actions of a nested transition', () => {
+    it('should return the entry and exit actions of a nested transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -193,7 +193,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green.walk', 'enter: green.wait']);
     });
 
-    it.skip('should not have actions for unhandled events (shallow)', () => {
+    it('should not have actions for unhandled events (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -210,7 +210,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should not have actions for unhandled events (deep)', () => {
+    it('should not have actions for unhandled events (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -235,7 +235,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should exit and enter the state for reentering self-transitions (shallow)', () => {
+    it('should exit and enter the state for reentering self-transitions (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -260,7 +260,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: green']);
     });
 
-    it.skip('should exit and enter the state for reentering self-transitions (deep)', () => {
+    it('should exit and enter the state for reentering self-transitions (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -361,7 +361,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return nested actions in the correct (child to parent) order', () => {
+    it('should return nested actions in the correct (child to parent) order', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -396,7 +396,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should ignore parent state actions for same-parent substates', () => {
+    it('should ignore parent state actions for same-parent substates', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -555,7 +555,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip("shouldn't use a referenced custom action over a builtin one when there is a naming conflict", () => {
+    it("shouldn't use a referenced custom action over a builtin one when there is a naming conflict", () => {
       const spy = vi.fn();
       const machine = createMachine(
         {
@@ -582,7 +582,7 @@ describe('entry/exit actions', () => {
       expect(actor.getSnapshot().context.assigned).toBe(true);
     });
 
-    it.skip("shouldn't use a referenced custom action over an inline one when there is a naming conflict", () => {
+    it("shouldn't use a referenced custom action over an inline one when there is a naming conflict", () => {
       const spy = vi.fn();
       let called = false;
 
@@ -646,7 +646,7 @@ describe('entry/exit actions', () => {
     });
 
     describe('should ignore same-parent state actions (sparse)', () => {
-      it.skip('with a relative transition', () => {
+      it('with a relative transition', () => {
         const machine = createMachine({
           initial: 'ping',
           states: {
@@ -674,7 +674,7 @@ describe('entry/exit actions', () => {
         expect(flushTracked()).toEqual(['exit: ping.foo', 'enter: ping.bar']);
       });
 
-      it.skip('with an absolute transition', () => {
+      it('with an absolute transition', () => {
         const machine = createMachine({
           id: 'root',
           initial: 'ping',
