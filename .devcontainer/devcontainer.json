@@ -10,12 +10,11 @@
     "CHROMEDRIVER": "/usr/bin/chromedriver"
   },
   "onCreateCommand": "sudo apt-get update && sudo apt-get -y install clang chromium chromium-driver",
-  "postCreateCommand": "rustup target add wasm32-unknown-unknown && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh && npm ci && npx playwright install --with-deps && npm run build",
+  "postCreateCommand": "rustup target add wasm32-unknown-unknown && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh && npm ci && npx playwright install chromium --with-deps && npm run build",
   "customizations": {
     "vscode": {
       "extensions": [
-        "rust-lang.rust-analyzer",
-        "dbaeumer.vscode-eslint"
+        "rust-lang.rust-analyzer"
       ]
     }
   }

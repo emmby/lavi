@@ -27,7 +27,7 @@ Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON 
 
 ### Building
 
-1.  Open the project in the Dev Container `devcontainer.json`.
+1.  Open the project in the Dev Container.
 2.  Build the Wasm module:
     ```bash
     wasm-pack build fsm-wasm --target web --out-name portable_xstate
