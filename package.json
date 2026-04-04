@@ -1,4 +1,5 @@
 {
+  "name": "portable-xstate",
   "scripts": {
     "build": "npm run build:npm && npm run build:web && npm run build:ffi",
     "build:web": "cd portable-xstate-wasm && wasm-pack build --target web --out-name portable_xstate",
