@@ -4,7 +4,6 @@
 #include "portable_xstate.h"
 #include <string>
 #include <stdexcept>
-#include <optional>
 #include <functional>
 #include <map>
 
@@ -15,18 +14,24 @@ class Value {
 public:
     explicit Value(const fsm_value_t* p) : ptr(p) {}
     
-    std::optional<std::string> getString() const {
-        if (!ptr || !fsm_value_is_string(ptr)) return std::nullopt;
+    bool getString(std::string& out) const {
+        if (!ptr || !fsm_value_is_string(ptr)) return false;
         const char* s = fsm_value_get_string(ptr);
-        return s ? std::optional<std::string>(s) : std::nullopt;
+        if (s) {
+            out = s;
+            return true;
+        }
+        return false;
     }
-    std::optional<double> getNumber() const {
-        if (!ptr || !fsm_value_is_number(ptr)) return std::nullopt;
-        return fsm_value_get_number(ptr);
+    bool getNumber(double& out) const {
+        if (!ptr || !fsm_value_is_number(ptr)) return false;
+        out = fsm_value_get_number(ptr);
+        return true;
     }
-    std::optional<bool> getBool() const {
-        if (!ptr || !fsm_value_is_bool(ptr)) return std::nullopt;
-        return fsm_value_get_bool(ptr);
+    bool getBool(bool& out) const {
+        if (!ptr || !fsm_value_is_bool(ptr)) return false;
+        out = fsm_value_get_bool(ptr);
+        return true;
     }
     
     bool isNull() const {

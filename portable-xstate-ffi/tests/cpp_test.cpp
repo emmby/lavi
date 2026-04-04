@@ -28,7 +28,8 @@ int main() {
             std::cout << "C++ Action called!" << std::endl;
             auto cycles = context.getProperty("cycles");
             assert(!cycles.isNull());
-            assert(cycles.getNumber().value_or(-1) == 0.0);
+            double cycles_val = -1;
+            assert(cycles.getNumber(cycles_val) && cycles_val == 0.0);
             
             auto missing = context.getProperty("missing_key");
             assert(missing.isNull());
