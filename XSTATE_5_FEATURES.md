@@ -4,7 +4,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 s
 
 Test links point to the `statelyai/xstate` reference implementation for verification.
 
-**Test Coverage**: 73 passing tests across `machine.test.ts`, `state.test.ts`, and `history.test.ts`
+**Test Coverage**: 109 passing tests across `machine.test.ts`, `state.test.ts`, `history.test.ts`, and `actions.test.ts`
 
 ## 1. Core Structure (Essential)
 High usage, required for almost every state machine.
@@ -147,3 +147,4 @@ Features for complex use-cases or debugging.
 - **machine.test.ts**: 20 tests covering machine definition, transitions, guards, actions, and combinatorial machines
 - **state.test.ts**: 20 tests covering state API, `.can()`, `.hasTag()`, status checks, and persistence
 - **history.test.ts**: 33 tests covering shallow/deep history, parallel history, and history revival
+- **actions.test.ts**: 36 tests covering transition actions, entry/exit actions, assign actions, and action overrides
