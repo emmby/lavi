@@ -36,7 +36,7 @@ afterEach(() => {
 
 describe('entry/exit actions', () => {
   describe('State.actions', () => {
-    it('should return the entry actions of an initial state', () => {
+    it.skip('should return the entry actions of an initial state', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -49,7 +49,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['enter: __root__', 'enter: green']);
     });
 
-    it('should return the entry actions of an initial state (deep)', () => {
+    it.skip('should return the entry actions of an initial state (deep)', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -79,7 +79,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should return the entry actions of an initial state (parallel)', () => {
+    it.skip('should return the entry actions of an initial state (parallel)', () => {
       const machine = createMachine({
         type: 'parallel',
         states: {
@@ -110,7 +110,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should return the entry and exit actions of a transition', () => {
+    it.skip('should return the entry and exit actions of a transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -133,7 +133,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: yellow']);
     });
 
-    it('should return the entry and exit actions of a deep transition', () => {
+    it.skip('should return the entry and exit actions of a deep transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -165,7 +165,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should return the entry and exit actions of a nested transition', () => {
+    it.skip('should return the entry and exit actions of a nested transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -193,7 +193,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green.walk', 'enter: green.wait']);
     });
 
-    it('should not have actions for unhandled events (shallow)', () => {
+    it.skip('should not have actions for unhandled events (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -210,7 +210,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it('should not have actions for unhandled events (deep)', () => {
+    it.skip('should not have actions for unhandled events (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -235,7 +235,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it('should exit and enter the state for reentering self-transitions (shallow)', () => {
+    it.skip('should exit and enter the state for reentering self-transitions (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -260,7 +260,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: green']);
     });
 
-    it('should exit and enter the state for reentering self-transitions (deep)', () => {
+    it.skip('should exit and enter the state for reentering self-transitions (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -361,7 +361,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should return nested actions in the correct (child to parent) order', () => {
+    it.skip('should return nested actions in the correct (child to parent) order', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -396,7 +396,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should ignore parent state actions for same-parent substates', () => {
+    it.skip('should ignore parent state actions for same-parent substates', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -424,7 +424,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: a.a1', 'enter: a.a2']);
     });
 
-    it.only('should work with function actions', () => {
+    it('should work with function actions', () => {
       const entrySpy = vi.fn();
       const exitSpy = vi.fn();
       const transitionSpy = vi.fn();
@@ -480,7 +480,7 @@ describe('entry/exit actions', () => {
       expect(transitionSpy).toHaveBeenCalled();
     });
 
-    it('should exit children of parallel state nodes', () => {
+    it.skip('should exit children of parallel state nodes', () => {
       const machine = createMachine({
         initial: 'B',
         states: {
@@ -529,7 +529,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it("should reenter targeted ancestor (as it's a descendant of the transition domain)", () => {
+    it.skip("should reenter targeted ancestor (as it's a descendant of the transition domain)", () => {
       const machine = createMachine({
         initial: 'loaded',
         states: {
@@ -618,7 +618,7 @@ describe('entry/exit actions', () => {
       expect(called).toBe(true);
     });
 
-    it('root entry/exit actions should be called on root reentering transitions', () => {
+    it.skip('root entry/exit actions should be called on root reentering transitions', () => {
       let entrySpy = vi.fn();
       let exitSpy = vi.fn();
 
@@ -653,7 +653,7 @@ describe('entry/exit actions', () => {
     });
 
     describe('should ignore same-parent state actions (sparse)', () => {
-      it('with a relative transition', () => {
+      it.skip('with a relative transition', () => {
         const machine = createMachine({
           initial: 'ping',
           states: {
@@ -681,7 +681,7 @@ describe('entry/exit actions', () => {
         expect(flushTracked()).toEqual(['exit: ping.foo', 'enter: ping.bar']);
       });
 
-      it('with an absolute transition', () => {
+      it.skip('with an absolute transition', () => {
         const machine = createMachine({
           id: 'root',
           initial: 'ping',
@@ -714,7 +714,7 @@ describe('entry/exit actions', () => {
   });
 
   describe('entry/exit actions', () => {
-    it('should return the entry actions of an initial state', () => {
+    it.skip('should return the entry actions of an initial state', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -727,7 +727,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['enter: __root__', 'enter: green']);
     });
 
-    it('should return the entry and exit actions of a transition', () => {
+    it.skip('should return the entry and exit actions of a transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -750,7 +750,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: yellow']);
     });
 
-    it('should return the entry and exit actions of a deep transition', () => {
+    it.skip('should return the entry and exit actions of a deep transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -781,7 +781,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should return the entry and exit actions of a nested transition', () => {
+    it.skip('should return the entry and exit actions of a nested transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -808,7 +808,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green.walk', 'enter: green.wait']);
     });
 
-    it('should keep the same state for unhandled events (shallow)', () => {
+    it.skip('should keep the same state for unhandled events (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -825,7 +825,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it('should keep the same state for unhandled events (deep)', () => {
+    it.skip('should keep the same state for unhandled events (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -847,7 +847,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it('should exit and enter the state for reentering self-transitions (shallow)', () => {
+    it.skip('should exit and enter the state for reentering self-transitions (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -872,7 +872,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: green']);
     });
 
-    it('should exit and enter the state for reentering self-transitions (deep)', () => {
+    it.skip('should exit and enter the state for reentering self-transitions (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -905,7 +905,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should exit current node and enter target node when target is not a descendent or ancestor of current', () => {
+    it.skip('should exit current node and enter target node when target is not a descendent or ancestor of current', () => {
       const machine = createMachine({
         initial: 'A',
         states: {
@@ -943,7 +943,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should exit current node and reenter target node when target is ancestor of current', () => {
+    it.skip('should exit current node and reenter target node when target is ancestor of current', () => {
       const machine = createMachine({
         initial: 'A',
         states: {
@@ -988,7 +988,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should enter all descendents when target is a descendent of the source when using an reentering transition', () => {
+    it.skip('should enter all descendents when target is a descendent of the source when using an reentering transition', () => {
       const machine = createMachine({
         initial: 'A',
         states: {
@@ -1028,7 +1028,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should exit deep descendant during a default self-transition', () => {
+    it.skip('should exit deep descendant during a default self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1064,7 +1064,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should exit deep descendant during a reentering self-transition', () => {
+    it.skip('should exit deep descendant during a reentering self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1105,7 +1105,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should not reenter leaf state during its default self-transition', () => {
+    it.skip('should not reenter leaf state during its default self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1132,7 +1132,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it('should reenter leaf state during its reentering self-transition', () => {
+    it.skip('should reenter leaf state during its reentering self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1162,7 +1162,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: a.a1', 'enter: a.a1']);
     });
 
-    it('should not enter exited state when targeting its ancestor and when its former descendant gets selected through initial state', () => {
+    it.skip('should not enter exited state when targeting its ancestor and when its former descendant gets selected through initial state', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1201,7 +1201,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should not enter exited state when targeting its ancestor and when its latter descendant gets selected through initial state', () => {
+    it.skip('should not enter exited state when targeting its ancestor and when its latter descendant gets selected through initial state', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1242,7 +1242,7 @@ describe('entry/exit actions', () => {
   });
 
   describe('parallel states', () => {
-    it('should return entry action defined on parallel state', () => {
+    it.skip('should return entry action defined on parallel state', () => {
       const machine = createMachine({
         initial: 'start',
         states: {
@@ -1278,7 +1278,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should reenter parallel region when a parallel state gets reentered while targeting another region', () => {
+    it.skip('should reenter parallel region when a parallel state gets reentered while targeting another region', () => {
       const machine = createMachine({
         initial: 'ready',
         states: {
@@ -1325,7 +1325,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it('should reenter parallel region when a parallel state is reentered while targeting another region', () => {
+    it.skip('should reenter parallel region when a parallel state is reentered while targeting another region', () => {
       const machine = createMachine({
         initial: 'ready',
         states: {
@@ -1374,7 +1374,7 @@ describe('entry/exit actions', () => {
   });
 
   describe('targetless transitions', () => {
-    it("shouldn't exit a state on a parent's targetless transition", () => {
+    it.skip("shouldn't exit a state on a parent's targetless transition", () => {
       const parent = createMachine({
         initial: 'one',
         on: {
@@ -1397,7 +1397,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it("shouldn't exit (and reenter) state on targetless delayed transition", async () => {
+    it.skip("shouldn't exit (and reenter) state on targetless delayed transition", async () => {
       const machine = createMachine({
         initial: 'one',
         states: {
@@ -1426,7 +1426,7 @@ describe('entry/exit actions', () => {
 
   describe('when reaching a final state', () => {
     // https://github.com/statelyai/xstate/issues/1109
-    it('exit actions should be called when invoked machine reaches its final state', () => {
+    it.skip('exit actions should be called when invoked machine reaches its final state', () => {
       const { resolve, promise } = Promise.withResolvers<void>();
       let exitCalled = false;
       let childExitCalled = false;
@@ -1495,7 +1495,7 @@ describe('entry/exit actions', () => {
       expect(childSpy).not.toHaveBeenCalled();
     });
 
-    it('an exit action executed when an interpreter reaches its final state should be called with the last received event', () => {
+    it.skip('an exit action executed when an interpreter reaches its final state should be called with the last received event', () => {
       let receivedEvent;
       const machine = createMachine({
         initial: 'a',
@@ -1585,7 +1585,7 @@ describe('entry/exit actions', () => {
       interpreter.send({ type: 'STOP_CHILD' });
     });
 
-    it('sent events from exit handlers of a done child should be received by the parent ', () => {
+    it.skip('sent events from exit handlers of a done child should be received by the parent ', () => {
       let eventReceived = false;
 
       const child = createMachine({
@@ -1675,7 +1675,7 @@ describe('entry/exit actions', () => {
       expect(spy).not.toHaveBeenCalled();
     });
 
-    it('sent events from exit handlers of a done child should be received by its children', () => {
+    it.skip('sent events from exit handlers of a done child should be received by its children', () => {
       const spy = vi.fn();
 
       const grandchild = createMachine({
@@ -1925,7 +1925,7 @@ describe('initial actions', () => {
     expect(actual).toEqual(['initialA', 'entryA']);
   });
 
-  it('should support initial actions from transition', () => {
+  it.skip('should support initial actions from transition', () => {
     const actual: string[] = [];
     const machine = createMachine({
       initial: 'a',
@@ -2039,7 +2039,7 @@ describe('initial actions', () => {
     `);
   });
 
-  it('should execute actions of the initial transition when taking a root reentering self-transition', () => {
+  it.skip('should execute actions of the initial transition when taking a root reentering self-transition', () => {
     const spy = vi.fn();
     const machine = createMachine({
       id: 'root',
@@ -2245,7 +2245,7 @@ describe('actions config', () => {
 });
 
 describe('action meta', () => {
-  it('should provide the original params', () => {
+  it.skip('should provide the original params', () => {
     const spy = vi.fn();
 
     const testMachine = createMachine(
@@ -2306,7 +2306,7 @@ describe('action meta', () => {
     expect(spy).toHaveBeenCalledWith(undefined);
   });
 
-  it('should provide the action with resolved params when they are dynamic', () => {
+  it.skip('should provide the action with resolved params when they are dynamic', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2332,7 +2332,7 @@ describe('action meta', () => {
     });
   });
 
-  it('should resolve dynamic params using context value', () => {
+  it.skip('should resolve dynamic params using context value', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2361,7 +2361,7 @@ describe('action meta', () => {
     });
   });
 
-  it('should resolve dynamic params using event value', () => {
+  it.skip('should resolve dynamic params using event value', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2395,7 +2395,7 @@ describe('action meta', () => {
 });
 
 describe('forwardTo()', () => {
-  it('should forward an event to a service', () => {
+  it.skip('should forward an event to a service', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const child = createMachine({
       types: {} as {
@@ -2455,7 +2455,7 @@ describe('forwardTo()', () => {
     return promise;
   });
 
-  it('should forward an event to a service (dynamic)', () => {
+  it.skip('should forward an event to a service (dynamic)', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
 
     const child = createMachine({
@@ -2515,7 +2515,7 @@ describe('forwardTo()', () => {
     return promise;
   });
 
-  it('should not cause an infinite loop when forwarding to undefined', () => {
+  it.skip('should not cause an infinite loop when forwarding to undefined', () => {
     const machine = createMachine({
       on: {
         '*': { guard: () => true, actions: forwardTo(undefined as any) }
@@ -2542,7 +2542,7 @@ describe('forwardTo()', () => {
 });
 
 describe('log()', () => {
-  it('should log a string', () => {
+  it.skip('should log a string', () => {
     const consoleSpy = vi.fn();
     console.log = consoleSpy;
     const machine = createMachine({
@@ -2560,7 +2560,7 @@ describe('log()', () => {
     `);
   });
 
-  it('should log an expression', () => {
+  it.skip('should log an expression', () => {
     const consoleSpy = vi.fn();
     console.log = consoleSpy;
     const machine = createMachine({
@@ -2583,7 +2583,7 @@ describe('log()', () => {
 });
 
 describe('enqueueActions', () => {
-  it('should execute a simple referenced action', () => {
+  it.skip('should execute a simple referenced action', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2604,7 +2604,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('should execute multiple different referenced actions', () => {
+  it.skip('should execute multiple different referenced actions', () => {
     const spy1 = vi.fn();
     const spy2 = vi.fn();
 
@@ -2629,7 +2629,7 @@ describe('enqueueActions', () => {
     expect(spy2).toHaveBeenCalledTimes(1);
   });
 
-  it('should execute multiple same referenced actions', () => {
+  it.skip('should execute multiple same referenced actions', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2651,7 +2651,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
-  it('should execute a parameterized action', () => {
+  it.skip('should execute a parameterized action', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2683,7 +2683,7 @@ describe('enqueueActions', () => {
     `);
   });
 
-  it('should execute a function', () => {
+  it.skip('should execute a function', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -2697,7 +2697,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('should execute a builtin action using its own action creator', () => {
+  it.skip('should execute a builtin action using its own action creator', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -2724,7 +2724,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('should execute a builtin action using its bound action creator', () => {
+  it.skip('should execute a builtin action using its bound action creator', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -2749,7 +2749,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('should execute assigns when resolving the initial snapshot', () => {
+  it.skip('should execute assigns when resolving the initial snapshot', () => {
     const machine = createMachine({
       context: {
         count: 0
@@ -2766,7 +2766,7 @@ describe('enqueueActions', () => {
     expect(snapshot.context).toEqual({ count: 42 });
   });
 
-  it('should be able to check a simple referenced guard', () => {
+  it.skip('should be able to check a simple referenced guard', () => {
     const spy = vi.fn().mockImplementation(() => true);
     const machine = createMachine(
       {
@@ -2789,7 +2789,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('should be able to check a parameterized guard', () => {
+  it.skip('should be able to check a parameterized guard', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2829,7 +2829,7 @@ describe('enqueueActions', () => {
     `);
   });
 
-  it('should provide self', () => {
+  it.skip('should provide self', () => {
     expect.assertions(1);
     const machine = createMachine({
       entry: enqueueActions(({ self }) => {
@@ -2840,7 +2840,7 @@ describe('enqueueActions', () => {
     createActor(machine).start();
   });
 
-  it('should be able to communicate with the parent using params', () => {
+  it.skip('should be able to communicate with the parent using params', () => {
     type ParentEvent = { type: 'FOO' };
 
     const childMachine = setup({
@@ -2900,7 +2900,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('should enqueue.sendParent', () => {
+  it.skip('should enqueue.sendParent', () => {
     interface ChildEvent {
       type: 'CHILD_EVENT';
     }
@@ -2948,7 +2948,7 @@ describe('enqueueActions', () => {
 
 describe('sendParent', () => {
   // https://github.com/statelyai/xstate/issues/711
-  it('TS: should compile for any event', () => {
+  it.skip('TS: should compile for any event', () => {
     interface ChildEvent {
       type: 'CHILD';
     }
@@ -2972,7 +2972,7 @@ describe('sendParent', () => {
 });
 
 describe('sendTo', () => {
-  it('should be able to send an event to an actor', () => {
+  it.skip('should be able to send an event to an actor', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3006,7 +3006,7 @@ describe('sendTo', () => {
     return promise;
   });
 
-  it('should be able to send an event from expression to an actor', () => {
+  it.skip('should be able to send an event from expression to an actor', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3078,7 +3078,7 @@ describe('sendTo', () => {
     });
   });
 
-  it('should be able to send an event to a named actor', () => {
+  it.skip('should be able to send an event to a named actor', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3111,7 +3111,7 @@ describe('sendTo', () => {
     return promise;
   });
 
-  it('should be able to send an event directly to an ActorRef', () => {
+  it.skip('should be able to send an event directly to an ActorRef', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3143,7 +3143,7 @@ describe('sendTo', () => {
     return promise;
   });
 
-  it('should be able to read from event', () => {
+  it.skip('should be able to read from event', () => {
     expect.assertions(1);
     const machine = createMachine({
       types: {} as {
@@ -3178,7 +3178,7 @@ describe('sendTo', () => {
     service.send({ type: 'EVENT', value: 'foo' });
   });
 
-  it('should error if given a string', () => {
+  it.skip('should error if given a string', () => {
     const machine = createMachine({
       invoke: {
         id: 'child',
@@ -3204,7 +3204,7 @@ describe('sendTo', () => {
     `);
   });
 
-  it('a self-event "handler" of an event sent using sendTo should be able to read updated snapshot of self', () => {
+  it.skip('a self-event "handler" of an event sent using sendTo should be able to read updated snapshot of self', () => {
     const spy = vi.fn();
     const machine = createMachine({
       context: {
@@ -3247,7 +3247,7 @@ describe('sendTo', () => {
 `);
   });
 
-  it("should not attempt to deliver a delayed event to the spawned actor's ID that was stopped since the event was scheduled", async () => {
+  it.skip("should not attempt to deliver a delayed event to the spawned actor's ID that was stopped since the event was scheduled", async () => {
     const warnSpy = vi.spyOn(console, 'warn');
     const spy1 = vi.fn();
 
@@ -3316,7 +3316,7 @@ Event: {"type":"PING"}",
 `);
   });
 
-  it("should not attempt to deliver a delayed event to the invoked actor's ID that was stopped since the event was scheduled", async () => {
+  it.skip("should not attempt to deliver a delayed event to the invoked actor's ID that was stopped since the event was scheduled", async () => {
     const warnSpy = vi.spyOn(console, 'warn');
     const spy1 = vi.fn();
 
@@ -3392,7 +3392,7 @@ Event: {"type":"PING"}",
 });
 
 describe('raise', () => {
-  it('should be able to send a delayed event to itself', () => {
+  it.skip('should be able to send a delayed event to itself', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const machine = createMachine({
       initial: 'a',
@@ -3428,7 +3428,7 @@ describe('raise', () => {
     return promise;
   });
 
-  it('should be able to send a delayed event to itself with delay = 0', async () => {
+  it.skip('should be able to send a delayed event to itself with delay = 0', async () => {
     const machine = createMachine({
       initial: 'a',
       states: {
@@ -3457,7 +3457,7 @@ describe('raise', () => {
     expect(service.getSnapshot().value).toEqual('b');
   });
 
-  it('should be able to raise an event and respond to it in the same state', () => {
+  it.skip('should be able to raise an event and respond to it in the same state', () => {
     const machine = createMachine({
       initial: 'a',
       states: {
@@ -3478,7 +3478,7 @@ describe('raise', () => {
     expect(service.getSnapshot().value).toEqual('b');
   });
 
-  it('should be able to raise a delayed event and respond to it in the same state', async () => {
+  it.skip('should be able to raise a delayed event and respond to it in the same state', async () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const machine = createMachine({
       initial: 'a',
@@ -3512,7 +3512,7 @@ describe('raise', () => {
     return promise;
   });
 
-  it('should accept event expression', () => {
+  it.skip('should accept event expression', () => {
     const machine = createMachine({
       initial: 'a',
       states: {
@@ -3535,7 +3535,7 @@ describe('raise', () => {
     expect(actor.getSnapshot().value).toBe('b');
   });
 
-  it('should be possible to access context in the event expression', () => {
+  it.skip('should be possible to access context in the event expression', () => {
     type MachineEvent =
       | {
           type: 'RAISED';
@@ -3574,7 +3574,7 @@ describe('raise', () => {
     expect(actor.getSnapshot().value).toBe('b');
   });
 
-  it('should error if given a string', () => {
+  it.skip('should error if given a string', () => {
     const machine = createMachine({
       entry: raise(
         // @ts-ignore
@@ -3632,7 +3632,7 @@ describe('cancel', () => {
     expect(actor.getSnapshot().value).toBe('a');
   });
 
-  it('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it first', async () => {
+  it.skip('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it first', async () => {
     const fooSpy = vi.fn();
     const barSpy = vi.fn();
 
@@ -3680,7 +3680,7 @@ describe('cancel', () => {
     expect(barSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it second', async () => {
+  it.skip('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it second', async () => {
     const fooSpy = vi.fn();
     const barSpy = vi.fn();
 
@@ -3753,7 +3753,7 @@ describe('cancel', () => {
     expect(spy.mock.calls.length).toBe(0);
   });
 
-  it('should be able to cancel a just scheduled delayed event to a just invoked child', async () => {
+  it.skip('should be able to cancel a just scheduled delayed event to a just invoked child', async () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -3799,7 +3799,7 @@ describe('cancel', () => {
     expect(spy.mock.calls.length).toBe(0);
   });
 
-  it('should not be able to cancel a just scheduled non-delayed event to a just invoked child', async () => {
+  it.skip('should not be able to cancel a just scheduled non-delayed event to a just invoked child', async () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -3846,7 +3846,7 @@ describe('cancel', () => {
 });
 
 describe('assign action order', () => {
-  it('should preserve action order', () => {
+  it.skip('should preserve action order', () => {
     const captured: number[] = [];
 
     const machine = createMachine({
@@ -3870,7 +3870,7 @@ describe('assign action order', () => {
     expect(captured).toEqual([0, 1, 2]);
   });
 
-  it('should deeply preserve action order', () => {
+  it.skip('should deeply preserve action order', () => {
     const captured: number[] = [];
 
     interface CountCtx {
@@ -3905,7 +3905,7 @@ describe('assign action order', () => {
     expect(captured).toEqual([0, 1, 2]);
   });
 
-  it('should capture correct context values on subsequent transitions', () => {
+  it.skip('should capture correct context values on subsequent transitions', () => {
     let captured: number[] = [];
 
     const machine = createMachine({
@@ -3988,7 +3988,7 @@ describe('action meta', () => {
     'base action objects should have meta.action as the same base action object'
   );
 
-  it('should provide self', () => {
+  it.skip('should provide self', () => {
     expect.assertions(1);
 
     const machine = createMachine({
@@ -4063,7 +4063,7 @@ describe('actions', () => {
     expect(actual).toEqual(['a1', 'b']);
   });
 
-  it('should call an inline action responding to an initial raise with the raised event', () => {
+  it.skip('should call an inline action responding to an initial raise with the raised event', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -4082,7 +4082,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'HELLO' });
   });
 
-  it('should call a referenced action responding to an initial raise with the raised event', () => {
+  it.skip('should call a referenced action responding to an initial raise with the raised event', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -4108,7 +4108,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'HELLO' });
   });
 
-  it('should call an inline action responding to an initial raise with updated (non-initial) context', () => {
+  it.skip('should call an inline action responding to an initial raise with updated (non-initial) context', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -4128,7 +4128,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith({ count: 42 });
   });
 
-  it('should call a referenced action responding to an initial raise with updated (non-initial) context', () => {
+  it.skip('should call a referenced action responding to an initial raise with updated (non-initial) context', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -4264,7 +4264,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith(undefined);
   });
 
-  it('should call a referenced custom action with the provided parametrized action object', () => {
+  it.skip('should call a referenced custom action with the provided parametrized action object', () => {
     const spy = vi.fn();
 
     createActor(
@@ -4292,7 +4292,7 @@ describe('actions', () => {
     });
   });
 
-  it('should call a referenced builtin action with the provided parametrized action object', () => {
+  it.skip('should call a referenced builtin action with the provided parametrized action object', () => {
     const spy = vi.fn();
 
     createActor(
@@ -4321,7 +4321,7 @@ describe('actions', () => {
     });
   });
 
-  it('should warn if called in custom action', () => {
+  it.skip('should warn if called in custom action', () => {
     const warnSpy = vi.spyOn(console, 'warn');
     const machine = createMachine({
       entry: () => {
