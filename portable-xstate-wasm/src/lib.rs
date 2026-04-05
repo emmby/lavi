@@ -1868,8 +1868,8 @@ fn process_config(
         for i in 0..arr.length() {
             let item = arr.get(i);
             if item.is_function() {
-                 let random_id = js_sys::Math::random().to_string();
-                 let id = format!("auto_action_{}", random_id);
+                 *counter += 1;
+                 let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
                  let func: js_sys::Function = item.dyn_into().unwrap();
                  let id_clone = id.clone();
                  let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
@@ -1912,8 +1912,8 @@ fn process_config(
                              if k_val.is_function() { has_funcs = true; break; }
                          }
                          if has_funcs {
-                             let random_id = js_sys::Math::random().to_string();
-                             let id = format!("auto_action_3_{}", random_id);
+                             *counter += 1;
+                             let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
                              let assignment_clone = assign_obj.clone();
                              let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                                   evaluate_assignment(&assignment_clone, ctx_mut, evt);
@@ -1973,8 +1973,8 @@ fn process_config(
                     
                     if type_val == JsValue::from_str("xstate.assign") {
                          // It's a function-object from assign()
-                         let random_id = js_sys::Math::random().to_string();
-                         let id = format!("auto_action_inline_{}", random_id);
+                         *counter += 1;
+                         let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
                          let assign_key = JsValue::from_str("assignment");
                          let mut assignment = js_sys::Reflect::get(&value, &assign_key).unwrap_or(JsValue::UNDEFINED);
@@ -1995,8 +1995,8 @@ fn process_config(
                          continue;
                     } else if key_str != "guard" && key_str != "cond" {
                          // It's a plain function used as an action (not a guard)
-                         let random_id = js_sys::Math::random().to_string();
-                         let id = format!("auto_action_4_{}", random_id);
+                         *counter += 1;
+                         let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
                          let id_clone = id.clone();
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
                          let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
@@ -2042,8 +2042,8 @@ fn process_config(
                              if k_val.is_function() { has_funcs = true; break; }
                          }
                          if has_funcs {
-                             let random_id = js_sys::Math::random().to_string();
-                             let id = format!("auto_action_5_{}", random_id);
+                             *counter += 1;
+                             let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
                              let assignment_clone = assign_obj.clone();
                              let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                                   evaluate_assignment(&assignment_clone, ctx_mut, evt);

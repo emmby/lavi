@@ -516,6 +516,20 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
+        self.transition_internal(event_type, event_payload, guards, actions, 0)
+    }
+
+    fn transition_internal(
+        &mut self,
+        event_type: &str,
+        event_payload: &Value,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+        depth: usize,
+    ) -> Option<StateValue> {
+        if depth > 100 {
+            panic!("Maximum transition depth exceeded!");
+        }
         let active_leaves = self.current_state.get_active_paths();
         
         let mut all_search_paths = Vec::new();
@@ -788,7 +802,7 @@ impl RuntimeMachine {
 
         let has_transition_or_actions = !selected_transitions.is_empty();
         if !event_type.is_empty() || _changed {
-             if let Some(next) = self.transition("", event_payload, guards, actions) {
+             if let Some(next) = self.transition_internal("", event_payload, guards, actions, depth + 1) {
                  return Some(next);
              }
         }
