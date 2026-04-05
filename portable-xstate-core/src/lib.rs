@@ -277,9 +277,16 @@ impl RuntimeMachine {
                 let mut merged_map = new_map.clone();
                 for (key, new_sub_val) in new_map {
                     let sub_path = if current_path.is_empty() { key.clone() } else { format!("{}.{}", current_path, key) };
+                    
+                    // Check if targeted
+                    // 1. target_path starts with sub_path (Deep target inside this branch)
+                    // 2. sub_path starts with target_path (Direct match or ancestor?)
+                    //    If sub_path == target_path, we are targeting this branch directly. Use NEW.
+                    
                     let is_targeted = if target_path.len() >= sub_path.len() {
                          target_path.starts_with(&sub_path) && (target_path.len() == sub_path.len() || target_path.chars().nth(sub_path.len()) == Some('.'))
                     } else {
+                         // target_path < sub_path. e.g. target "on", sub "on.A".
                          true
                     };
 
@@ -289,6 +296,7 @@ impl RuntimeMachine {
                             merged_map.insert(key.clone(), merged_sub);
                         }
                     } else {
+                        // Not targeted. Preserve OLD if exists.
                         if let Some(old_sub_val) = old_map.get(key) {
                             merged_map.insert(key.clone(), old_sub_val.clone());
                         }

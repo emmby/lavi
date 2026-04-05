@@ -1873,7 +1873,6 @@ fn process_config(
                  let func: js_sys::Function = item.dyn_into().unwrap();
                  let id_clone = id.clone();
                  let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                      web_sys::console::error_1(&JsValue::from_str(&format!("EXECUTING NATIVE ARRAY ACTION {}", id_clone)));
                       let res = execute_js_action(&func, ctx_mut, evt, _params); 
                       if res.is_object() { 
                            let type_key = JsValue::from_str("type");
@@ -2001,7 +2000,6 @@ fn process_config(
                          let id_clone = id.clone();
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
                          let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                              web_sys::console::error_1(&JsValue::from_str(&format!("EXECUTING NATIVE INLINE ACTION {}", id_clone)));
                               let res = execute_js_action(&func, ctx_mut, evt, _params);
                               if res.is_object() {
                                    let t_key = JsValue::from_str("type");
