@@ -308,6 +308,11 @@ impl StateNode {
 
         map_state_map(&self.machine.definition.states, &config_states, machine_id)
     }
+
+    #[wasm_bindgen(js_name = mergeActions)]
+    pub fn merge_actions(&mut self, other: &StateNode) {
+        self.actions.extend(other.actions.clone());
+    }
     #[wasm_bindgen(js_name = registerAction)]
     pub fn register_action(&mut self, name: String, callback: js_sys::Function) {
         self.actions.insert(name, Rc::new(move |_ctx, _evt, _params| {
@@ -1856,21 +1861,19 @@ fn process_config(
 ) {
     if depth > 100 { return; }
 
-    // Instrument this object if it's a state (has a path)
-    if !path.is_empty() && val.is_object() && !val.is_null() && !js_sys::Array::is_array(val) && !val.is_function() {
-        let obj = js_sys::Object::from(val.clone());
-        inject_tracking_action(&obj, "entry", &format!("enter: {}", path));
-        inject_tracking_action(&obj, "exit", &format!("exit: {}", path));
-    }
+    // Removed inject_tracking_action
 
     if js_sys::Array::is_array(val) {
         let arr: &js_sys::Array = val.unchecked_ref();
         for i in 0..arr.length() {
             let item = arr.get(i);
             if item.is_function() {
-                 let id = format!("auto_action_{}", actions.len());
+                 let random_id = js_sys::Math::random().to_string();
+                 let id = format!("auto_action_{}", random_id);
                  let func: js_sys::Function = item.dyn_into().unwrap();
+                 let id_clone = id.clone();
                  let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                      web_sys::console::error_1(&JsValue::from_str(&format!("EXECUTING NATIVE ARRAY ACTION {}", id_clone)));
                       let res = execute_js_action(&func, ctx_mut, evt, _params); 
                       if res.is_object() { 
                            let type_key = JsValue::from_str("type");
@@ -1910,7 +1913,8 @@ fn process_config(
                              if k_val.is_function() { has_funcs = true; break; }
                          }
                          if has_funcs {
-                             let id = format!("auto_action_{}", actions.len());
+                             let random_id = js_sys::Math::random().to_string();
+                             let id = format!("auto_action_3_{}", random_id);
                              let assignment_clone = assign_obj.clone();
                              let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                                   evaluate_assignment(&assignment_clone, ctx_mut, evt);
@@ -1970,7 +1974,8 @@ fn process_config(
                     
                     if type_val == JsValue::from_str("xstate.assign") {
                          // It's a function-object from assign()
-                         let id = format!("auto_action_{}", actions.len());
+                         let random_id = js_sys::Math::random().to_string();
+                         let id = format!("auto_action_inline_{}", random_id);
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
                          let assign_key = JsValue::from_str("assignment");
                          let mut assignment = js_sys::Reflect::get(&value, &assign_key).unwrap_or(JsValue::UNDEFINED);
@@ -1991,9 +1996,12 @@ fn process_config(
                          continue;
                     } else if key_str != "guard" && key_str != "cond" {
                          // It's a plain function used as an action (not a guard)
-                         let id = format!("auto_action_{}", actions.len());
+                         let random_id = js_sys::Math::random().to_string();
+                         let id = format!("auto_action_4_{}", random_id);
+                         let id_clone = id.clone();
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
                          let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                              web_sys::console::error_1(&JsValue::from_str(&format!("EXECUTING NATIVE INLINE ACTION {}", id_clone)));
                               let res = execute_js_action(&func, ctx_mut, evt, _params);
                               if res.is_object() {
                                    let t_key = JsValue::from_str("type");
@@ -2036,7 +2044,8 @@ fn process_config(
                              if k_val.is_function() { has_funcs = true; break; }
                          }
                          if has_funcs {
-                             let id = format!("auto_action_{}", actions.len());
+                             let random_id = js_sys::Math::random().to_string();
+                             let id = format!("auto_action_5_{}", random_id);
                              let assignment_clone = assign_obj.clone();
                              let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                                   evaluate_assignment(&assignment_clone, ctx_mut, evt);
@@ -2155,33 +2164,4 @@ fn normalize_undefined(val: &JsValue, depth: usize) -> JsValue {
         return res_obj.into();
     }
     val.clone()
-}
-
-fn inject_tracking_action(obj: &js_sys::Object, prop: &str, action_name: &str) {
-    let prop_key = JsValue::from_str(prop);
-    let val = js_sys::Reflect::get(obj, &prop_key).unwrap_or(JsValue::UNDEFINED);
-    if val.is_undefined() || val.is_null() {
-        let _ = js_sys::Reflect::set(obj, &prop_key, &JsValue::from_str(action_name));
-    } else if js_sys::Array::is_array(&val) {
-        let arr = js_sys::Array::from(&val);
-        let mut found = false;
-        for i in 0..arr.length() {
-            if arr.get(i) == JsValue::from_str(action_name) { found = true; break; }
-        }
-        if !found {
-            arr.push(&JsValue::from_str(action_name));
-        }
-    } else if val.is_string() {
-        if val != JsValue::from_str(action_name) {
-            let arr = js_sys::Array::new();
-            arr.push(&val);
-            arr.push(&JsValue::from_str(action_name));
-            let _ = js_sys::Reflect::set(obj, &prop_key, &arr);
-        }
-    } else {
-        let arr = js_sys::Array::new();
-        arr.push(&val);
-        arr.push(&JsValue::from_str(action_name));
-        let _ = js_sys::Reflect::set(obj, &prop_key, &arr);
-    }
 }

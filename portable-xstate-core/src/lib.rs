@@ -511,7 +511,7 @@ impl RuntimeMachine {
         let active_leaves = self.current_state.get_active_paths();
         
         let mut all_search_paths = Vec::new();
-        for leaf in active_leaves {
+        for leaf in &active_leaves {
             let mut parts: Vec<&str> = leaf.split('.').collect();
             while !parts.is_empty() {
                 let p = parts.join(".");
@@ -519,15 +519,19 @@ impl RuntimeMachine {
                 parts.pop();
             }
         }
-        // FIX: Add Root
         if !all_search_paths.contains(&"".to_string()) { all_search_paths.push("".to_string()); }
-        
         all_search_paths.sort_by(|a, b| b.matches('.').count().cmp(&a.matches('.').count()));
+
+        struct SelectedTransition<'a> {
+             source_path: String,
+             t: &'a TransitionDefinition,
+             lowest_domain_depth: usize,
+        }
+        let mut selected_transitions = Vec::new();
+        let mut conflict_regions: Vec<String> = Vec::new();
 
         for current_path in all_search_paths {
             let def_opt = if current_path.is_empty() {
-                 // Root handling?
-                 // definition.on
                  None 
             } else {
                  Self::get_state_def_recursive(&self.definition.states, &current_path)
@@ -541,7 +545,6 @@ impl RuntimeMachine {
             
             if let Some(transitions) = transitions_opt {
                  for t in transitions {
-                       // Guard check
                        if let Some(cond) = &t.cond {
                            let is_allowed = match cond {
                                TransitionGuard::Name(n) => guards.get(n).map(|f| f(&self.context, event_payload, &None)).unwrap_or(true),
@@ -550,191 +553,243 @@ impl RuntimeMachine {
                            if !is_allowed { continue; }
                        }
 
-                       let mut accumulated_state = self.current_state.clone();
+                       let current_parts: Vec<&str> = current_path.split('.').filter(|s| !s.is_empty()).collect();
+                       
+                       let mut lowest_domain_depth = current_parts.len();
                        if let Some(targets) = &t.target {
-                            let mut collected_actions = Vec::new();
-                            for raw in targets {
-                                let current_search_path_for_target = if current_path.is_empty() { "".to_string() } else { current_path.clone() };
-                                let target_full = self.resolve_target(&current_search_path_for_target, raw).unwrap_or_else(|| raw.clone());
-                                let target_def_opt = Self::get_state_def_recursive(&self.definition.states, &target_full);
-                                let mut next_val_opt: Option<StateValue> = None;
-                                if let Some(target_def) = target_def_opt {
-                                    if target_def.type_.as_deref() == Some("history") || matches!(target_def.state_type, StateType::History{..}) {
-                                        let history_parent = if let Some(idx) = target_full.rfind('.') { target_full[..idx].to_string() } else { "".to_string() };
-                                        let is_deep = target_def.history == Some(HistoryType::Deep) || matches!(target_def.state_type, StateType::History{deep: true});
-                                        let mut hist_opt = self.history_value.get(&history_parent).cloned();
-                                        if hist_opt.is_none() {
-                                             // Fallback: If parent is currently active, use current state as history
-                                             // BUT ONLY if this is a re-entering transition or an external one.
-                                             // If it's an internal transition (target is descendant of source), we shouldn't fallback
-                                             // to current config if history is empty; we should use initial state.
-                                             
-                                             let active_paths = self.current_state.get_active_paths();
-                                             let parent_is_active = active_paths.iter().any(|p| p == &history_parent || p.starts_with(&format!("{}.", history_parent)));
-                                             
-                                             if parent_is_active {
-                                                 let mut is_internal = false;
-                                                 if !t.reenter {
-                                                      if target_full.starts_with(&format!("{}.", current_path)) || target_full == current_path {
-                                                           is_internal = true;
-                                                      }
-                                                 }
-                                                 if !is_internal {
-                                                      hist_opt = Some(self.current_state.clone());
-                                                 }
-                                             }
-                                        }
-
-                                        if let Some(hist) = hist_opt {
-                                            if is_deep { next_val_opt = Some(hist.clone()); }
-                                            else {
-                                                 let active_hist_paths = hist.get_active_paths();
-                                                 let parent_len = if history_parent.is_empty() { 0 } else { history_parent.len() + 1 };
-                                                 if !active_hist_paths.is_empty() {
-                                                     let matching_path = active_hist_paths.iter().find(|p| { if history_parent.is_empty() { true } else { p.starts_with(&history_parent) && (p.len() == history_parent.len() || p.chars().nth(history_parent.len()) == Some('.')) } });
-                                                     if let Some(first) = matching_path { if first.len() > parent_len { let remainder = &first[parent_len..]; let component = if let Some(idx) = remainder.find('.') { &remainder[..idx] } else { remainder }; let shallow_target = if history_parent.is_empty() { component.to_string() } else { format!("{}.{}", history_parent, component) }; next_val_opt = Self::resolve_initial_state(&self.definition, &shallow_target, &mut collected_actions); } }
-                                                 }
-                                            }
-                                        }
-                                        if next_val_opt.is_none() {
-                                             if let Some(default_t) = &target_def.history_target { 
-                                                 let resolved = self.resolve_target(&history_parent, default_t).unwrap_or(default_t.clone()); 
-                                                 next_val_opt = Self::resolve_initial_state(&self.definition, &resolved, &mut collected_actions); 
-                                             } 
-                                             else { next_val_opt = Self::resolve_initial_state(&self.definition, &history_parent, &mut collected_actions); }
-                                        }
-                                    }
+                           for raw in targets {
+                                let current_search_path = if current_path.is_empty() { "".to_string() } else { current_path.clone() };
+                                let target_full = self.resolve_target(&current_search_path, raw).unwrap_or_else(|| raw.clone());
+                                let target_parts: Vec<&str> = target_full.split('.').filter(|s| !s.is_empty()).collect();
+                                let mut dom_lca = 0;
+                                while dom_lca < current_parts.len() && dom_lca < target_parts.len() && current_parts[dom_lca] == target_parts[dom_lca] { dom_lca += 1; }
+                                
+                                let mut domain_depth = dom_lca;
+                                if dom_lca == current_parts.len() && dom_lca == target_parts.len() {
+                                     if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
+                                } else if dom_lca == target_parts.len() {
+                                     domain_depth = dom_lca.saturating_sub(1);
+                                } else if dom_lca == current_parts.len() {
+                                     if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
                                 }
-                                let next_val = next_val_opt.or_else(|| Self::resolve_initial_state(&self.definition, &target_full, &mut collected_actions)).unwrap_or(StateValue::Atomic(target_full.clone()));
-                                accumulated_state = Self::merge_state_value(&accumulated_state, &next_val, "", &target_full);
-                            }
-
-                            let finalized_state = accumulated_state;
-                            
-                            // Execute collected history/initial actions -> BUT wait, we are in a loop for targets.
-                            // We should execute them? 
-                            // Yes, if we are entering states, we should execute them.
-                            for action in &collected_actions {
-                                Self::execute_action(&mut self.context, action, event_payload, actions);
-                            }
-
-                            let current_leaves = self.current_state.get_active_paths();
-                            let next_leaves = finalized_state.get_active_paths();
-                            
-                            let current_parts: Vec<&str> = current_path.split('.').filter(|s| !s.is_empty()).collect();
-                            let mut global_max_lca_limit = current_parts.len();
-                            if let Some(targets) = &t.target {
-                                let mut lowest_domain_depth = current_parts.len();
-                                for raw in targets {
-                                     let current_search_path = if current_path.is_empty() { "".to_string() } else { current_path.clone() };
-                                     let target_full = self.resolve_target(&current_search_path, raw).unwrap_or_else(|| raw.clone());
-                                     let target_parts: Vec<&str> = target_full.split('.').filter(|s| !s.is_empty()).collect();
-                                     let mut dom_lca = 0;
-                                     while dom_lca < current_parts.len() && dom_lca < target_parts.len() && current_parts[dom_lca] == target_parts[dom_lca] { dom_lca += 1; }
-                                     
-                                     let mut domain_depth = dom_lca;
-                                     if dom_lca == current_parts.len() && dom_lca == target_parts.len() {
-                                          if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
-                                     } else if dom_lca == target_parts.len() {
-                                          domain_depth = dom_lca.saturating_sub(1);
-                                     } else if dom_lca == current_parts.len() {
-                                          if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
-                                     }
-                                     if domain_depth < lowest_domain_depth { lowest_domain_depth = domain_depth; }
-                                }
-                                global_max_lca_limit = lowest_domain_depth;
-                            } else {
-                                if t.reenter { global_max_lca_limit = current_parts.len().saturating_sub(1); }
-                            }
-                            
-                            let mut exited_paths = Vec::new();
-                            for leaf in current_leaves.iter().rev() {
-                                 let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
-                                 let mut max_lca = 0;
-                                 for next_leaf in &next_leaves {
-                                      let next_parts: Vec<&str> = next_leaf.split('.').filter(|s| !s.is_empty()).collect();
-                                      let mut lca = 0;
-                                      while lca < leaf_parts.len() && lca < next_parts.len() && leaf_parts[lca] == next_parts[lca] { lca += 1; }
-                                      
-                                      let mut is_in_domain = true;
-                                      for (idx, p) in current_parts.iter().enumerate() {
-                                          if idx >= leaf_parts.len() || leaf_parts[idx] != *p { is_in_domain = false; break; }
-                                      }
-                                      if is_in_domain && lca > global_max_lca_limit { lca = global_max_lca_limit; }
-                                      if lca > max_lca { max_lca = lca; }
-                                 }
-                                 for i in ((max_lca + 1)..=leaf_parts.len()).rev() {
-                                      let path = leaf_parts[0..i].join(".");
-                                      if !exited_paths.contains(&path) {
-                                          self.history_value.insert(path.clone(), self.current_state.clone());
-                                          if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
-                                               for action in &def.exit { Self::execute_action(&mut self.context, action, event_payload, actions); }
-                                               for inv in &def.invoke {
-                                                    if let Some(src) = inv.src.as_string() {
-                                                         Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
-                                                    }
-                                               }
-                                          }
-                                          exited_paths.push(path);
-                                      }
-                                 }
-                            }
-                            for action in &t.actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
-                            let mut entered_paths = Vec::new();
-                            for leaf in &next_leaves {
-                                 let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
-                                 let mut max_lca = 0;
-                                 for curr_leaf in current_leaves.iter().rev() {
-                                      let curr_parts: Vec<&str> = curr_leaf.split('.').filter(|s| !s.is_empty()).collect();
-                                      let mut lca = 0;
-                                      while lca < leaf_parts.len() && lca < curr_parts.len() && leaf_parts[lca] == curr_parts[lca] { lca += 1; }
-                                      
-                                      let mut is_in_domain = true;
-                                      for (idx, p) in current_parts.iter().enumerate() {
-                                          if idx >= leaf_parts.len() || leaf_parts[idx] != *p { is_in_domain = false; break; }
-                                      }
-                                      if is_in_domain && lca > global_max_lca_limit { lca = global_max_lca_limit; }
-                                      if lca > max_lca { max_lca = lca; }
-                                 }
-                                 for i in (max_lca + 1)..=leaf_parts.len() {
-                                      let path = leaf_parts[0..i].join(".");
-                                      if !entered_paths.contains(&path) {
-                                          if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
-                                               for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions); }
-                                               for inv in &def.invoke {
-                                                    if let Some(src) = inv.src.as_string() {
-                                                         Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
-                                                    }
-                                               }
-                                                
-                                                if i < leaf_parts.len() {
-                                                    // Removed implicit initial action execution logic
-                                                }
-                                          }
-                                          entered_paths.push(path);
-                                      }
-                                 }
-                            }
-                            let _changed = finalized_state != self.current_state;
-                            self.current_state = finalized_state;
-                            if !event_type.is_empty() || _changed {
-                                if let Some(next) = self.transition("", event_payload, guards, actions) {
-                                    return Some(next);
-                                }
-                            }
-                            return Some(self.current_state.clone());
-                       } else if !t.actions.is_empty() {
-                            // Internal transition (no target, but has actions)
-                            for action in &t.actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
-                            if !event_type.is_empty() {
-                                if let Some(next) = self.transition("", event_payload, guards, actions) { return Some(next); }
-                            }
-                            return Some(self.current_state.clone());
+                                if domain_depth < lowest_domain_depth { lowest_domain_depth = domain_depth; }
+                           }
+                       } else {
+                           if t.reenter { lowest_domain_depth = current_parts.len().saturating_sub(1); }
                        }
+
+                       let domain_path = current_parts[0..lowest_domain_depth].join(".");
+                       let conflict_check_path = if t.target.is_some() || t.reenter { domain_path.clone() } else { current_path.clone() };
+                       
+                       let mut conflict = false;
+                       for c in &conflict_regions {
+                            let inter = (conflict_check_path.is_empty() || c.is_empty()) || 
+                                        conflict_check_path == *c || 
+                                        conflict_check_path.starts_with(&format!("{}.", c)) || 
+                                        c.starts_with(&format!("{}.", conflict_check_path));
+                            if inter { conflict = true; break; }
+                       }
+                       if conflict { continue; }
+
+                       conflict_regions.push(conflict_check_path.clone());
+                       selected_transitions.push(SelectedTransition {
+                           source_path: current_path.clone(),
+                           t,
+                           lowest_domain_depth,
+                       });
+                       break;
                  }
             }
         }
-        None
+
+        if selected_transitions.is_empty() { return None; }
+
+        let mut accumulated_state = self.current_state.clone();
+        let mut all_collected_actions = Vec::new();
+        let mut all_transition_actions = Vec::new();
+
+        for st in &selected_transitions {
+             let t = st.t;
+             let current_path = &st.source_path;
+             
+             if let Some(targets) = &t.target {
+                  for raw in targets {
+                      let current_search_path = if current_path.is_empty() { "".to_string() } else { current_path.clone() };
+                      let target_full = self.resolve_target(&current_search_path, raw).unwrap_or_else(|| raw.clone());
+                      let target_def_opt = Self::get_state_def_recursive(&self.definition.states, &target_full);
+                      let mut next_val_opt: Option<StateValue> = None;
+                      
+                      if let Some(target_def) = target_def_opt {
+                           if target_def.type_.as_deref() == Some("history") || matches!(target_def.state_type, StateType::History{..}) {
+                                let history_parent = if let Some(idx) = target_full.rfind('.') { target_full[..idx].to_string() } else { "".to_string() };
+                                let is_deep = target_def.history == Some(HistoryType::Deep) || matches!(target_def.state_type, StateType::History{deep: true});
+                                let mut hist_opt = self.history_value.get(&history_parent).cloned();
+                                if hist_opt.is_none() {
+                                     let parent_is_active = active_leaves.iter().any(|p| p == &history_parent || p.starts_with(&format!("{}.", history_parent)));
+                                     if parent_is_active {
+                                         let mut is_internal = false;
+                                         if !t.reenter {
+                                              if target_full.starts_with(&format!("{}.", current_path)) || &target_full == current_path {
+                                                   is_internal = true;
+                                              }
+                                         }
+                                         if !is_internal { hist_opt = Some(self.current_state.clone()); }
+                                     }
+                                }
+
+                                if let Some(hist) = hist_opt {
+                                    if is_deep { next_val_opt = Some(hist.clone()); }
+                                    else {
+                                         let active_hist_paths = hist.get_active_paths();
+                                         let parent_len = if history_parent.is_empty() { 0 } else { history_parent.len() + 1 };
+                                         if !active_hist_paths.is_empty() {
+                                             let matching_path = active_hist_paths.iter().find(|p| { if history_parent.is_empty() { true } else { p.starts_with(&history_parent) && (p.len() == history_parent.len() || p.chars().nth(history_parent.len()) == Some('.')) } });
+                                             if let Some(first) = matching_path { if first.len() > parent_len { let remainder = &first[parent_len..]; let component = if let Some(idx) = remainder.find('.') { &remainder[..idx] } else { remainder }; let shallow_target = if history_parent.is_empty() { component.to_string() } else { format!("{}.{}", history_parent, component) }; next_val_opt = Self::resolve_initial_state(&self.definition, &shallow_target, &mut all_collected_actions); } }
+                                         }
+                                    }
+                                }
+                                if next_val_opt.is_none() {
+                                     if let Some(default_t) = &target_def.history_target { 
+                                         let resolved = self.resolve_target(&history_parent, default_t).unwrap_or(default_t.clone()); 
+                                         next_val_opt = Self::resolve_initial_state(&self.definition, &resolved, &mut all_collected_actions); 
+                                     } 
+                                     else { next_val_opt = Self::resolve_initial_state(&self.definition, &history_parent, &mut all_collected_actions); }
+                                }
+                           }
+                      }
+                      let next_val = next_val_opt.or_else(|| Self::resolve_initial_state(&self.definition, &target_full, &mut all_collected_actions)).unwrap_or(StateValue::Atomic(target_full.clone()));
+                      accumulated_state = Self::merge_state_value(&accumulated_state, &next_val, "", &target_full);
+                  }
+             }
+             all_transition_actions.extend(t.actions.clone());
+        }
+
+        let finalized_state = accumulated_state;
+        let next_leaves = finalized_state.get_active_paths();
+        
+        let mut document_order_active = Vec::new();
+        for leaf in &active_leaves {
+            let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
+            for i in 1..=leaf_parts.len() {
+                let path = leaf_parts[0..i].join(".");
+                if !document_order_active.contains(&path) {
+                    document_order_active.push(path);
+                }
+            }
+        }
+        
+        let mut paths_to_exit = Vec::new();
+        for leaf in active_leaves.iter().rev() {
+             let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
+             let mut max_lca = 0;
+             for next_leaf in &next_leaves {
+                  let next_parts: Vec<&str> = next_leaf.split('.').filter(|s| !s.is_empty()).collect();
+                  let mut lca = 0;
+                  while lca < leaf_parts.len() && lca < next_parts.len() && leaf_parts[lca] == next_parts[lca] { lca += 1; }
+                  
+                  let mut leaf_is_in_any_domain = false;
+                  let mut max_allowed_lca = leaf_parts.len();
+                  for st in &selected_transitions {
+                       let src_parts: Vec<&str> = st.source_path.split('.').filter(|s| !s.is_empty()).collect();
+                       let is_in_domain = src_parts.iter().enumerate().all(|(idx, p)| idx < leaf_parts.len() && leaf_parts[idx] == *p);
+                       if is_in_domain {
+                            leaf_is_in_any_domain = true;
+                            if st.lowest_domain_depth < max_allowed_lca { max_allowed_lca = st.lowest_domain_depth; }
+                       }
+                  }
+                  
+                  if leaf_is_in_any_domain && lca > max_allowed_lca { lca = max_allowed_lca; }
+                  if lca > max_lca { max_lca = lca; }
+             }
+             for i in ((max_lca + 1)..=leaf_parts.len()).rev() {
+                  let path = leaf_parts[0..i].join(".");
+                  if !paths_to_exit.contains(&path) {
+                      paths_to_exit.push(path);
+                  }
+             }
+        }
+        
+        let mut final_exited_paths = Vec::new();
+        for path in document_order_active.iter().rev() {
+             if paths_to_exit.contains(path) {
+                  final_exited_paths.push(path.clone());
+             }
+        }
+        
+        let mut exited_paths = Vec::new();
+        for path in &final_exited_paths {
+              self.history_value.insert(path.clone(), self.current_state.clone());
+              if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
+                   for action in &def.exit { 
+                         // we can't easily console.log from here, but we can if we had access.
+                         Self::execute_action(&mut self.context, action, event_payload, actions); 
+                   }
+                   for inv in &def.invoke {
+                        if let Some(src) = inv.src.as_string() {
+                             Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                        }
+                   }
+              }
+              exited_paths.push(path.clone());
+        }
+        
+        for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
+        for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
+
+
+        let mut entered_paths = Vec::new();
+        for leaf in &next_leaves {
+             let leaf_parts: Vec<&str> = leaf.split('.').filter(|s| !s.is_empty()).collect();
+             let mut max_lca = 0;
+             for curr_leaf in active_leaves.iter().rev() {
+                  let curr_parts: Vec<&str> = curr_leaf.split('.').filter(|s| !s.is_empty()).collect();
+                  let mut lca = 0;
+                  while lca < leaf_parts.len() && lca < curr_parts.len() && leaf_parts[lca] == curr_parts[lca] { lca += 1; }
+                  
+                  let mut leaf_is_in_any_domain = false;
+                  let mut max_allowed_lca = leaf_parts.len();
+                  for st in &selected_transitions {
+                       let src_parts: Vec<&str> = st.source_path.split('.').filter(|s| !s.is_empty()).collect();
+                       let is_in_domain = src_parts.iter().enumerate().all(|(idx, p)| idx < leaf_parts.len() && leaf_parts[idx] == *p);
+                       if is_in_domain {
+                            leaf_is_in_any_domain = true;
+                            if st.lowest_domain_depth < max_allowed_lca { max_allowed_lca = st.lowest_domain_depth; }
+                       }
+                  }
+                  
+                  if leaf_is_in_any_domain && lca > max_allowed_lca { lca = max_allowed_lca; }
+                  if lca > max_lca { max_lca = lca; }
+             }
+             for i in (max_lca + 1)..=leaf_parts.len() {
+                  let path = leaf_parts[0..i].join(".");
+                  if !entered_paths.contains(&path) {
+                      if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
+                           for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions); }
+                           for inv in &def.invoke {
+                                if let Some(src) = inv.src.as_string() {
+                                     Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                                }
+                           }
+                      }
+                      entered_paths.push(path);
+                  }
+              }
+         }
+        let _changed = finalized_state != self.current_state;
+        self.current_state = finalized_state;
+
+        let has_transition_or_actions = !selected_transitions.is_empty();
+        if !event_type.is_empty() || _changed {
+             if let Some(next) = self.transition("", event_payload, guards, actions) {
+                 return Some(next);
+             }
+        }
+        
+        if has_transition_or_actions {
+            Some(self.current_state.clone())
+        } else {
+            None
+        }
     }
 }
 

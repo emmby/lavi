@@ -8,7 +8,7 @@ export const sendTo = () => {};
 export const spawnChild = () => {};
 export const stopChild = () => {};
 export const CallbackActorRef = {};
-export const fromCallback = () => {};
+export const fromCallback = (fn?: any) => fn;
 export const forwardTo = () => {};
 
 // Also mocked types for TS:

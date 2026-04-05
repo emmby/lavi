@@ -6,7 +6,7 @@ import {
   matchesState,
   StateNode,
   StateValue
-} from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+} from '../portable-xstate-wasm/pkg-npm/portable_xstate_wasm';
 
 const resolveSerializedStateValue = (
   machine: AnyStateMachine,
@@ -74,7 +74,8 @@ export function testAll(
 
 const seen = new WeakSet<AnyStateMachine>();
 
-export function trackEntries(machine: AnyStateMachine) {
+import * as fs from 'fs';
+export function trackEntries(machine: AnyStateMachine, setupFn?: any) {
   if (seen.has(machine)) {
     throw new Error(`This helper can't accept the same machine more than once`);
   }
@@ -89,12 +90,14 @@ export function trackEntries(machine: AnyStateMachine) {
     if (!Array.isArray(stateConf.entry)) stateConf.entry = [stateConf.entry];
     stateConf.entry.unshift(() => {
       logs.push(`enter: ${path}`);
+      require('fs').appendFileSync('trace.log', `ENTER ${path}\n${new Error().stack}\n\n`);
     });
 
     if (stateConf.exit === undefined) stateConf.exit = [];
     if (!Array.isArray(stateConf.exit)) stateConf.exit = [stateConf.exit];
     stateConf.exit.unshift(() => {
       logs.push(`exit: ${path}`);
+      fs.appendFileSync('debug.log', `FIRING EXIT FOR ${path}\n${new Error().stack}\n\n`);
     });
 
     if (stateConf.states) {
@@ -102,21 +105,26 @@ export function trackEntries(machine: AnyStateMachine) {
         injectTrackers(val, path === '__root__' ? key : `${path}.${key}`);
       }
     }
+
+    // Add interceptors
   }
 
   const config = (machine as any).config;
   if (config) {
     injectTrackers(config, '__root__');
     
-    // We need setup from portable_xstate
+    // We need setup from portable_xstate_wasm
     // However, setup is not imported here.
-    // Let's require it!
-    const { setup } = require('../portable-xstate-wasm/pkg-npm/portable_xstate.js');
+    const setup = setupFn || require('../portable-xstate-wasm/pkg-npm/portable_xstate_wasm.js').setup;
     const patchedMachine = setup(config).createMachine(config);
+    if ((patchedMachine as any).mergeActions) {
+         (patchedMachine as any).mergeActions(machine);
+    }
     
     const origCreateActor = (machine as any).createActor;
     if (origCreateActor) {
       (machine as any).createActor = function(options: any) {
+        console.log("HELLO XSTATE V5 createActor invoked!");
         return patchedMachine.createActor(options);
       };
       (machine as any).provide = function(impl: any, ctx: any) {
