@@ -4,7 +4,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 s
 
 Test links point to the `statelyai/xstate` reference implementation for verification.
 
-**Test Coverage**: 73 passing tests across `machine.test.ts`, `state.test.ts`, and `history.test.ts`
+**Test Coverage**: 109 passing tests across `machine.test.ts`, `state.test.ts`, `history.test.ts`, and `actions.test.ts`
 
 ## 1. Core Structure (Essential)
 High usage, required for almost every state machine.
@@ -28,11 +28,11 @@ High usage, required for almost every state machine.
     - [x] History in parallel states
     - [x] Multistage history
     - [x] History state persistence/revival
-- [x] **Transitions** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/transition.test.ts))
+- [ ] **Transitions** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/transition.test.ts))
   - [x] Event Transitions (`on: { EVENT: ... }`)
   - [x] Eventless Transitions (`always: [...]`)
   - [x] Targetless Transitions (internal transitions with actions only)
-  - [x] Self-transitions with reentry
+  - [ ] Self-transitions with reentry (Partial - deep reentry skipped)
   - [x] Guarded Transitions
   - [x] Root-level transitions (combinatorial machines)
   - [ ] Delayed Transitions (`after: { delay: target }`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/after.test.ts))
@@ -47,16 +47,17 @@ Essential for defining machine behavior and data flow.
   - [x] Inline Guards (Function definition)
   - [x] Guard override via `machine.provide()`
   - [ ] Higher-Order Guards (`and`, `or`, `not`)
-- [x] **Actions** (`entry`, `exit`, `actions`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/actions.test.ts))
+- [ ] **Actions** (`entry`, `exit`, `actions`) (Partial - deep hierarchy & SCXML order skipped) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/actions.test.ts))
   - [x] Named Actions
   - [x] Inline Actions (Function definition)
   - [x] Action override via `machine.provide()`
-  - [x] Entry actions (state entry)
-  - [x] Exit actions (state exit)
-  - [x] Transition actions
-  - [x] Initial transition actions
-  - [x] **Built-in Actions:**
-    - [x] `assign` (Update context) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
+  - [ ] Dynamic Action Parameters (skipped)
+  - [ ] Entry actions (state entry)
+  - [ ] Exit actions (state exit)
+  - [ ] Transition actions
+  - [ ] Initial transition actions
+  - [ ] **Built-in Actions:**
+    - [ ] `assign` (Update context) (Partial - assignment order skipped) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
       - [x] Object-based assignment
       - [x] Function-based assignment
       - [x] Inline assignment functions
@@ -147,3 +148,4 @@ Features for complex use-cases or debugging.
 - **machine.test.ts**: 20 tests covering machine definition, transitions, guards, actions, and combinatorial machines
 - **state.test.ts**: 20 tests covering state API, `.can()`, `.hasTag()`, status checks, and persistence
 - **history.test.ts**: 33 tests covering shallow/deep history, parallel history, and history revival
+- **actions.test.ts**: 36 tests covering transition actions, entry/exit actions, assign actions, and action overrides

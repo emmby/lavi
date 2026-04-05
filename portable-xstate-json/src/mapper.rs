@@ -53,8 +53,28 @@ pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
         states.keys().next().cloned()
     }).unwrap_or_default();
 
+    let is_compound = !states.is_empty();
+    let is_parallel = dto.type_.as_deref() == Some("parallel");
+    let inferred_type = dto.type_.or_else(|| {
+         if is_compound {
+              Some("compound".to_string())
+         } else if is_parallel {
+              Some("parallel".to_string())
+         } else {
+              Some("atomic".to_string())
+         }
+    });
+
+    let state_type = match inferred_type.as_deref() {
+         Some("parallel") => StateType::Parallel,
+         _ if !states.is_empty() => StateType::Compound,
+         _ => StateType::Atomic,
+    };
+
     MachineDefinition {
         id: dto.id.unwrap_or_else(|| String::from("(machine)")),
+        type_: inferred_type,
+        state_type,
         initial, 
         initial_actions,
         states,

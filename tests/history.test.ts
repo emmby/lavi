@@ -1,54 +1,7 @@
-import { createActor, createMachine, StateNode } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createActor, createMachine, StateNode, setup } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 import { describe, it, expect, vi } from 'vitest';
-
-// Helper to verify action execution order.
-// Registers spies on all entry/exit actions found in the machine definition.
-const trackEntries = (machine: any) => {
-  const logs: string[] = [];
-  const registered = new Set<string>();
-
-  const traverse = (obj: any) => {
-      if (!obj || typeof obj !== 'object') return;
-      
-      ['entry', 'exit'].forEach(prop => {
-          if (Array.isArray(obj[prop])) {
-              obj[prop].forEach((action: any) => {
-                  if (typeof action === 'string' && !registered.has(action)) {
-                       try {
-                           machine.registerAction(action, () => logs.push(action));
-                           registered.add(action);
-                       } catch(e) {}
-                  }
-              });
-          } else if (typeof obj[prop] === 'string') {
-              const action = obj[prop];
-              if (!registered.has(action)) {
-                   try {
-                       machine.registerAction(action, () => logs.push(action));
-                       registered.add(action);
-                   } catch(e) {}
-              }
-          }
-      });
-      
-      if (obj.states) {
-          Object.values(obj.states).forEach(traverse);
-      }
-      // Note: Scanning transitions ('on') is tedious and maybe not needed if entry/exit are sufficient for these tests.
-      // The history tests primarily check entry/exit logs.
-  };
-
-  if (machine.config) {
-      traverse(machine.config);
-  }
-  
-  return () => {
-    const copy = [...logs];
-    logs.length = 0;
-    return copy;
-  };
-};
-const fromCallback = (fn: any) => fn;
+import { trackEntries } from './utils';
+import { fromCallback } from './stubs';
 
 
 describe('history states', () => {
@@ -603,7 +556,7 @@ describe('history states', () => {
       }
     });
 
-    const flushTracked = trackEntries(machine);
+    const flushTracked = trackEntries(machine, setup);
 
     const actorRef = createActor(machine).start();
     flushTracked();
@@ -648,7 +601,7 @@ describe('history states', () => {
       }
     });
 
-    const flushTracked = trackEntries(machine);
+    const flushTracked = trackEntries(machine, setup);
 
     const actorRef = createActor(machine).start();
 
