@@ -6,7 +6,7 @@ import {
   matchesState,
   StateNode,
   StateValue
-} from '../portable-xstate-wasm/pkg-npm/portable_xstate_wasm';
+} from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 
 const resolveSerializedStateValue = (
   machine: AnyStateMachine,
@@ -113,9 +113,9 @@ export function trackEntries(machine: AnyStateMachine, setupFn?: any) {
   if (config) {
     injectTrackers(config, '__root__');
     
-    // We need setup from portable_xstate_wasm
+    // We need setup from portable_xstate
     // However, setup is not imported here.
-    const setup = setupFn || require('../portable-xstate-wasm/pkg-npm/portable_xstate_wasm.js').setup;
+    const setup = setupFn || require('../portable-xstate-wasm/pkg-npm/portable_xstate.js').setup;
     const patchedMachine = setup(config).createMachine(config);
     if ((patchedMachine as any).mergeActions) {
          (patchedMachine as any).mergeActions(machine);

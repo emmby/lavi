@@ -1,4 +1,4 @@
-import { createMachine, createActor, assign } from '../portable-xstate-wasm/pkg-npm/portable_xstate_wasm';
+import { createMachine, createActor, assign } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 // import { fromCallback } from '../src/actors/callback';
 import { describe, it, expect } from 'vitest';
 

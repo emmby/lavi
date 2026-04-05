@@ -25,7 +25,7 @@ import {
   createActor,
   createMachine,
   setup
-} from '../portable-xstate-wasm/pkg-npm/portable_xstate_wasm';
+} from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 import { trackEntries } from './utils.ts';
 
 const originalConsoleLog = console.log;
