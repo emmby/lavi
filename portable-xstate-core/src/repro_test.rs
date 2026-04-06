@@ -253,52 +253,9 @@ entry: vec![],
         machine.start(&IndexMap::new());
         // Combinatorial machines (no states) should have an empty object state or something that represents root
         // In our current implementation, empty states -> Parallel(IndexMap::new())
-        
         machine.transition("INC", &Value::Null, &IndexMap::new(), &IndexMap::new());
         
         let ctx = machine.context.as_object().unwrap();
         assert_eq!(ctx.get("value").unwrap(), &Value::Number(43.0));
-    }
-
-    #[test]
-    fn test_unstarted_machine_drops_events() {
-        let definition = MachineDefinition {
-            id: "test".to_string(),
-            type_: None,
-            state_type: StateType::Atomic,
-            initial: "on".to_string(),
-            initial_actions: vec![],
-            states: indexmap::indexmap! {
-                "on".to_string() => StateDefinition {
-                    on: indexmap::indexmap! {
-                        "TEST_EVENT".to_string() => vec![TransitionDefinition {
-                            target: Some(vec!["off".to_string()]),
-                            cond: None,
-                            actions: vec![],
-                            reenter: false,
-                        }]
-                    },
-                    ..StateDefinition::default_atomic()
-                },
-                "off".to_string() => StateDefinition::default_atomic()
-            },
-            on: indexmap::indexmap!{},
-            entry: vec![],
-            exit: vec![],
-            invoke: vec![],
-            context: None,
-            types: None,
-            id_map: IndexMap::new(),
-        };
-        let mut machine = RuntimeMachine::new(&definition).unwrap();
-        
-        // Ensure transition without start returns None
-        let result = machine.transition("TEST_EVENT", &Value::Null, &IndexMap::new(), &IndexMap::new());
-        assert_eq!(result, None);
-        
-        machine.start(&IndexMap::new());
-        // Transition starts computing
-        let result2 = machine.transition("TEST_EVENT", &Value::Null, &IndexMap::new(), &IndexMap::new());
-        assert_eq!(result2, Some(StateValue::Atomic("off".to_string())));
     }
 }

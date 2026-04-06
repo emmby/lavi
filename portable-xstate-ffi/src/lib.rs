@@ -126,6 +126,7 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
     let guards = IndexMap::new(); 
     let payload = Value::Null;
 
+    if !ctx.machine.is_started { return 0; }
     ctx.machine.transition(event, &payload, &guards, &ctx.actions);
     0
 }

@@ -218,7 +218,7 @@ pub struct RuntimeMachine {
 
 impl RuntimeMachine {
     pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
-        let mut dummy = vec![];
+        let mut dummy = definition.initial_actions.clone();
         let initial_state = if matches!(definition.state_type, StateType::Parallel) {
              let mut regions = IndexMap::new();
              for (r_name, r_def) in &definition.states {
@@ -544,7 +544,7 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
-        if !self.is_started { return None; }
+
         self.transition_internal(event_type, event_payload, guards, actions, 0)
     }
 

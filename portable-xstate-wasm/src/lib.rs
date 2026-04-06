@@ -1456,7 +1456,7 @@ impl Actor {
 
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
-        // web_sys::console::error_2(&JsValue::from_str(&format!("BEFORE TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
+        if !self.machine.is_started { return Ok(JsValue::UNDEFINED); }
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
 
         // 2. Inspect Snapshot
