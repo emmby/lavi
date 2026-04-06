@@ -61,6 +61,16 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
 }
 
 #[no_mangle]
+pub extern "C" fn fsm_start(ptr: *mut MachineContext) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    ctx.machine.start(&ctx.actions);
+    0
+}
+
+#[no_mangle]
 pub extern "C" fn fsm_free(ptr: *mut MachineContext) {
     if !ptr.is_null() {
         unsafe {
@@ -266,6 +276,8 @@ mod tests {
 
         let machine_ptr = fsm_create(json.as_ptr());
         assert!(!machine_ptr.is_null());
+
+        fsm_start(machine_ptr);
 
         let mut buf = vec![0u8; 64];
         

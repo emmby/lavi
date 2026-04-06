@@ -60,6 +60,7 @@ using ActionCallback = std::function<void(const Value& context, const Value& eve
 class PortableXState {
 private:
     MachineContext* machine;
+    const char* m_json;
     std::map<std::string, ActionCallback> m_callbacks;
     
     static void c_callback_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
@@ -76,13 +77,12 @@ public:
      * @brief Construct a new Portable X State object
      * 
      * @param json_config The JSON configuration string for the state machine.
+     *                    MEMORY WARNING: This object deliberately stores only the pointer (const char*)
+     *                    to avoid dynamic memory allocation. The caller MUST ensure that the memory 
+     *                    pointed to by json_config remains valid and unchanged until `.start()` is called.
      * @throws std::runtime_error If the machine fails to initialize.
      */
-    PortableXState(const char* json_config) {
-        machine = fsm_create(json_config);
-        if (!machine) {
-            throw std::runtime_error("Failed to create FSM machine from provided JSON.");
-        }
+    PortableXState(const char* json_config) : machine(nullptr), m_json(json_config) {
     }
 
     /**
@@ -102,21 +102,39 @@ public:
     PortableXState& operator=(const PortableXState&) = delete;
 
     // Allow moving
-    PortableXState(PortableXState&& other) noexcept : machine(other.machine) {
+    PortableXState(PortableXState&& other) noexcept : machine(other.machine), m_json(other.m_json), m_callbacks(std::move(other.m_callbacks)) {
         other.machine = nullptr;
     }
     PortableXState& operator=(PortableXState&& other) noexcept {
         if (this != &other) {
             if (machine) fsm_free(machine);
             machine = other.machine;
+            m_json = other.m_json;
             other.machine = nullptr;
             m_callbacks = std::move(other.m_callbacks);
             // Re-register callbacks with this instance as user_data
-            for (const auto& pair : m_callbacks) {
-                fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
+            if (machine) {
+                for (const auto& pair : m_callbacks) {
+                    fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
+                }
             }
         }
         return *this;
+    }
+
+    /**
+     * @brief Starts the state machine and processes initial actions.
+     */
+    void start() {
+        if (machine) return;
+        machine = fsm_create(m_json);
+        if (!machine) {
+            throw std::runtime_error("Failed to create FSM machine from provided JSON.");
+        }
+        for (const auto& pair : m_callbacks) {
+            fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
+        }
+        fsm_start(machine);
     }
 
     /**
@@ -125,6 +143,7 @@ public:
      * @return std::string The current state ID.
      */
     std::string getState() const {
+        if (!machine) return "uninitialized";
         char buf[64];
         if (fsm_get_state(machine, buf, sizeof(buf)) == 0) {
             return std::string(buf);
@@ -138,7 +157,9 @@ public:
      * @param event The event name to send.
      */
     void send(const char* event) {
-        fsm_send_event(machine, event);
+        if (machine) {
+            fsm_send_event(machine, event);
+        }
     }
 
     /**
@@ -149,7 +170,9 @@ public:
      */
     void registerAction(const std::string& name, ActionCallback callback) {
         m_callbacks[name] = std::move(callback);
-        fsm_register_action(machine, name.c_str(), c_callback_thunk, this);
+        if (machine) {
+            fsm_register_action(machine, name.c_str(), c_callback_thunk, this);
+        }
     }
 };
 

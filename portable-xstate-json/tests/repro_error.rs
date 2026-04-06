@@ -84,6 +84,7 @@ fn test_parallel_deep_history_repro() {
 
     let guards = indexmap::IndexMap::new();
     let actions = indexmap::IndexMap::new();
+    machine.start(&actions);
 
     // 1. SWITCH -> on
     machine.transition("SWITCH", &Value::Null, &guards, &actions);
