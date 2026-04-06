@@ -40,12 +40,13 @@ int main() {
     MachineContext* machine = fsm_create(STOPLIGHT_JSON);
     assert(machine != NULL && "Failed to create FSM");
 
+    fsm_register_action(machine, "doTimerAction", my_c_callback, (void*)"my_custom_data");
+    fsm_start(machine);
+
     char buf[64];
     fsm_get_state(machine, buf, sizeof(buf));
     printf("Initial State: %s\n", buf);
     assert(strcmp(buf, "green") == 0);
-
-    fsm_register_action(machine, "doTimerAction", my_c_callback, (void*)"my_custom_data");
 
     fsm_send_event(machine, "TIMER");
     fsm_get_state(machine, buf, sizeof(buf));
