@@ -104,7 +104,7 @@ async function main() {
     });
 
     // Create and start the machine
-    const machine = new Actor(machineDef);
+    const machine = new Actor(machineDef).start();
     console.log(machine.getSnapshot().value); // "idle"
     
     // Send an event

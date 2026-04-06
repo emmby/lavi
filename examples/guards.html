@@ -116,7 +116,7 @@
 
         // Instantiate machine
         const wasmMachine = setup(config).createMachine(machineDef);
-        const machine = wasmMachine.createActor({});
+        const machine = wasmMachine.createActor({}).start();
         
         // Initial manual update
         updateUI();
