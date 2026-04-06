@@ -212,11 +212,13 @@ pub struct RuntimeMachine {
     pub current_state: StateValue,
     pub context: Value,
     pub history_value: IndexMap<String, StateValue>,
+    pub initial_actions: Vec<Action>,
+    pub is_started: bool,
 }
 
 impl RuntimeMachine {
     pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
-        let mut dummy = vec![];
+        let mut dummy = definition.initial_actions.clone();
         let initial_state = if matches!(definition.state_type, StateType::Parallel) {
              let mut regions = IndexMap::new();
              for (r_name, r_def) in &definition.states {
@@ -243,7 +245,37 @@ impl RuntimeMachine {
             current_state: initial_state,
             context: definition.context.clone().unwrap_or(Value::Object(IndexMap::new())),
             history_value: IndexMap::new(),
+            initial_actions: dummy,
+            is_started: false,
         })
+    }
+
+    pub fn start(&mut self, actions: &IndexMap<String, ActionFunction>) {
+        if self.is_started { return; }
+        self.is_started = true;
+        
+        let mut entry_actions = self.definition.entry.clone();
+        let mut seen_paths = alloc::vec::Vec::new();
+        for path in self.current_state.get_active_paths() {
+             let parts: Vec<&str> = path.split('.').collect();
+             for i in 1..=parts.len() {
+                 let curr_path = parts[0..i].join(".");
+                 if !seen_paths.contains(&curr_path) {
+                     if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &curr_path) {
+                         entry_actions.extend(def.entry.clone());
+                     }
+                     seen_paths.push(curr_path);
+                 }
+             }
+        }
+        
+        let to_run = core::mem::take(&mut self.initial_actions);
+        for action in &to_run {
+            Self::execute_action(&mut self.context, action, &Value::Null, actions);
+        }
+        for action in &entry_actions {
+            Self::execute_action(&mut self.context, action, &Value::Null, actions);
+        }
     }
 
     pub fn state(&self) -> String {
@@ -516,6 +548,7 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
+
         self.transition_internal(event_type, event_payload, guards, actions, 0)
     }
 

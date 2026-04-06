@@ -104,7 +104,7 @@ async function main() {
     });
 
     // Create and start the machine
-    const machine = new Actor(machineDef);
+    const machine = new Actor(machineDef).start();
     console.log(machine.getSnapshot().value); // "idle"
     
     // Send an event
@@ -113,3 +113,11 @@ async function main() {
 }
 main();
 ```
+
+## Known Discrepancy: XState 5 Parity vs Memory Environments
+
+To safely cater to severely memory-constrained embedded environments (e.g., Arduinos, ESP32s), `portable-xstate` consciously deviates from XState 5 regarding pre-initialization event queues.
+
+In **XState 5**, an unstarted Actor implements a **Mailbox Buffer**: any events sent via `actor.send()` before `actor.start()` is called are pushed to a dynamic array allocated on the heap, which is later flushed when the machine starts.
+
+In **portable-xstate**, an unstarted machine explicitly **Drops** events. If `machine.send()` is called before `machine.start()`, the event is safely discarded. This guarantees that unbound hardware interrupts or rapid polling sensors cannot flood the heap with a massive queue of deferred events and crash the microcontroller before it boots.

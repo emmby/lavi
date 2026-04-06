@@ -121,7 +121,7 @@
 
         // Instantiate machine
         // Instantiate machine
-        const machine = setup(config).createMachine(machineDef).createActor({});
+        const machine = setup(config).createMachine(machineDef).createActor({}).start();
 
         // Initialize UI
         updateUI();

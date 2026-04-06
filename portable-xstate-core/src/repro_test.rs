@@ -179,6 +179,7 @@ entry: vec![],
         };
 
         let mut machine = RuntimeMachine::new(&definition).unwrap();
+        machine.start(&IndexMap::new());
         
         // 1. Initial State: atomic "off"
         assert_eq!(machine.current_state, StateValue::Atomic("off".to_string()));
@@ -249,9 +250,9 @@ entry: vec![],
         };
 
         let mut machine = RuntimeMachine::new(&definition).unwrap();
+        machine.start(&IndexMap::new());
         // Combinatorial machines (no states) should have an empty object state or something that represents root
         // In our current implementation, empty states -> Parallel(IndexMap::new())
-        
         machine.transition("INC", &Value::Null, &IndexMap::new(), &IndexMap::new());
         
         let ctx = machine.context.as_object().unwrap();

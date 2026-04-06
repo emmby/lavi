@@ -84,7 +84,7 @@
                 }
             };
 
-            const actor = createActor(machineDef, options);
+            const actor = createActor(machineDef, options).start();
             actor.start();
             window.actor = actor;
 

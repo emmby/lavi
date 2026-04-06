@@ -149,7 +149,7 @@
                 "\n\n// Configuration\nconst config = " + JSON.stringify(config, replacer, 2);
 
             const wasmMachine = setup(config).createMachine(machineDef);
-            machine = wasmMachine.createActor({});
+            machine = wasmMachine.createActor({}).start();
             
             // Initial manual update to show starting state
             updateUI();

@@ -1394,38 +1394,12 @@ impl Actor {
     }
 
     pub fn start(&mut self) -> Actor {
-        let init_event_value = Value::Object(IndexMap::from([("type".to_string(), Value::String("xstate.init".to_string()))]));
 
         if !self.is_initialized {
-
-                        // 1. Execute entry actions for the Root Machine
-        for action in &self.machine.definition.entry {
-            portable_xstate_core::RuntimeMachine::execute_action(&mut self.machine.context, action, &init_event_value, &self.actions);
-        }
-        for action in &self.machine.definition.initial_actions {
-            portable_xstate_core::RuntimeMachine::execute_action(&mut self.machine.context, action, &init_event_value, &self.actions);
-        }
-
-        // 2. Execute entry actions for the initial state(s)
-        let active_paths = self.machine.current_state.get_active_paths();
-        for path in active_paths {
-            let parts: Vec<&str> = path.split('.').collect();
-            for i in 1..=parts.len() {
-                let current_path = parts[0..i].join(".");
-                if let Some(d) = self.machine.get_state_definition(&current_path) {
-                    let entry_actions = d.entry.clone();
-                    let initial_actions = d.initial_actions.clone();
-                    for action in entry_actions {
-                        portable_xstate_core::RuntimeMachine::execute_action(&mut self.machine.context, &action, &init_event_value, &self.actions);
-                    }
-                    if i < parts.len() {
-                        for action in initial_actions {
-                            portable_xstate_core::RuntimeMachine::execute_action(&mut self.machine.context, &action, &init_event_value, &self.actions);
-                        }
-                    }
-                }
-            }
-        }
+            self.machine.start(&self.actions);
+            self.is_initialized = true;
+        } else {
+            self.machine.is_started = true;
         }
 
         // 3. Handle always transitions
@@ -1482,7 +1456,7 @@ impl Actor {
 
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
-        // web_sys::console::error_2(&JsValue::from_str(&format!("BEFORE TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
+        if !self.machine.is_started { return Ok(JsValue::UNDEFINED); }
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
 
         // 2. Inspect Snapshot

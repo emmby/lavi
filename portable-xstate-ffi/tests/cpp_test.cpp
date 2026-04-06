@@ -19,10 +19,6 @@ int main() {
     try {
         xstate::PortableXState machine(STOPLIGHT_JSON);
 
-        std::string state = machine.getState();
-        std::cout << "Initial State: " << state << std::endl;
-        assert(state == "green");
-
         bool cpp_action_called = false;
         machine.registerAction("doTimerAction", [&cpp_action_called](const xstate::Value& context, const xstate::Value& event) {
             std::cout << "C++ Action called!" << std::endl;
@@ -36,6 +32,12 @@ int main() {
 
             cpp_action_called = true;
         });
+
+        machine.start();
+
+        std::string state = machine.getState();
+        std::cout << "Initial State: " << state << std::endl;
+        assert(state == "green");
 
         machine.send("TIMER");
         state = machine.getState();
