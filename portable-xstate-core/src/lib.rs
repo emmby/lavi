@@ -255,12 +255,16 @@ impl RuntimeMachine {
         self.is_started = true;
         
         let mut entry_actions = self.definition.entry.clone();
+        let mut seen_paths = alloc::vec::Vec::new();
         for path in self.current_state.get_active_paths() {
              let parts: Vec<&str> = path.split('.').collect();
              for i in 1..=parts.len() {
                  let curr_path = parts[0..i].join(".");
-                 if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &curr_path) {
-                     entry_actions.extend(def.entry.clone());
+                 if !seen_paths.contains(&curr_path) {
+                     if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &curr_path) {
+                         entry_actions.extend(def.entry.clone());
+                     }
+                     seen_paths.push(curr_path);
                  }
              }
         }

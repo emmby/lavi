@@ -134,7 +134,9 @@ public:
         for (const auto& pair : m_callbacks) {
             fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
         }
-        fsm_start(machine);
+        if (fsm_start(machine) != 0) {
+            throw std::runtime_error("Failed to start FSM machine.");
+        }
     }
 
     /**
