@@ -134,6 +134,9 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
     0
 }
 
+/// Registers a custom clock mechanism for resolving `after` transitions.
+/// The `callback` must return a u64 reflecting an absolute monotonically increasing timestamp in milliseconds.
+/// Returns 0 on success, or -1 if the context pointer is null.
 #[no_mangle]
 pub extern "C" fn fsm_register_clock(
     ptr: *mut MachineContext,
@@ -150,6 +153,9 @@ pub extern "C" fn fsm_register_clock(
     0
 }
 
+/// Evaluates queued `after` transition timers.
+/// Call this periodically or when waking from an event loop to advance delayed transitions.
+/// Returns 0 on success, or -1 if the context pointer is null.
 #[no_mangle]
 pub extern "C" fn fsm_tick(ptr: *mut MachineContext) -> c_int {
     let ctx = unsafe {

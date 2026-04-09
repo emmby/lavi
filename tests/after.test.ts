@@ -10,6 +10,9 @@ describe('delayed transitions', () => {
     vi.useRealTimers();
   });
 
+  // Note: the original statelyai/xstate conformance test relies on implicit
+  // timer evaluation via an internal JS event loop. `portable-xstate` does not spin up 
+  // implicit JS execution threads, so we must manually flush timers utilizing `.tick()`.
   it('should transition after delay', () => {
     const machine = createMachine({
       initial: 'a',

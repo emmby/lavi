@@ -594,6 +594,8 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
         depth: usize,
+        // Bypasses the standard event matching to forcefully execute a transition. 
+        // Used primarily for resolving event-less `always` transitions or executing queued delayed `after` transitions.
         force_transition: Option<(&str, &[TransitionDefinition])>,
     ) -> Option<StateValue> {
         if depth > 100 {
