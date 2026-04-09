@@ -217,7 +217,7 @@ pub struct RuntimeMachine {
     pub initial_actions: Vec<Action>,
     pub is_started: bool,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
-    pub clock_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
+    pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
 }
 
 impl RuntimeMachine {
@@ -252,12 +252,12 @@ impl RuntimeMachine {
             initial_actions: dummy,
             is_started: false,
             active_timers: Vec::new(),
-            clock_fn: None,
+            clock_millis_fn: None,
         })
     }
 
-    pub fn register_clock(&mut self, clock_fn: alloc::rc::Rc<dyn Fn() -> u64>) {
-        self.clock_fn = Some(clock_fn);
+    pub fn register_clock(&mut self, clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64>) {
+        self.clock_millis_fn = Some(clock_millis_fn);
     }
 
     pub fn start(&mut self, actions: &IndexMap<String, ActionFunction>) {
@@ -266,7 +266,7 @@ impl RuntimeMachine {
         
         let mut entry_actions = self.definition.entry.clone();
         let mut seen_paths = alloc::vec::Vec::new();
-        let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
+        let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         for (delay, t_defs) in &self.definition.after {
             self.active_timers.push(("".to_string(), now + delay, t_defs.clone()));
         }
@@ -564,7 +564,7 @@ impl RuntimeMachine {
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
         if !self.is_started { return None; }
-        let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
+        let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         let mut expired = None;
         for (path, timestamp, t_defs) in self.active_timers.iter().rev() {
             if now >= *timestamp {
@@ -862,7 +862,8 @@ impl RuntimeMachine {
                   if leaf_is_in_any_domain && lca > max_allowed_lca { lca = max_allowed_lca; }
                   if lca > max_lca { max_lca = lca; }
              }
-        let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
+        // Evaluate timers and pop
+        let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         for i in ((max_lca + 1)..=leaf_parts.len()) {
               let path = leaf_parts[0..i].join(".");
               if !entered_paths.contains(&path) {

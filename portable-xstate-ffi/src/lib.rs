@@ -147,8 +147,8 @@ pub extern "C" fn fsm_register_clock(
         &mut *ptr
     };
     if let Some(cb) = callback {
-        let clock_fn: alloc::rc::Rc<dyn Fn() -> u64> = alloc::rc::Rc::new(move || cb());
-        ctx.machine.register_clock(clock_fn);
+        let clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64> = alloc::rc::Rc::new(move || cb());
+        ctx.machine.register_clock(clock_millis_fn);
     }
     0
 }
