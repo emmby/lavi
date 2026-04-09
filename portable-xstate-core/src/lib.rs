@@ -267,6 +267,9 @@ impl RuntimeMachine {
         let mut entry_actions = self.definition.entry.clone();
         let mut seen_paths = alloc::vec::Vec::new();
         let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
+        for (delay, t_defs) in &self.definition.after {
+            self.active_timers.push(("".to_string(), now + delay, t_defs.clone()));
+        }
         for path in self.current_state.get_active_paths() {
              let parts: Vec<&str> = path.split('.').collect();
              for i in 1..=parts.len() {
@@ -563,7 +566,7 @@ impl RuntimeMachine {
         if !self.is_started { return None; }
         let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
         let mut expired = None;
-        for (path, timestamp, t_defs) in &self.active_timers {
+        for (path, timestamp, t_defs) in self.active_timers.iter().rev() {
             if now >= *timestamp {
                 expired = Some((path.clone(), t_defs.clone()));
                 break;

@@ -79,7 +79,12 @@ pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
         initial_actions,
         states,
         on: dto.on.into_iter().map(|(k, v): (String, _)| (k, v.into_iter().map(map_transition).collect())).collect(),
-        after: IndexMap::new(),
+        after: dto.after.into_iter()
+            .filter_map(|(k, v)| {
+                let delay = k.parse::<u64>().ok()?;
+                Some((delay, v.into_iter().map(map_transition).collect()))
+            })
+            .collect(),
         entry: dto.entry.into_iter().map(map_action).collect(),
         exit: dto.exit.into_iter().map(map_action).collect(),
         invoke: dto.invoke.into_iter().map(|inv| portable_xstate_core::InvokeDefinition {
