@@ -25,6 +25,7 @@ mod tests {
                     initial: None, initial_actions: vec![],
                     entry: vec![],
                     exit: vec![],
+                    after: indexmap::IndexMap::new(),
                     on: indexmap::indexmap! {
                         "SWITCH".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["on".to_string()]),
@@ -53,6 +54,7 @@ mod tests {
                     initial: None, initial_actions: vec![], // Parallel has no initial -> enters all children
                     entry: vec![],
                     exit: vec![],
+                    after: indexmap::IndexMap::new(),
                     on: indexmap::indexmap! {
                         "POWER".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["off".to_string()]),
@@ -70,6 +72,7 @@ mod tests {
 // Default B
                             entry: vec![],
                             exit: vec![],
+                            after: indexmap::IndexMap::new(),
                             on: indexmap::indexmap!{},
                             states: indexmap::indexmap! {
                                 "B".to_string() => StateDefinition {
@@ -79,6 +82,7 @@ mod tests {
                                     initial: None, initial_actions: vec![],
                                     entry: vec![],
                                     exit: vec![],
+                                    after: indexmap::IndexMap::new(),
                                     on: indexmap::indexmap! {
                                         "INNER_A".to_string() => vec![TransitionDefinition {
                                             target: Some(vec!["C".to_string()]), // Relative C
@@ -101,6 +105,7 @@ mod tests {
                                     initial: Some("D".to_string()), initial_actions: vec![],
 entry: vec![],
                                     exit: vec![],
+                                    after: indexmap::IndexMap::new(),
                                     on: indexmap::indexmap!{},
                                     states: indexmap::indexmap! {
                                          "D".to_string() => StateDefinition {
@@ -110,6 +115,7 @@ entry: vec![],
                                             initial: None, initial_actions: vec![],
                                             entry: vec![],
                                             exit: vec![],
+                                            after: indexmap::IndexMap::new(),
                                             on: indexmap::indexmap!{},
                                             states: indexmap::indexmap!{},
                                             history: None,
@@ -139,6 +145,7 @@ entry: vec![],
                             initial: Some("L".to_string()), initial_actions: vec![],
 entry: vec![],
                             exit: vec![],
+                            after: indexmap::IndexMap::new(),
                             on: indexmap::indexmap!{},
                             states: indexmap::indexmap! {
                                 "L".to_string() => StateDefinition::default_atomic(),
@@ -156,6 +163,7 @@ entry: vec![],
                             initial: None, initial_actions: vec![],
                             entry: vec![],
                             exit: vec![],
+                            after: indexmap::IndexMap::new(),
                             on: indexmap::indexmap!{},
                             states: indexmap::indexmap!{},
                             history: Some(HistoryType::Deep),
@@ -172,6 +180,7 @@ entry: vec![],
                     invoke: vec![],
                 },
             },
+            after: indexmap::IndexMap::new(),
             on: indexmap::indexmap!{},
             entry: vec![],
             exit: vec![],
@@ -231,6 +240,7 @@ entry: vec![],
             types: None,
             invoke: vec![],
             states: IndexMap::new(),
+            after: indexmap::IndexMap::new(),
             on: indexmap::indexmap! {
                 "INC".to_string() => vec![TransitionDefinition {
                     target: None,

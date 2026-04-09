@@ -23,6 +23,9 @@ pub type fsm_action_callback_t = Option<extern "C" fn(
     user_data: *mut core::ffi::c_void,
 )>;
 
+#[allow(non_camel_case_types)]
+pub type fsm_clock_callback_t = Option<extern "C" fn() -> u64>;
+
 pub struct RegisteredAction {
     pub callback: fsm_action_callback_t,
     pub user_data: *mut core::ffi::c_void,
@@ -130,6 +133,38 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
     ctx.machine.transition(event, &payload, &guards, &ctx.actions);
     0
 }
+
+#[no_mangle]
+pub extern "C" fn fsm_register_clock(
+    ptr: *mut MachineContext,
+    callback: fsm_clock_callback_t,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    if let Some(cb) = callback {
+        let clock_fn: alloc::rc::Rc<dyn Fn() -> u64> = alloc::rc::Rc::new(move || cb());
+        ctx.machine.register_clock(clock_fn);
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_tick(ptr: *mut MachineContext) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    
+    let guards = IndexMap::new();
+    if !ctx.machine.is_started { return 0; }
+    
+    while let Some(_) = ctx.machine.tick(&guards, &ctx.actions) {}
+    
+    0
+}
+
 
 #[no_mangle]
 pub extern "C" fn fsm_value_is_object(val: *const fsm_value_t) -> bool {

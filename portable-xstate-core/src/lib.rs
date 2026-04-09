@@ -119,6 +119,7 @@ pub struct StateDefinition {
     pub initial_actions: Vec<Action>,
     pub states: IndexMap<String, StateDefinition>,
     pub on: IndexMap<String, Vec<TransitionDefinition>>,
+    pub after: IndexMap<u64, Vec<TransitionDefinition>>,
     pub entry: Vec<Action>,
     pub exit: Vec<Action>,
     pub history: Option<HistoryType>, // If this state IS a history state
@@ -139,7 +140,7 @@ impl StateDefinition {
         Self {
             id: None, type_: None, state_type: StateType::Atomic, initial: None, 
             initial_actions: vec![],
-            states: IndexMap::new(), on: IndexMap::new(), entry: vec![], exit: vec![], 
+            states: IndexMap::new(), on: IndexMap::new(), after: IndexMap::new(), entry: vec![], exit: vec![], 
             history: None, history_target: None, tags: vec![], invoke: vec![], history_actions: vec![]
         }
     }
@@ -198,6 +199,7 @@ pub struct MachineDefinition {
     pub initial: String, pub initial_actions: Vec<Action>,
     pub states: IndexMap<String, StateDefinition>,
     pub on: IndexMap<String, Vec<TransitionDefinition>>,
+    pub after: IndexMap<u64, Vec<TransitionDefinition>>,
     pub entry: Vec<Action>,
     pub exit: Vec<Action>,
     pub invoke: Vec<InvokeDefinition>,
@@ -214,6 +216,8 @@ pub struct RuntimeMachine {
     pub history_value: IndexMap<String, StateValue>,
     pub initial_actions: Vec<Action>,
     pub is_started: bool,
+    pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
+    pub clock_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
 }
 
 impl RuntimeMachine {
@@ -247,7 +251,13 @@ impl RuntimeMachine {
             history_value: IndexMap::new(),
             initial_actions: dummy,
             is_started: false,
+            active_timers: Vec::new(),
+            clock_fn: None,
         })
+    }
+
+    pub fn register_clock(&mut self, clock_fn: alloc::rc::Rc<dyn Fn() -> u64>) {
+        self.clock_fn = Some(clock_fn);
     }
 
     pub fn start(&mut self, actions: &IndexMap<String, ActionFunction>) {
@@ -256,6 +266,7 @@ impl RuntimeMachine {
         
         let mut entry_actions = self.definition.entry.clone();
         let mut seen_paths = alloc::vec::Vec::new();
+        let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
         for path in self.current_state.get_active_paths() {
              let parts: Vec<&str> = path.split('.').collect();
              for i in 1..=parts.len() {
@@ -263,6 +274,9 @@ impl RuntimeMachine {
                  if !seen_paths.contains(&curr_path) {
                      if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &curr_path) {
                          entry_actions.extend(def.entry.clone());
+                         for (delay, t_defs) in &def.after {
+                             self.active_timers.push((curr_path.clone(), now + delay, t_defs.clone()));
+                         }
                      }
                      seen_paths.push(curr_path);
                  }
@@ -541,6 +555,27 @@ impl RuntimeMachine {
     }
     
     // SEARCH PATH FIX, PER-LEAF FIX
+    pub fn tick(
+        &mut self,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+    ) -> Option<StateValue> {
+        if !self.is_started { return None; }
+        let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
+        let mut expired = None;
+        for (path, timestamp, t_defs) in &self.active_timers {
+            if now >= *timestamp {
+                expired = Some((path.clone(), t_defs.clone()));
+                break;
+            }
+        }
+        
+        if let Some((path, t_defs)) = expired {
+             return self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
+        }
+        None
+    }
+
     pub fn transition(
         &mut self,
         event_type: &str,
@@ -549,7 +584,7 @@ impl RuntimeMachine {
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
 
-        self.transition_internal(event_type, event_payload, guards, actions, 0)
+        self.transition_internal(event_type, event_payload, guards, actions, 0, None)
     }
 
     fn transition_internal(
@@ -559,6 +594,7 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
         depth: usize,
+        force_transition: Option<(&str, &[TransitionDefinition])>,
     ) -> Option<StateValue> {
         if depth > 100 {
             panic!("Maximum transition depth exceeded!");
@@ -586,16 +622,20 @@ impl RuntimeMachine {
         let mut conflict_regions: Vec<String> = Vec::new();
 
         for current_path in all_search_paths {
-            let def_opt = if current_path.is_empty() {
-                 None 
+            let transitions_opt = if let Some((f_path, f_t)) = force_transition {
+                 if *f_path == current_path { Some(f_t) } else { None }
             } else {
-                 Self::get_state_def_recursive(&self.definition.states, &current_path)
-            };
-            
-            let transitions_opt = if current_path.is_empty() {
-                 self.definition.on.get(event_type)
-            } else {
-                 def_opt.and_then(|d| d.on.get(event_type))
+                let def_opt = if current_path.is_empty() {
+                     None 
+                } else {
+                     Self::get_state_def_recursive(&self.definition.states, &current_path)
+                };
+                
+                if current_path.is_empty() {
+                     self.definition.on.get(event_type).map(|v| v.as_slice())
+                } else {
+                     def_opt.and_then(|d| d.on.get(event_type)).map(|v| v.as_slice())
+                }
             };
             
             if let Some(transitions) = transitions_opt {
@@ -788,6 +828,8 @@ impl RuntimeMachine {
               exited_paths.push(path.clone());
         }
         
+        self.active_timers.retain(|(p, _, _)| !exited_paths.contains(p));
+        
         for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
         for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
 
@@ -815,27 +857,31 @@ impl RuntimeMachine {
                   if leaf_is_in_any_domain && lca > max_allowed_lca { lca = max_allowed_lca; }
                   if lca > max_lca { max_lca = lca; }
              }
-             for i in (max_lca + 1)..=leaf_parts.len() {
-                  let path = leaf_parts[0..i].join(".");
-                  if !entered_paths.contains(&path) {
-                      if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
-                           for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions); }
-                           for inv in &def.invoke {
-                                if let Some(src) = inv.src.as_string() {
-                                     Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
-                                }
-                           }
-                      }
-                      entered_paths.push(path);
+        let now = self.clock_fn.as_ref().map(|c| c()).unwrap_or(0);
+        for i in ((max_lca + 1)..=leaf_parts.len()) {
+              let path = leaf_parts[0..i].join(".");
+              if !entered_paths.contains(&path) {
+                  if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
+                       for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions); }
+                       for inv in &def.invoke {
+                            if let Some(src) = inv.src.as_string() {
+                                 Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                            }
+                       }
+                       for (delay, t_defs) in &def.after {
+                           self.active_timers.push((path.clone(), now + delay, t_defs.clone()));
+                       }
                   }
+                  entered_paths.push(path);
               }
+          }
          }
         let _changed = finalized_state != self.current_state;
         self.current_state = finalized_state;
 
         let has_transition_or_actions = !selected_transitions.is_empty();
-        if !event_type.is_empty() || _changed {
-             if let Some(next) = self.transition_internal("", event_payload, guards, actions, depth + 1) {
+        if !event_type.is_empty() || _changed || force_transition.is_some() {
+             if let Some(next) = self.transition_internal("", event_payload, guards, actions, depth + 1, None) {
                  return Some(next);
              }
         }
