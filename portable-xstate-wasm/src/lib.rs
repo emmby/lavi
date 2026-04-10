@@ -1404,6 +1404,7 @@ impl Actor {
             self.is_initialized = true;
         } else {
             self.machine.is_started = true;
+            self.machine.revive_timers();
         }
 
         // 3. Handle always transitions

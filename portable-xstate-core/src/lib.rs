@@ -295,6 +295,40 @@ impl RuntimeMachine {
         }
     }
 
+    pub fn revive_timers(&mut self) {
+        if !self.is_started { return; }
+        self.active_timers.clear();
+        let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
+        let active_leaves = self.current_state.get_active_paths();
+        
+        let mut paths_to_revive = alloc::vec::Vec::new();
+        for leaf in &active_leaves {
+            let mut parts: Vec<&str> = leaf.split('.').collect();
+            while !parts.is_empty() {
+                let p = parts.join(".");
+                if !paths_to_revive.contains(&p) { paths_to_revive.push(p); }
+                parts.pop();
+            }
+        }
+        if !paths_to_revive.contains(&"".to_string()) {
+            paths_to_revive.push("".to_string());
+        }
+        
+        for path in paths_to_revive {
+            let state_def_after = if path.is_empty() {
+                Some(&self.definition.after)
+            } else {
+                Self::get_state_def_recursive(&self.definition.states, &path).map(|def| &def.after)
+            };
+            
+            if let Some(after_map) = state_def_after {
+                for (delay, t_defs) in after_map {
+                    self.active_timers.push((path.clone(), now + delay, t_defs.clone()));
+                }
+            }
+        }
+    }
+
     pub fn state(&self) -> String {
         self.current_state.get_active_paths().first().cloned().unwrap_or_default()
     }
@@ -566,14 +600,21 @@ impl RuntimeMachine {
         if !self.is_started { return None; }
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         let mut expired = None;
-        for (path, timestamp, t_defs) in self.active_timers.iter().rev() {
+        let mut expired_idx = None;
+        
+        for (idx, (path, timestamp, t_defs)) in self.active_timers.iter().enumerate().rev() {
             if now >= *timestamp {
                 expired = Some((path.clone(), t_defs.clone()));
+                expired_idx = Some(idx);
                 break;
             }
         }
         
         if let Some((path, t_defs)) = expired {
+             // Extract it before evaluating, so that if the transition conditionally drops, it's permanently dropped.
+             if let Some(idx) = expired_idx {
+                 self.active_timers.remove(idx);
+             }
              return self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
         }
         None
