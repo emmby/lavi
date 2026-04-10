@@ -497,6 +497,8 @@ impl StateNode {
             is_initialized: false,
         };
 
+        runner.machine.register_clock(Rc::new(|| js_sys::Date::now() as u64));
+
         // Apply options
         if options.is_object() {
              let inspect_key = JsValue::from_str("inspect");
@@ -1090,7 +1092,7 @@ impl Actor {
              } else { None }
         } else { None };
 
-        let machine = if let Some(mut internal_state) = machine_data {
+        let mut machine = if let Some(mut internal_state) = machine_data {
              internal_state.guards.extend(guards);
              guards = internal_state.guards;
              internal_state.actions.extend(actions);
@@ -1118,6 +1120,8 @@ impl Actor {
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
              RuntimeMachine::new(&machine_def).map_err(|e| JsValue::from_str(&e))?
         };
+
+        machine.register_clock(Rc::new(|| js_sys::Date::now() as u64));
 
         let mut actor = Actor { 
             machine, 
@@ -1481,6 +1485,19 @@ impl Actor {
     #[wasm_bindgen(js_name = getPersistedSnapshot)]
     pub fn get_persisted_snapshot(&self) -> JsValue {
         self.get_snapshot().into()
+    }
+
+    #[wasm_bindgen]
+    pub fn tick(&mut self) -> Result<(), JsValue> {
+        if !self.machine.is_started { return Ok(()); }
+        let mut transitioned = false;
+        while let Some(_) = self.machine.tick(&self.guards, &self.actions) {
+            transitioned = true;
+        }
+        if transitioned {
+            self.emit_snapshot();
+        }
+        Ok(())
     }
 }
 

@@ -15,6 +15,8 @@ pub struct MachineDefinitionDto {
     pub states: IndexMap<String, StateDefinitionDto>,
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
     pub on: IndexMap<String, Vec<TransitionDefinitionDto>>,
+    #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
+    pub after: IndexMap<String, Vec<TransitionDefinitionDto>>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
@@ -92,6 +94,8 @@ pub struct StateDefinitionDto {
 
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
     pub on: IndexMap<String, Vec<TransitionDefinitionDto>>,
+    #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
+    pub after: IndexMap<String, Vec<TransitionDefinitionDto>>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]

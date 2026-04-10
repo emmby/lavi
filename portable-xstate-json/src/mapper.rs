@@ -79,6 +79,12 @@ pub fn map_machine(dto: MachineDefinitionDto) -> MachineDefinition {
         initial_actions,
         states,
         on: dto.on.into_iter().map(|(k, v): (String, _)| (k, v.into_iter().map(map_transition).collect())).collect(),
+        after: dto.after.into_iter()
+            .filter_map(|(k, v)| {
+                let delay = k.parse::<u64>().ok()?;
+                Some((delay, v.into_iter().map(map_transition).collect()))
+            })
+            .collect(),
         entry: dto.entry.into_iter().map(map_action).collect(),
         exit: dto.exit.into_iter().map(map_action).collect(),
         invoke: dto.invoke.into_iter().map(|inv| portable_xstate_core::InvokeDefinition {
@@ -112,7 +118,7 @@ fn map_states(
         }
 
         let StateDefinitionDto {
-            id, type_, initial, states: child_states, on, entry, exit, always, tags, invoke, history, target, actions, ..
+            id, type_, initial, states: child_states, on, after, entry, exit, always, tags, invoke, history, target, actions, ..
         } = dto;
 
         let (initial, initial_actions) = resolve_initial_info(initial);
@@ -143,6 +149,13 @@ fn map_states(
             on_map.insert("".to_string(), mapped); 
         }
 
+        let after_map: IndexMap<u64, Vec<TransitionDefinition>> = after.into_iter()
+            .filter_map(|(k, v)| {
+                let delay = k.parse::<u64>().ok()?;
+                Some((delay, v.into_iter().map(map_transition).collect()))
+            })
+            .collect();
+
         let is_deep_history = match &history {
             Some(serde_json::Value::String(s)) if s == "deep" => true,
             Some(serde_json::Value::Object(o)) => {
@@ -167,6 +180,7 @@ fn map_states(
             initial_actions,
             states: children,
             on: on_map,
+            after: after_map,
             entry: entry.into_iter().map(map_action).collect(),
             exit: exit.into_iter().map(map_action).collect(),
             tags,
