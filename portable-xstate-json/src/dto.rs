@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::vec;
+use alloc::string::ToString;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct MachineDefinitionDto {
@@ -15,7 +16,7 @@ pub struct MachineDefinitionDto {
     pub states: IndexMap<String, StateDefinitionDto>,
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
     pub on: IndexMap<String, Vec<TransitionDefinitionDto>>,
-    #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
+    #[serde(default, deserialize_with = "deserialize_after")]
     pub after: IndexMap<String, Vec<TransitionDefinitionDto>>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
@@ -94,7 +95,7 @@ pub struct StateDefinitionDto {
 
     #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
     pub on: IndexMap<String, Vec<TransitionDefinitionDto>>,
-    #[serde(default, deserialize_with = "deserialize_map_vec_or_single")]
+    #[serde(default, deserialize_with = "deserialize_after")]
     pub after: IndexMap<String, Vec<TransitionDefinitionDto>>,
     #[serde(default, deserialize_with = "deserialize_vec_or_single")]
     pub entry: Vec<ActionDto>,
@@ -163,5 +164,57 @@ where
             Ok(result)
         }
         MapVecOrSingle::Null => Ok(IndexMap::new()),
+    }
+}
+
+fn deserialize_after<'de, D>(deserializer: D) -> Result<IndexMap<String, Vec<TransitionDefinitionDto>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AfterFormat {
+        Map(IndexMap<String, serde_json::Value>),
+        Array(Vec<serde_json::Value>),
+        Null,
+    }
+
+    match AfterFormat::deserialize(deserializer)? {
+        AfterFormat::Map(m) => {
+            let mut result = IndexMap::new();
+            for (k, v) in m {
+                let transitions = match v {
+                    serde_json::Value::Array(arr) => {
+                        arr.into_iter().map(|item| serde_json::from_value(item).unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()))).collect()
+                    }
+                    serde_json::Value::String(s) => vec![serde_json::from_value(serde_json::Value::String(s)).unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()))],
+                    serde_json::Value::Object(_) => vec![serde_json::from_value(v).unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()))],
+                    _ => vec![],
+                };
+                result.insert(k, transitions);
+            }
+            Ok(result)
+        }
+        AfterFormat::Array(arr) => {
+            let mut result: IndexMap<String, Vec<TransitionDefinitionDto>> = IndexMap::new();
+            for item in arr {
+                if let serde_json::Value::Object(mut map) = item {
+                    if let Some(delay_val) = map.remove("delay") {
+                        let delay_str = match delay_val {
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::String(s) => s,
+                            _ => "".to_string(),
+                        };
+                        if delay_str.is_empty() { continue; }
+                        
+                        let transition: TransitionDefinitionDto = serde_json::from_value(serde_json::Value::Object(map))
+                            .unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()));
+                        result.entry(delay_str).or_default().push(transition);
+                    }
+                }
+            }
+            Ok(result)
+        }
+        AfterFormat::Null => Ok(IndexMap::new()),
     }
 }

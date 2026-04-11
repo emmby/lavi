@@ -1404,6 +1404,7 @@ impl Actor {
             self.is_initialized = true;
         } else {
             self.machine.is_started = true;
+            self.machine.revive_timers();
         }
 
         // 3. Handle always transitions
@@ -1491,8 +1492,11 @@ impl Actor {
     pub fn tick(&mut self) -> Result<(), JsValue> {
         if !self.machine.is_started { return Ok(()); }
         let mut transitioned = false;
+        let mut count = 0; // limit tick depth to prevent UI thread hangs
         while let Some(_) = self.machine.tick(&self.guards, &self.actions) {
             transitioned = true;
+            count += 1;
+            if count > 100 { break; }
         }
         if transitioned {
             self.emit_snapshot();

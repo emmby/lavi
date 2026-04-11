@@ -35,7 +35,9 @@ High usage, required for almost every state machine.
   - [ ] Self-transitions with reentry (Partial - deep reentry skipped)
   - [x] Guarded Transitions
   - [x] Root-level transitions (combinatorial machines)
-  - [ ] Delayed Transitions (`after: { delay: target }`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/after.test.ts))
+  - [x] Delayed Transitions (`after: { delay: target }`) (Partial) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/after.test.ts))
+    - **Note**: Expressions computing timeouts dynamically via JS callbacks are not yet implemented (`delay expressions`).
+    - **Note**: Internal memory clearing hooks (`clearTimeout`) and legacy string formatting validation are natively skipped by design.
   - [ ] Wildcard Transitions (`*`)
   - [ ] Partial Wildcard Transitions (`models.*`)
 
