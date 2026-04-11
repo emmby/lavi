@@ -599,23 +599,20 @@ impl RuntimeMachine {
     ) -> Option<StateValue> {
         if !self.is_started { return None; }
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
-        let mut expired = None;
-        let mut expired_idx = None;
         
-        for (idx, (path, timestamp, t_defs)) in self.active_timers.iter().enumerate().rev() {
-            if now >= *timestamp {
-                expired = Some((path.clone(), t_defs.clone()));
-                expired_idx = Some(idx);
+        loop {
+            let expired = self.active_timers.iter().enumerate().rev()
+                .find(|(_, (_, timestamp, _))| now >= *timestamp)
+                .map(|(idx, (path, _, t_defs))| (idx, path.clone(), t_defs.clone()));
+
+            if let Some((idx, path, t_defs)) = expired {
+                self.active_timers.remove(idx);
+                if let Some(next) = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs))) {
+                    return Some(next);
+                }
+            } else {
                 break;
             }
-        }
-        
-        if let Some((path, t_defs)) = expired {
-             // Extract it before evaluating, so that if the transition conditionally drops, it's permanently dropped.
-             if let Some(idx) = expired_idx {
-                 self.active_timers.remove(idx);
-             }
-             return self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
         }
         None
     }

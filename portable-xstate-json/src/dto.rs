@@ -187,7 +187,7 @@ where
                     serde_json::Value::Array(arr) => {
                         arr.into_iter().map(|item| serde_json::from_value(item).unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()))).collect()
                     }
-                    serde_json::Value::String(s) => vec![serde_json::from_value(serde_json::Value::String(s)).unwrap()],
+                    serde_json::Value::String(s) => vec![serde_json::from_value(serde_json::Value::String(s)).unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()))],
                     serde_json::Value::Object(_) => vec![serde_json::from_value(v).unwrap_or_else(|_| TransitionDefinitionDto::Target("".to_string()))],
                     _ => vec![],
                 };

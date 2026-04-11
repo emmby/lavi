@@ -26,15 +26,30 @@ pub type fsm_action_callback_t = Option<extern "C" fn(
 #[allow(non_camel_case_types)]
 pub type fsm_clock_callback_t = Option<extern "C" fn() -> u64>;
 
+#[allow(non_camel_case_types)]
+pub type fsm_guard_callback_t = Option<extern "C" fn(
+    guard_name: *const c_char,
+    context: *const fsm_value_t,
+    event: *const fsm_value_t,
+    user_data: *mut core::ffi::c_void,
+) -> bool>;
+
 pub struct RegisteredAction {
     pub callback: fsm_action_callback_t,
+    pub user_data: *mut core::ffi::c_void,
+}
+
+pub struct RegisteredGuard {
+    pub callback: fsm_guard_callback_t,
     pub user_data: *mut core::ffi::c_void,
 }
 
 pub struct MachineContext {
     machine: RuntimeMachine,
     callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
+    guard_callbacks: BTreeMap<alloc::string::String, RegisteredGuard>,
     actions: IndexMap<alloc::string::String, portable_xstate_core::ActionFunction>,
+    guards: IndexMap<alloc::string::String, portable_xstate_core::GuardFunction>,
 }
 
 #[no_mangle]
@@ -58,7 +73,9 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
     let ctx = Box::new(MachineContext {
         machine,
         callbacks: BTreeMap::new(),
+        guard_callbacks: BTreeMap::new(),
         actions: IndexMap::new(),
+        guards: IndexMap::new(),
     });
     Box::into_raw(ctx)
 }
@@ -126,11 +143,9 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
         Err(_) => return -2,
     };
     
-    let guards = IndexMap::new(); 
-    let payload = Value::Null;
-
     if !ctx.machine.is_started { return 0; }
-    ctx.machine.transition(event, &payload, &guards, &ctx.actions);
+    let payload = Value::Null;
+    ctx.machine.transition(event, &payload, &ctx.guards, &ctx.actions);
     0
 }
 
@@ -163,10 +178,9 @@ pub extern "C" fn fsm_tick(ptr: *mut MachineContext) -> c_int {
         &mut *ptr
     };
     
-    let guards = IndexMap::new();
     if !ctx.machine.is_started { return 0; }
     
-    while let Some(_) = ctx.machine.tick(&guards, &ctx.actions) {}
+    while let Some(_) = ctx.machine.tick(&ctx.guards, &ctx.actions) {}
     
     0
 }
@@ -287,6 +301,51 @@ pub extern "C" fn fsm_register_action(
     });
     
     ctx.actions.insert(name_string, action_fn);
+    
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_register_guard(
+    ptr: *mut MachineContext,
+    guard_name: *const c_char,
+    callback: fsm_guard_callback_t,
+    user_data: *mut core::ffi::c_void,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    if guard_name.is_null() { return -2; }
+    
+    let name_c_str = unsafe { CStr::from_ptr(guard_name) };
+    let name = match name_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    
+    let name_string = alloc::string::String::from(name);
+    
+    ctx.guard_callbacks.insert(name_string.clone(), RegisteredGuard {
+        callback,
+        user_data,
+    });
+    
+    let guard_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
+    let guard_fn: portable_xstate_core::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
+        if let Some(cb) = callback {
+            cb(
+                guard_name_cstr.as_ptr(),
+                context as *const Value as *const fsm_value_t,
+                event as *const Value as *const fsm_value_t,
+                user_data
+            )
+        } else {
+            false
+        }
+    });
+    
+    ctx.guards.insert(name_string, guard_fn);
     
     0
 }

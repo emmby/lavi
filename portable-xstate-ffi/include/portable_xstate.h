@@ -38,11 +38,25 @@ typedef void (*fsm_action_callback_t)(
     void* user_data
 );
 
+typedef bool (*fsm_guard_callback_t)(
+    const char* guard_name,
+    const fsm_value_t* context,
+    const fsm_value_t* event,
+    void* user_data
+);
+
 // Registration
 int fsm_register_action(
     MachineContext* ctx,
     const char* action_name,
     fsm_action_callback_t callback,
+    void* user_data
+);
+
+int fsm_register_guard(
+    MachineContext* ctx,
+    const char* guard_name,
+    fsm_guard_callback_t callback,
     void* user_data
 );
 #ifdef __cplusplus
