@@ -208,6 +208,28 @@ public:
             fsm_register_guard(machine, name.c_str(), c_guard_thunk, this);
         }
     }
+
+    /**
+     * @brief Register a callback for the system clock (used for delayed transitions).
+     * 
+     * @param callback The callback that returns the current absolute time in milliseconds.
+     */
+    void registerClock(fsm_clock_callback_t callback) {
+        if (machine) {
+            fsm_register_clock(machine, callback);
+        }
+    }
+
+    /**
+     * @brief Process pending explicit timers (delayed `after` transitions).
+     * 
+     * Call this inside your main event loop to ensure delayed timers trigger correctly.
+     */
+    void tick() {
+        if (machine) {
+            fsm_tick(machine);
+        }
+    }
 };
 
 } // namespace xstate

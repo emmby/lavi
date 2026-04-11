@@ -1,6 +1,7 @@
 #ifndef PORTABLE_XSTATE_H
 #define PORTABLE_XSTATE_H
 
+#include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -45,6 +46,8 @@ typedef bool (*fsm_guard_callback_t)(
     void* user_data
 );
 
+typedef uint64_t (*fsm_clock_callback_t)(void);
+
 // Registration
 int fsm_register_action(
     MachineContext* ctx,
@@ -59,6 +62,13 @@ int fsm_register_guard(
     fsm_guard_callback_t callback,
     void* user_data
 );
+
+int fsm_register_clock(
+    MachineContext* ctx,
+    fsm_clock_callback_t callback
+);
+
+int fsm_tick(MachineContext* ptr);
 #ifdef __cplusplus
 }
 #endif
