@@ -1,12 +1,16 @@
 name: Trigger PlatformIO Update
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [ "main", "master" ]
+    types:
+      - completed
 
 jobs:
   dispatch:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v3
@@ -14,4 +18,4 @@ jobs:
           token: ${{ secrets.PLATFORMIO_DISPATCH_TOKEN }}
           repository: emmby/portable-xstate-platformio
           event-type: update-upstream
-          client-payload: '{"sha": "${{ github.sha }}"}'
+          client-payload: '{"sha": "${{ github.event.workflow_run.head_sha }}"}'
