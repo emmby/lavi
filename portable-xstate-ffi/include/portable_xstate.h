@@ -68,6 +68,14 @@ int fsm_register_clock(
     fsm_clock_callback_t callback
 );
 
+/**
+ * @brief Process pending explicit timers (delayed after transitions).
+ * 
+ * Call this periodically or when waking from an event loop to advance delayed transitions.
+ * 
+ * @param ptr The machine context. The caller is responsible for ensuring the lifetime of this pointer exceeds the duration of this call.
+ * @return 0 on success, or -1 if the context pointer is null.
+ */
 int fsm_tick(MachineContext* ptr);
 #ifdef __cplusplus
 }

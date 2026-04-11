@@ -64,6 +64,7 @@ private:
     const char* m_json;
     std::map<std::string, ActionCallback> m_callbacks;
     std::map<std::string, GuardCallback> m_guards;
+    fsm_clock_callback_t m_clockCallback = nullptr;
     
     static void c_callback_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
         if (!user_data) return;
@@ -114,8 +115,9 @@ public:
     PortableXState& operator=(const PortableXState&) = delete;
 
     // Allow moving
-    PortableXState(PortableXState&& other) noexcept : machine(other.machine), m_json(other.m_json), m_callbacks(std::move(other.m_callbacks)), m_guards(std::move(other.m_guards)) {
+    PortableXState(PortableXState&& other) noexcept : machine(other.machine), m_json(other.m_json), m_callbacks(std::move(other.m_callbacks)), m_guards(std::move(other.m_guards)), m_clockCallback(other.m_clockCallback) {
         other.machine = nullptr;
+        other.m_clockCallback = nullptr;
     }
     PortableXState& operator=(PortableXState&& other) noexcept {
         if (this != &other) {
@@ -125,6 +127,8 @@ public:
             other.machine = nullptr;
             m_callbacks = std::move(other.m_callbacks);
             m_guards = std::move(other.m_guards);
+            m_clockCallback = other.m_clockCallback;
+            other.m_clockCallback = nullptr;
             // Re-register callbacks with this instance as user_data
             if (machine) {
                 for (const auto& pair : m_callbacks) {
@@ -132,6 +136,9 @@ public:
                 }
                 for (const auto& pair : m_guards) {
                     fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
+                }
+                if (m_clockCallback) {
+                    fsm_register_clock(machine, m_clockCallback);
                 }
             }
         }
@@ -152,6 +159,9 @@ public:
         }
         for (const auto& pair : m_guards) {
             fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
+        }
+        if (m_clockCallback) {
+            fsm_register_clock(machine, m_clockCallback);
         }
         if (fsm_start(machine) != 0) {
             throw std::runtime_error("Failed to start FSM machine.");
@@ -215,6 +225,7 @@ public:
      * @param callback The callback that returns the current absolute time in milliseconds.
      */
     void registerClock(fsm_clock_callback_t callback) {
+        m_clockCallback = callback;
         if (machine) {
             fsm_register_clock(machine, callback);
         }
