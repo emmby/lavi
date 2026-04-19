@@ -219,7 +219,7 @@ pub struct RuntimeMachine {
     pub is_started: bool,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
-    pub internal_queue: Vec<Value>,
+    pub internal_queue: alloc::collections::VecDeque<Value>,
 }
 
 impl RuntimeMachine {
@@ -255,7 +255,7 @@ impl RuntimeMachine {
             is_started: false,
             active_timers: Vec::new(),
             clock_millis_fn: None,
-            internal_queue: Vec::new(),
+            internal_queue: alloc::collections::VecDeque::new(),
         })
     }
 
@@ -296,6 +296,8 @@ impl RuntimeMachine {
         for action in &entry_actions {
             Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
         }
+        // Process any events raised during initialization
+        let _ = self.drain_internal_queue(&IndexMap::new(), actions);
     }
 
     pub fn revive_timers(&mut self) {
@@ -570,7 +572,7 @@ impl RuntimeMachine {
         None
     }
     
-    pub fn execute_action(ctx: &mut Value, action: &Action, event: &Value, actions_map: &IndexMap<String, ActionFunction>, internal_queue: &mut Vec<Value>) {
+    pub fn execute_action(ctx: &mut Value, action: &Action, event: &Value, actions_map: &IndexMap<String, ActionFunction>, internal_queue: &mut alloc::collections::VecDeque<Value>) {
         match action {
             Action::Named(name) => {
                 if let Some(f) = actions_map.get(name) {
@@ -592,7 +594,7 @@ impl RuntimeMachine {
                 }
             }
             Action::Raise(payload) => {
-                internal_queue.push(payload.clone());
+                internal_queue.push_back(payload.clone());
             }
         }
     }
@@ -642,8 +644,13 @@ impl RuntimeMachine {
     
     fn drain_internal_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {
         let mut last_valid_state = None;
-        while !self.internal_queue.is_empty() {
-            let raised = self.internal_queue.remove(0);
+        let mut iterations = 0;
+        while let Some(raised) = self.internal_queue.pop_front() {
+            iterations += 1;
+            if iterations > 100 {
+                // Prevent infinite loops from cyclic raised events
+                break;
+            }
             let (e_type, e_payload) = match &raised {
                 Value::String(s) => (s.as_str(), &Value::Null),
                 Value::Object(map) => {
