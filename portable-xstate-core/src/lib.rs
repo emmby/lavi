@@ -218,6 +218,8 @@ pub struct RuntimeMachine {
     pub is_started: bool,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
+    pub is_processing: bool,
+    pub external_queue: Vec<(String, Value)>,
 }
 
 impl RuntimeMachine {
@@ -253,6 +255,8 @@ impl RuntimeMachine {
             is_started: false,
             active_timers: Vec::new(),
             clock_millis_fn: None,
+            is_processing: false,
+            external_queue: Vec::new(),
         })
     }
 
@@ -597,7 +601,8 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
-        if !self.is_started { return None; }
+        if !self.is_started || self.is_processing { return None; }
+        self.is_processing = true;
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         
         loop {
@@ -607,14 +612,13 @@ impl RuntimeMachine {
 
             if let Some((idx, path, t_defs)) = expired {
                 self.active_timers.remove(idx);
-                if let Some(next) = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs))) {
-                    return Some(next);
-                }
+                let _ = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
             } else {
                 break;
             }
         }
-        None
+        self.is_processing = false;
+        self.drain_external_queue(guards, actions)
     }
 
     pub fn transition(
@@ -625,7 +629,27 @@ impl RuntimeMachine {
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
 
-        self.transition_internal(event_type, event_payload, guards, actions, 0, None)
+        self.external_queue.push((event_type.to_string(), event_payload.clone()));
+        self.drain_external_queue(guards, actions)
+    }
+
+    fn drain_external_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {
+        if self.is_processing {
+            return Some(self.current_state.clone());
+        }
+        
+        self.is_processing = true;
+        let mut last_ret = None;
+        
+        while !self.external_queue.is_empty() {
+             let (e_type, e_payload) = self.external_queue.remove(0);
+             if let Some(ret) = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None) {
+                 last_ret = Some(ret);
+             }
+        }
+        
+        self.is_processing = false;
+        last_ret
     }
 
     fn transition_internal(
