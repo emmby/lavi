@@ -219,6 +219,8 @@ pub struct RuntimeMachine {
     pub is_started: bool,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
+    pub is_processing: bool,
+    pub external_queue: alloc::collections::VecDeque<(String, Value)>,
     pub internal_queue: alloc::collections::VecDeque<Value>,
 }
 
@@ -255,6 +257,8 @@ impl RuntimeMachine {
             is_started: false,
             active_timers: Vec::new(),
             clock_millis_fn: None,
+            is_processing: false,
+            external_queue: alloc::collections::VecDeque::new(),
             internal_queue: alloc::collections::VecDeque::new(),
         })
     }
@@ -605,9 +609,11 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
-        if !self.is_started { return None; }
+        if !self.is_started || self.is_processing { return None; }
+        self.is_processing = true;
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         
+        let mut last_ret = None;
         loop {
             let expired = self.active_timers.iter().enumerate().rev()
                 .find(|(_, (_, timestamp, _))| now >= *timestamp)
@@ -619,12 +625,20 @@ impl RuntimeMachine {
                 if let Some(drained) = self.drain_internal_queue(guards, actions) {
                     ret = Some(drained);
                 }
-                return ret;
+                if let Some(final_ret) = ret {
+                    last_ret = Some(final_ret);
+                }
             } else {
                 break;
             }
         }
-        self.drain_internal_queue(guards, actions)
+        
+        if let Some(drained) = self.drain_internal_queue(guards, actions) {
+            last_ret = Some(drained);
+        }
+
+        self.is_processing = false;
+        self.drain_external_queue(guards, actions).or(last_ret)
     }
 
     pub fn transition(
@@ -635,11 +649,37 @@ impl RuntimeMachine {
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
 
-        let mut ret = self.transition_internal(event_type, event_payload, guards, actions, 0, None);
-        if let Some(drained) = self.drain_internal_queue(guards, actions) {
-            ret = Some(drained);
+        self.external_queue.push_back((event_type.to_string(), event_payload.clone()));
+        self.drain_external_queue(guards, actions)
+    }
+
+    fn drain_external_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {
+        if self.is_processing {
+            return Some(self.current_state.clone());
         }
-        ret
+        
+        self.is_processing = true;
+        let mut last_ret = None;
+        let mut loop_count = 0;
+        
+        while !self.external_queue.is_empty() {
+             if loop_count > 100 {
+                 panic!("Maximum external queue iteration depth exceeded!");
+             }
+             loop_count += 1;
+             
+             let (e_type, e_payload) = self.external_queue.pop_front().unwrap();
+             let mut ret = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None);
+             if let Some(drained) = self.drain_internal_queue(guards, actions) {
+                 ret = Some(drained);
+             }
+             if let Some(final_ret) = ret {
+                 last_ret = Some(final_ret);
+             }
+        }
+        
+        self.is_processing = false;
+        last_ret
     }
     
     fn drain_internal_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {

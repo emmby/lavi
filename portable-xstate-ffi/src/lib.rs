@@ -398,4 +398,58 @@ mod tests {
 
         fsm_free(machine_ptr);
     }
+
+    extern "C" fn test_action_callback(
+        _action_name: *const c_char,
+        _context: *const fsm_value_t,
+        _event: *const fsm_value_t,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        let machine_ptr = user_data as *mut MachineContext;
+        let event = CString::new("NEXT").unwrap();
+        fsm_send_event(machine_ptr, event.as_ptr());
+    }
+
+    #[test]
+    fn test_reentrant_send_ffi() {
+        let json = CString::new(r#"{
+          "id": "reentrant",
+          "initial": "step1",
+          "states": {
+            "step1": {
+              "on": {
+                "START": { "target": "step2" }
+              }
+            },
+            "step2": {
+              "entry": ["triggerNext"],
+              "on": {
+                "NEXT": { "target": "step3" }
+              }
+            },
+            "step3": { }
+          }
+        }"#).unwrap();
+
+        let machine_ptr = fsm_create(json.as_ptr());
+        assert!(!machine_ptr.is_null());
+
+        let action_name = CString::new("triggerNext").unwrap();
+        fsm_register_action(machine_ptr, action_name.as_ptr(), Some(test_action_callback), machine_ptr as *mut core::ffi::c_void);
+
+        fsm_start(machine_ptr);
+
+        let event = CString::new("START").unwrap();
+        fsm_send_event(machine_ptr, event.as_ptr());
+
+        let mut buf = vec![0u8; 64];
+        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
+        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
+        
+        // Due to the external queue deferral, the "NEXT" event generated in the "step2" entry action
+        // will be processed sequentially immediately after "START" completes.
+        assert_eq!(state, "step3");
+
+        fsm_free(machine_ptr);
+    }
 }
