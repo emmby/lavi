@@ -177,6 +177,7 @@ pub enum Action {
     Named(String),
     Assign(AssignAction),
     Generic(GenericAction),
+    Raise(Value),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -218,6 +219,7 @@ pub struct RuntimeMachine {
     pub is_started: bool,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
+    pub internal_queue: Vec<Value>,
 }
 
 impl RuntimeMachine {
@@ -253,6 +255,7 @@ impl RuntimeMachine {
             is_started: false,
             active_timers: Vec::new(),
             clock_millis_fn: None,
+            internal_queue: Vec::new(),
         })
     }
 
@@ -288,10 +291,10 @@ impl RuntimeMachine {
         
         let to_run = core::mem::take(&mut self.initial_actions);
         for action in &to_run {
-            Self::execute_action(&mut self.context, action, &Value::Null, actions);
+            Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
         }
         for action in &entry_actions {
-            Self::execute_action(&mut self.context, action, &Value::Null, actions);
+            Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
         }
     }
 
@@ -567,7 +570,7 @@ impl RuntimeMachine {
         None
     }
     
-    pub fn execute_action(ctx: &mut Value, action: &Action, event: &Value, actions_map: &IndexMap<String, ActionFunction>) {
+    pub fn execute_action(ctx: &mut Value, action: &Action, event: &Value, actions_map: &IndexMap<String, ActionFunction>, internal_queue: &mut Vec<Value>) {
         match action {
             Action::Named(name) => {
                 if let Some(f) = actions_map.get(name) {
@@ -588,6 +591,9 @@ impl RuntimeMachine {
                     f(ctx, event, &gen.params);
                 }
             }
+            Action::Raise(payload) => {
+                internal_queue.push(payload.clone());
+            }
         }
     }
     
@@ -607,14 +613,16 @@ impl RuntimeMachine {
 
             if let Some((idx, path, t_defs)) = expired {
                 self.active_timers.remove(idx);
-                if let Some(next) = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs))) {
-                    return Some(next);
+                let mut ret = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
+                if let Some(drained) = self.drain_internal_queue(guards, actions) {
+                    ret = Some(drained);
                 }
+                return ret;
             } else {
                 break;
             }
         }
-        None
+        self.drain_internal_queue(guards, actions)
     }
 
     pub fn transition(
@@ -625,7 +633,31 @@ impl RuntimeMachine {
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
 
-        self.transition_internal(event_type, event_payload, guards, actions, 0, None)
+        let mut ret = self.transition_internal(event_type, event_payload, guards, actions, 0, None);
+        if let Some(drained) = self.drain_internal_queue(guards, actions) {
+            ret = Some(drained);
+        }
+        ret
+    }
+    
+    fn drain_internal_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {
+        let mut last_valid_state = None;
+        while !self.internal_queue.is_empty() {
+            let raised = self.internal_queue.remove(0);
+            let (e_type, e_payload) = match &raised {
+                Value::String(s) => (s.as_str(), &Value::Null),
+                Value::Object(map) => {
+                    let t = map.get("type").and_then(|v| v.as_string()).map(|s| s.as_str()).unwrap_or("");
+                    (t, &raised)
+                },
+                _ => ("", &Value::Null)
+            };
+            if e_type.is_empty() { continue; }
+            if let Some(next) = self.transition_internal(e_type, e_payload, guards, actions, 0, None) {
+                last_valid_state = Some(next);
+            }
+        }
+        last_valid_state
     }
 
     fn transition_internal(
@@ -860,11 +892,11 @@ impl RuntimeMachine {
               if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
                    for action in &def.exit { 
                          // we can't easily console.log from here, but we can if we had access.
-                         Self::execute_action(&mut self.context, action, event_payload, actions); 
+                         Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); 
                    }
                    for inv in &def.invoke {
                         if let Some(src) = inv.src.as_string() {
-                             Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                             Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions, &mut self.internal_queue);
                         }
                    }
               }
@@ -873,8 +905,8 @@ impl RuntimeMachine {
         
         self.active_timers.retain(|(p, _, _)| !exited_paths.contains(p));
         
-        for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
-        for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
+        for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
+        for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
 
 
         let mut entered_paths = Vec::new();
@@ -906,10 +938,10 @@ impl RuntimeMachine {
               let path = leaf_parts[0..i].join(".");
               if !entered_paths.contains(&path) {
                   if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
-                       for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions); }
+                       for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
                        for inv in &def.invoke {
                             if let Some(src) = inv.src.as_string() {
-                                 Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                                 Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions, &mut self.internal_queue);
                             }
                        }
                        for (delay, t_defs) in &def.after {

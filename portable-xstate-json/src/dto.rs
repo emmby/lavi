@@ -39,6 +39,8 @@ pub enum ActionDto {
         assignment: Option<serde_json::Value>,
         #[serde(default)]
         params: Option<serde_json::Value>,
+        #[serde(default)]
+        event: Option<serde_json::Value>,
     }
 }
 

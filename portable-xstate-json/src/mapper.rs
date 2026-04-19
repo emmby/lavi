@@ -234,7 +234,14 @@ fn map_transition(dto: TransitionDefinitionDto) -> TransitionDefinition {
 fn map_action(dto: ActionDto) -> Action {
     match dto {
         ActionDto::Name(s) => Action::Named(s),
-        ActionDto::Object { action_type, assignment, params } => {
+        ActionDto::Object { action_type, assignment, params, event } => {
+            if action_type == "xstate.raise" {
+                if let Some(e) = event {
+                    return Action::Raise(map_value(e));
+                } else if let Some(p) = params.clone() {
+                    return Action::Raise(map_value(p));
+                }
+            }
             if action_type == "xstate.assign" {
                 if let Some(a) = assignment {
                     return Action::Assign(portable_xstate_core::AssignAction {
