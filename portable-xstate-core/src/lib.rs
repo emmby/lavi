@@ -219,7 +219,7 @@ pub struct RuntimeMachine {
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
     pub is_processing: bool,
-    pub external_queue: Vec<(String, Value)>,
+    pub external_queue: alloc::collections::VecDeque<(String, Value)>,
 }
 
 impl RuntimeMachine {
@@ -256,7 +256,7 @@ impl RuntimeMachine {
             active_timers: Vec::new(),
             clock_millis_fn: None,
             is_processing: false,
-            external_queue: Vec::new(),
+            external_queue: alloc::collections::VecDeque::new(),
         })
     }
 
@@ -632,7 +632,7 @@ impl RuntimeMachine {
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
 
-        self.external_queue.push((event_type.to_string(), event_payload.clone()));
+        self.external_queue.push_back((event_type.to_string(), event_payload.clone()));
         self.drain_external_queue(guards, actions)
     }
 
@@ -651,7 +651,7 @@ impl RuntimeMachine {
              }
              loop_count += 1;
              
-             let (e_type, e_payload) = self.external_queue.remove(0);
+             let (e_type, e_payload) = self.external_queue.pop_front().unwrap();
              if let Some(ret) = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None) {
                  last_ret = Some(ret);
              }
