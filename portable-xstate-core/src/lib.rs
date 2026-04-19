@@ -605,6 +605,7 @@ impl RuntimeMachine {
         self.is_processing = true;
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         
+        let mut last_ret = None;
         loop {
             let expired = self.active_timers.iter().enumerate().rev()
                 .find(|(_, (_, timestamp, _))| now >= *timestamp)
@@ -612,13 +613,15 @@ impl RuntimeMachine {
 
             if let Some((idx, path, t_defs)) = expired {
                 self.active_timers.remove(idx);
-                let _ = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
+                if let Some(ret) = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs))) {
+                    last_ret = Some(ret);
+                }
             } else {
                 break;
             }
         }
         self.is_processing = false;
-        self.drain_external_queue(guards, actions)
+        self.drain_external_queue(guards, actions).or(last_ret)
     }
 
     pub fn transition(
@@ -640,8 +643,14 @@ impl RuntimeMachine {
         
         self.is_processing = true;
         let mut last_ret = None;
+        let mut loop_count = 0;
         
         while !self.external_queue.is_empty() {
+             if loop_count > 100 {
+                 panic!("Maximum external queue iteration depth exceeded!");
+             }
+             loop_count += 1;
+             
              let (e_type, e_payload) = self.external_queue.remove(0);
              if let Some(ret) = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None) {
                  last_ret = Some(ret);
