@@ -177,6 +177,7 @@ pub enum Action {
     Named(String),
     Assign(AssignAction),
     Generic(GenericAction),
+    Raise(Value),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -220,6 +221,7 @@ pub struct RuntimeMachine {
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
     pub is_processing: bool,
     pub external_queue: alloc::collections::VecDeque<(String, Value)>,
+    pub internal_queue: alloc::collections::VecDeque<Value>,
 }
 
 impl RuntimeMachine {
@@ -257,6 +259,7 @@ impl RuntimeMachine {
             clock_millis_fn: None,
             is_processing: false,
             external_queue: alloc::collections::VecDeque::new(),
+            internal_queue: alloc::collections::VecDeque::new(),
         })
     }
 
@@ -292,11 +295,13 @@ impl RuntimeMachine {
         
         let to_run = core::mem::take(&mut self.initial_actions);
         for action in &to_run {
-            Self::execute_action(&mut self.context, action, &Value::Null, actions);
+            Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
         }
         for action in &entry_actions {
-            Self::execute_action(&mut self.context, action, &Value::Null, actions);
+            Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
         }
+        // Process any events raised during initialization
+        let _ = self.drain_internal_queue(&IndexMap::new(), actions);
     }
 
     pub fn revive_timers(&mut self) {
@@ -571,7 +576,7 @@ impl RuntimeMachine {
         None
     }
     
-    pub fn execute_action(ctx: &mut Value, action: &Action, event: &Value, actions_map: &IndexMap<String, ActionFunction>) {
+    pub fn execute_action(ctx: &mut Value, action: &Action, event: &Value, actions_map: &IndexMap<String, ActionFunction>, internal_queue: &mut alloc::collections::VecDeque<Value>) {
         match action {
             Action::Named(name) => {
                 if let Some(f) = actions_map.get(name) {
@@ -591,6 +596,9 @@ impl RuntimeMachine {
                 if let Some(f) = actions_map.get(&gen.action_type) {
                     f(ctx, event, &gen.params);
                 }
+            }
+            Action::Raise(payload) => {
+                internal_queue.push_back(payload.clone());
             }
         }
     }
@@ -613,13 +621,22 @@ impl RuntimeMachine {
 
             if let Some((idx, path, t_defs)) = expired {
                 self.active_timers.remove(idx);
-                if let Some(ret) = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs))) {
-                    last_ret = Some(ret);
+                let mut ret = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
+                if let Some(drained) = self.drain_internal_queue(guards, actions) {
+                    ret = Some(drained);
+                }
+                if let Some(final_ret) = ret {
+                    last_ret = Some(final_ret);
                 }
             } else {
                 break;
             }
         }
+        
+        if let Some(drained) = self.drain_internal_queue(guards, actions) {
+            last_ret = Some(drained);
+        }
+
         self.is_processing = false;
         self.drain_external_queue(guards, actions).or(last_ret)
     }
@@ -652,13 +669,42 @@ impl RuntimeMachine {
              loop_count += 1;
              
              let (e_type, e_payload) = self.external_queue.pop_front().unwrap();
-             if let Some(ret) = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None) {
-                 last_ret = Some(ret);
+             let mut ret = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None);
+             if let Some(drained) = self.drain_internal_queue(guards, actions) {
+                 ret = Some(drained);
+             }
+             if let Some(final_ret) = ret {
+                 last_ret = Some(final_ret);
              }
         }
         
         self.is_processing = false;
         last_ret
+    }
+    
+    fn drain_internal_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {
+        let mut last_valid_state = None;
+        let mut iterations = 0;
+        while let Some(raised) = self.internal_queue.pop_front() {
+            iterations += 1;
+            if iterations > 100 {
+                // Prevent infinite loops from cyclic raised events
+                break;
+            }
+            let (e_type, e_payload) = match &raised {
+                Value::String(s) => (s.as_str(), &Value::Null),
+                Value::Object(map) => {
+                    let t = map.get("type").and_then(|v| v.as_string()).map(|s| s.as_str()).unwrap_or("");
+                    (t, &raised)
+                },
+                _ => ("", &Value::Null)
+            };
+            if e_type.is_empty() { continue; }
+            if let Some(next) = self.transition_internal(e_type, e_payload, guards, actions, 0, None) {
+                last_valid_state = Some(next);
+            }
+        }
+        last_valid_state
     }
 
     fn transition_internal(
@@ -893,11 +939,11 @@ impl RuntimeMachine {
               if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
                    for action in &def.exit { 
                          // we can't easily console.log from here, but we can if we had access.
-                         Self::execute_action(&mut self.context, action, event_payload, actions); 
+                         Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); 
                    }
                    for inv in &def.invoke {
                         if let Some(src) = inv.src.as_string() {
-                             Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                             Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions, &mut self.internal_queue);
                         }
                    }
               }
@@ -906,8 +952,8 @@ impl RuntimeMachine {
         
         self.active_timers.retain(|(p, _, _)| !exited_paths.contains(p));
         
-        for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
-        for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions); }
+        for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
+        for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
 
 
         let mut entered_paths = Vec::new();
@@ -939,10 +985,10 @@ impl RuntimeMachine {
               let path = leaf_parts[0..i].join(".");
               if !entered_paths.contains(&path) {
                   if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
-                       for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions); }
+                       for action in &def.entry { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
                        for inv in &def.invoke {
                             if let Some(src) = inv.src.as_string() {
-                                 Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions);
+                                 Self::execute_action(&mut self.context, &Action::Named(src.to_string()), event_payload, actions, &mut self.internal_queue);
                             }
                        }
                        for (delay, t_defs) in &def.after {
