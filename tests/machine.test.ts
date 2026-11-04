@@ -312,6 +312,93 @@ describe('machine', () => {
 
       expect(createActor(machine).getSnapshot().value).toBe('b');
     });
+
+    it('should not execute side-effect actions on createActor or pre-start getSnapshot, and should execute them once on start() with xstate.init event', () => {
+      const calls: Array<{ step: string; eventType: string }> = [];
+      const machine = createMachine({
+        initial: 'a',
+        states: {
+          a: {
+            entry: [
+              ({ event }) => calls.push({ step: 'entry:a', eventType: event.type }),
+              assign({ ready: true })
+            ],
+            exit: [
+              ({ event }) => calls.push({ step: 'exit:a', eventType: event.type })
+            ],
+            always: [
+              {
+                guard: ({ context }) => Boolean((context as any).ready),
+                target: 'b',
+                actions: [
+                  ({ event }) => calls.push({ step: 'always:a->b', eventType: event.type })
+                ]
+              }
+            ]
+          },
+          b: {
+            entry: [
+              ({ event }) => calls.push({ step: 'entry:b', eventType: event.type })
+            ]
+          }
+        },
+        context: { ready: false }
+      });
+
+      const actor = createActor(machine);
+      expect(calls).toEqual([]);
+
+      // Pre-start getSnapshot() should not fire JS side-effect callbacks
+      actor.getSnapshot();
+      expect(calls).toEqual([]);
+
+      actor.start();
+      // Calling start() a second time must be a no-op
+      actor.start();
+
+      expect(actor.getSnapshot().value).toBe('b');
+      expect(actor.getSnapshot().context).toEqual({ ready: true });
+      expect(calls).toEqual([
+        { step: 'entry:a', eventType: 'xstate.init' },
+        { step: 'exit:a', eventType: 'xstate.init' },
+        { step: 'always:a->b', eventType: 'xstate.init' },
+        { step: 'entry:b', eventType: 'xstate.init' }
+      ]);
+    });
+
+    it('should execute compound initial actions in root-to-leaf order', () => {
+      const order: string[] = [];
+      const machine = createMachine({
+        entry: () => order.push('root.entry'),
+        initial: {
+          target: 'parent',
+          actions: () => order.push('root.initial.actions')
+        },
+        states: {
+          parent: {
+            entry: () => order.push('parent.entry'),
+            initial: {
+              target: 'child',
+              actions: () => order.push('parent.initial.actions')
+            },
+            states: {
+              child: {
+                entry: () => order.push('child.entry')
+              }
+            }
+          }
+        }
+      });
+
+      createActor(machine).start();
+      expect(order).toEqual([
+        'root.entry',
+        'root.initial.actions',
+        'parent.entry',
+        'parent.initial.actions',
+        'child.entry'
+      ]);
+    });
   });
 
   describe('versioning', () => {

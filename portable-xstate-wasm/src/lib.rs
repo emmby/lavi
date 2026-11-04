@@ -632,16 +632,6 @@ impl StateNode {
              web_sys::console::log_1(&JsValue::from_str(&format!("Restored History Value: {:?}", runner.machine.history_value)));
         }
 
-        // Process initial always transitions (ONLY if not restored? XState usually runs it)
-        // If we restored, maybe we shouldn't run initial?
-        // But `createActor` usually starts at initial unless `state` is provided.
-        // If `snapshot` provided, we are at that state.
-        // We shouldn't run initial transitions from root.
-        let snapshot_key = JsValue::from_str("snapshot");
-        let has_snapshot = js_sys::Reflect::has(&options, &snapshot_key).unwrap_or(false);
-        if !has_snapshot {
-            runner.handle_always_transition();
-        }
         Ok(runner)
     }
 }
@@ -1309,35 +1299,55 @@ impl Actor {
 
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> Snapshot {
-          let active_paths = self.machine.current_state.get_active_paths();
-          let value_val = if active_paths.is_empty() && self.machine.definition.states.is_empty() {
-              js_sys::Object::new().into()
-          } else if active_paths.len() == 1 {
-              self.path_to_value_object(&active_paths[0])
-          } else {
-              // Parallel states: build and merge multiple paths
-              let root_obj = js_sys::Object::new();
-              for path in active_paths {
-                  self.merge_path_into_obj(&root_obj, &path);
-              }
-              root_obj.into()
-          };
-          let ctx_json = value_to_json(&self.machine.context);
-          let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("{}".to_string());
-          let ctx_str_clean = if ctx_str == "null" { "{}" } else { &ctx_str };
-          let ctx_val = js_sys::JSON::parse(ctx_str_clean).unwrap_or(js_sys::Object::new().into());
-          let history_obj = self.get_history_value_obj();
-          let status = if self.is_stopped { "stopped".to_string() } else if self.is_done() { "done".to_string() } else { "active".to_string() };
+        let preview;
+        let machine_ref = if !self.machine.is_started && !self.is_initialized {
+            let mut m = self.machine.clone();
+            m.start(&self.guards, &IndexMap::new());
+            preview = m;
+            &preview
+        } else {
+            &self.machine
+        };
 
-          Snapshot {
-              value: value_val,
-              context: ctx_val,
-              status,
-              machine_ref: self.machine.clone(),
-              guards: self.guards.clone(),
-              history_value: history_obj.into(),
-              config: self.config.clone(),
-          }
+        let active_paths = machine_ref.current_state.get_active_paths();
+        let value_val = if active_paths.is_empty() && machine_ref.definition.states.is_empty() {
+            js_sys::Object::new().into()
+        } else if active_paths.len() == 1 {
+            self.path_to_value_object(&active_paths[0])
+        } else {
+            // Parallel states: build and merge multiple paths
+            let root_obj = js_sys::Object::new();
+            for path in active_paths {
+                self.merge_path_into_obj(&root_obj, &path);
+            }
+            root_obj.into()
+        };
+        let ctx_json = value_to_json(&machine_ref.context);
+        let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("{}".to_string());
+        let ctx_str_clean = if ctx_str == "null" { "{}" } else { &ctx_str };
+        let ctx_val = js_sys::JSON::parse(ctx_str_clean).unwrap_or(js_sys::Object::new().into());
+        let history_obj = self.get_history_value_obj();
+        let is_done = machine_ref
+            .get_state_definition(&machine_ref.state())
+            .map(|def| def.type_.as_deref() == Some("final"))
+            .unwrap_or(false);
+        let status = if self.is_stopped {
+            "stopped".to_string()
+        } else if is_done {
+            "done".to_string()
+        } else {
+            "active".to_string()
+        };
+
+        Snapshot {
+            value: value_val,
+            context: ctx_val,
+            status,
+            machine_ref: machine_ref.clone(),
+            guards: self.guards.clone(),
+            history_value: history_obj.into(),
+            config: self.config.clone(),
+        }
     }
     fn is_done(&self) -> bool {
         // Simple check if current state is final type
@@ -1398,6 +1408,9 @@ impl Actor {
     }
 
     pub fn start(&mut self) -> Actor {
+        if self.machine.is_started {
+            return self.clone();
+        }
 
         if !self.is_initialized {
             self.machine.start(&self.guards, &self.actions);
@@ -1405,12 +1418,10 @@ impl Actor {
         } else {
             self.machine.is_started = true;
             self.machine.revive_timers();
+            self.handle_always_transition();
         }
 
-        // 3. Handle always transitions
-        self.handle_always_transition();
-
-        // 4. Emit initial snapshot
+        // Emit initial snapshot
         self.emit_snapshot();
 
         self.clone()
@@ -1865,7 +1876,50 @@ fn process_config(
             if item.is_function() {
                  *counter += 1;
                  let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                 let func: js_sys::Function = item.dyn_into().unwrap();
+                 let func: js_sys::Function = item.clone().dyn_into().unwrap();
+                 let type_key = JsValue::from_str("type");
+                 let func_type_val = js_sys::Reflect::get(&item, &type_key).unwrap_or(JsValue::UNDEFINED);
+                 if func_type_val == JsValue::from_str("xstate.assign") {
+                      let assign_key = JsValue::from_str("assignment");
+                      let mut assignment = js_sys::Reflect::get(&item, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                      if assignment.is_undefined() {
+                           assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                      }
+                      let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                           if let Ok(assign_fn) = assignment.clone().dyn_into::<js_sys::Function>() {
+                                let ctx_json = value_to_json(ctx_mut);
+                                let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
+                                let ctx_js = js_sys::JSON::parse(&ctx_str).unwrap_or(JsValue::NULL);
+                                let evt_json = value_to_json(evt);
+                                let evt_str = serde_json::to_string(&evt_json).unwrap_or("null".to_string());
+                                let evt_js = js_sys::JSON::parse(&evt_str).unwrap_or(JsValue::NULL);
+                                let arg_obj = js_sys::Object::new();
+                                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                                if let Ok(res) = assign_fn.call1(&JsValue::NULL, &arg_obj) {
+                                     if res.is_object() {
+                                          let partial: serde_json::Value = serde_wasm_bindgen::from_value(res).unwrap_or(serde_json::Value::Null);
+                                          let partial_core = json_to_value(partial);
+                                          if let Some(partial_obj) = partial_core.as_object() {
+                                               if let Some(ctx_obj) = ctx_mut.as_object_mut() {
+                                                    for (k, v) in partial_obj {
+                                                         ctx_obj.insert(k.clone(), v.clone());
+                                                    }
+                                               }
+                                          }
+                                     }
+                                }
+                           } else if assignment.is_object() {
+                                let assign_obj = js_sys::Object::from(assignment.clone());
+                                evaluate_assignment(&assign_obj, ctx_mut, evt);
+                           }
+                      });
+                      actions.insert(id.clone(), closure);
+                      let new_obj = js_sys::Object::new();
+                      let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                      let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_obj);
+                      continue;
+                 }
                  let id_clone = id.clone();
                  let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                       let res = execute_js_action(&func, ctx_mut, evt, _params); 

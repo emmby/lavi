@@ -37,7 +37,7 @@ fn test_raise_action_internal_queue() {
     let actions = IndexMap::new();
     let guards = IndexMap::new();
 
-    machine.start(&actions);
+    machine.start(&guards, &actions);
     
     // Send external START event
     let payload = Value::Null;
