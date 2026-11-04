@@ -6,8 +6,7 @@ use alloc::ffi::CString;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
 use alloc::collections::BTreeMap;
-use portable_xstate_core::{RuntimeMachine, Value};
-use portable_xstate_json::from_json_str;
+use portable_xstate_core::{from_json_str, RuntimeMachine, Value};
 use indexmap::IndexMap;
 
 #[repr(C)]
@@ -66,7 +65,7 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
         Err(_) => return ptr::null_mut(),
     };
 
-    let machine = match RuntimeMachine::new(&def) {
+    let machine = match RuntimeMachine::from_definition(def) {
         Ok(m) => m,
         Err(_) => return ptr::null_mut(),
     };
