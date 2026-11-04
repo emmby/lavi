@@ -2,17 +2,13 @@
 members = [
     "portable-xstate-core",
     "portable-xstate-wasm",
-    "portable-xstate-json", "portable-xstate-ffi",
+    "portable-xstate-ffi",
 ]
 resolver = "2"
 
 [workspace.dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 wasm-bindgen = "0.2"
 portable-xstate-core = { path = "./portable-xstate-core" }
-portable-xstate-json = { path = "./portable-xstate-json" }
-serde-wasm-bindgen = "0.6"
 
 [profile.test]
 opt-level = 1

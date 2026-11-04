@@ -73,8 +73,6 @@ checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
 dependencies = [
  "equivalent",
  "hashbrown",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -162,26 +160,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "portable-xstate-json"
-version = "0.1.0"
-dependencies = [
- "indexmap",
- "portable-xstate-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "portable-xstate-wasm"
 version = "0.1.0"
 dependencies = [
  "indexmap",
  "js-sys",
  "portable-xstate-core",
- "portable-xstate-json",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
@@ -234,17 +218,6 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
-]
-
-[[package]]
-name = "serde-wasm-bindgen"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
 ]
 
 [[package]]
