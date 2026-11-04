@@ -86,7 +86,7 @@ pub extern "C" fn fsm_start(ptr: *mut MachineContext) -> c_int {
         if ptr.is_null() { return -1; }
         &mut *ptr
     };
-    ctx.machine.start(&ctx.actions);
+    ctx.machine.start(&ctx.guards, &ctx.actions);
     0
 }
 

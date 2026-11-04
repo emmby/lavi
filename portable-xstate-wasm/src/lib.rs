@@ -1400,7 +1400,7 @@ impl Actor {
     pub fn start(&mut self) -> Actor {
 
         if !self.is_initialized {
-            self.machine.start(&self.actions);
+            self.machine.start(&self.guards, &self.actions);
             self.is_initialized = true;
         } else {
             self.machine.is_started = true;
