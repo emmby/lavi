@@ -31,6 +31,14 @@ void my_c_callback(const char* action_name, const fsm_value_t* context, const fs
     const fsm_value_t* missing = fsm_value_get_property(context, "missing_key");
     assert(missing == NULL);
 
+    // Check event {"type": "TIMER"}
+    const fsm_value_t* ev_type = fsm_value_get_property(event, "type");
+    assert(ev_type != NULL);
+    assert(fsm_value_is_string(ev_type));
+    char ev_buf[32];
+    fsm_value_get_string(ev_type, ev_buf, sizeof(ev_buf));
+    assert(strcmp(ev_buf, "TIMER") == 0);
+
     c_action_called = true;
 }
 

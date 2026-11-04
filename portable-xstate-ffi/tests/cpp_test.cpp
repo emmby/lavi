@@ -30,6 +30,11 @@ int main() {
             auto missing = context.getProperty("missing_key");
             assert(missing.isNull());
 
+            auto ev_type = event.getProperty("type");
+            assert(!ev_type.isNull());
+            std::string ev_name;
+            assert(ev_type.getString(ev_name) && ev_name == "TIMER");
+
             cpp_action_called = true;
         });
 
