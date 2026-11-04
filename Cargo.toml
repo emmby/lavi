@@ -14,3 +14,7 @@ portable-xstate-core = { path = "./portable-xstate-core" }
 portable-xstate-json = { path = "./portable-xstate-json" }
 serde-wasm-bindgen = "0.6"
 
+[profile.test]
+opt-level = 1
+
+

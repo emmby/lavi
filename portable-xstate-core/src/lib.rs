@@ -2,6 +2,9 @@
 
 extern crate alloc;
 
+pub mod json;
+pub use json::JsonError;
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -399,7 +402,7 @@ impl RuntimeMachine {
             (StateValue::Parallel(old_map), StateValue::Compound(new_key, _)) => {
                 let mut merged_map = old_map.clone();
                 if let Some(old_sub_val) = old_map.get(new_key) {
-                     let sub_path = if current_path.is_empty() { new_key.clone() } else { format!("{}.{}", current_path, new_key) };
+                     let _sub_path = if current_path.is_empty() { new_key.clone() } else { format!("{}.{}", current_path, new_key) };
                      merged_map.insert(new_key.clone(), Self::merge_state_value(old_sub_val, new, current_path, target_path));
                 }
                 StateValue::Parallel(merged_map)
@@ -981,7 +984,7 @@ impl RuntimeMachine {
              }
         // Evaluate timers and pop
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
-        for i in ((max_lca + 1)..=leaf_parts.len()) {
+        for i in (max_lca + 1)..=leaf_parts.len() {
               let path = leaf_parts[0..i].join(".");
               if !entered_paths.contains(&path) {
                   if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {
