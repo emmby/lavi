@@ -1045,7 +1045,7 @@ impl RuntimeMachine {
              }
         // Evaluate timers and pop
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
-        for i in ((max_lca + 1)..=leaf_parts.len()) {
+        for i in (max_lca + 1)..=leaf_parts.len() {
               let path = leaf_parts[0..i].join(".");
               if !entered_paths.contains(&path) {
                   if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &path) {

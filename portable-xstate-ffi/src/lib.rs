@@ -137,6 +137,9 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
         &mut *ptr
     };
     
+    if event_ptr.is_null() {
+        return -2;
+    }
     let event_c_str = unsafe { CStr::from_ptr(event_ptr) };
     let event = match event_c_str.to_str() {
         Ok(s) => s,

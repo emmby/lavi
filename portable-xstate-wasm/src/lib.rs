@@ -1349,13 +1349,6 @@ impl Actor {
             config: self.config.clone(),
         }
     }
-    fn is_done(&self) -> bool {
-        // Simple check if current state is final type
-        if let Some(def) = self.machine.get_state_definition(&self.machine.state()) {
-            return def.type_.as_deref() == Some("final");
-        }
-        false
-    }
 
     fn merge_path_into_obj(&self, obj: &js_sys::Object, path: &str) {
         let parts: Vec<&str> = path.split('.').collect();
@@ -1672,10 +1665,9 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
              }
 
              if !val.is_undefined() {
-                  // Set current state (Simplified: assuming value is string path for now)
-                  if let Some(s) = val.as_string() {
-                      runner.machine.current_state = portable_xstate_core::StateValue::Atomic(s);
-                  }
+                  let v_json: serde_json::Value = serde_wasm_bindgen::from_value(val).unwrap_or(serde_json::Value::Null);
+                  runner.machine.current_state = portable_xstate_json::map_value_to_state_value(v_json);
+                  runner.is_initialized = true;
              }
              if !ctx.is_undefined() {
                   let c_json: serde_json::Value = serde_wasm_bindgen::from_value(ctx).unwrap_or(serde_json::Value::Null);
@@ -1886,30 +1878,7 @@ fn process_config(
                            assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
                       }
                       let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                           if let Ok(assign_fn) = assignment.clone().dyn_into::<js_sys::Function>() {
-                                let ctx_json = value_to_json(ctx_mut);
-                                let ctx_str = serde_json::to_string(&ctx_json).unwrap_or("null".to_string());
-                                let ctx_js = js_sys::JSON::parse(&ctx_str).unwrap_or(JsValue::NULL);
-                                let evt_json = value_to_json(evt);
-                                let evt_str = serde_json::to_string(&evt_json).unwrap_or("null".to_string());
-                                let evt_js = js_sys::JSON::parse(&evt_str).unwrap_or(JsValue::NULL);
-                                let arg_obj = js_sys::Object::new();
-                                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
-                                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-                                if let Ok(res) = assign_fn.call1(&JsValue::NULL, &arg_obj) {
-                                     if res.is_object() {
-                                          let partial: serde_json::Value = serde_wasm_bindgen::from_value(res).unwrap_or(serde_json::Value::Null);
-                                          let partial_core = json_to_value(partial);
-                                          if let Some(partial_obj) = partial_core.as_object() {
-                                               if let Some(ctx_obj) = ctx_mut.as_object_mut() {
-                                                    for (k, v) in partial_obj {
-                                                         ctx_obj.insert(k.clone(), v.clone());
-                                                    }
-                                               }
-                                          }
-                                     }
-                                }
-                           } else if assignment.is_object() {
+                           if assignment.is_object() {
                                 let assign_obj = js_sys::Object::from(assignment.clone());
                                 evaluate_assignment(&assign_obj, ctx_mut, evt);
                            }
@@ -1920,7 +1889,6 @@ fn process_config(
                       let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_obj);
                       continue;
                  }
-                 let id_clone = id.clone();
                  let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                       let res = execute_js_action(&func, ctx_mut, evt, _params); 
                       if res.is_object() { 
@@ -2046,7 +2014,6 @@ fn process_config(
                          // It's a plain function used as an action (not a guard)
                          *counter += 1;
                          let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                         let id_clone = id.clone();
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
                          let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
                               let res = execute_js_action(&func, ctx_mut, evt, _params);
