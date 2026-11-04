@@ -5,6 +5,9 @@ extern crate alloc;
 pub mod json;
 pub use json::JsonError;
 
+pub mod parser;
+pub use parser::{assign, create_machine, from_json_str, setup, value_to_state_value, SetupObject};
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -212,6 +215,12 @@ pub struct MachineDefinition {
     pub id_map: IndexMap<String, String>,
 }
 
+impl MachineDefinition {
+    pub fn from_value(val: Value) -> Result<Self, JsonError> {
+        parser::parse_machine_definition(val)
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeMachine {
     pub definition: MachineDefinition,
@@ -228,20 +237,20 @@ pub struct RuntimeMachine {
 }
 
 impl RuntimeMachine {
-    pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
+    pub fn from_definition(mut definition: MachineDefinition) -> Result<Self, String> {
         let mut dummy = definition.initial_actions.clone();
         let initial_state = if matches!(definition.state_type, StateType::Parallel) {
              let mut regions = IndexMap::new();
              for (r_name, r_def) in &definition.states {
                  if matches!(r_def.state_type, StateType::History{..}) || r_def.history.is_some() { continue; }
                  let r_parts: Vec<&str> = vec![r_name];
-                 if let Some(val) = Self::resolve_state_value_from_path(definition, &r_parts, 0, &mut dummy) {
+                 if let Some(val) = Self::resolve_state_value_from_path(&definition, &r_parts, 0, &mut dummy) {
                       regions.insert(r_name.clone(), val);
                  }
              }
              StateValue::Parallel(regions)
         } else if !definition.initial.is_empty() {
-             Self::resolve_initial_state(definition, &definition.initial, &mut dummy)
+             Self::resolve_initial_state(&definition, &definition.initial, &mut dummy)
                 .ok_or_else(|| format!("Could not resolve initial state: {}", definition.initial))?
         } else {
              if definition.states.is_empty() {
@@ -251,10 +260,12 @@ impl RuntimeMachine {
              }
         };
 
+        let context = definition.context.take().unwrap_or_else(|| Value::Object(IndexMap::new()));
+
         Ok(Self {
-            definition: definition.clone(),
+            definition,
             current_state: initial_state,
-            context: definition.context.clone().unwrap_or(Value::Object(IndexMap::new())),
+            context,
             history_value: IndexMap::new(),
             initial_actions: dummy,
             is_started: false,
@@ -264,6 +275,14 @@ impl RuntimeMachine {
             external_queue: alloc::collections::VecDeque::new(),
             internal_queue: alloc::collections::VecDeque::new(),
         })
+    }
+
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        crate::from_json_str(json).map_err(|e| e.to_string()).and_then(Self::from_definition)
+    }
+
+    pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
+        Self::from_definition(definition.clone())
     }
 
     pub fn register_clock(&mut self, clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64>) {
