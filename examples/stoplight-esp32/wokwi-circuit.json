@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "author": "Antigravity",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-led", "id": "led_r", "top": -50, "left": 50, "attrs": { "color": "red" } },
+    { "type": "wokwi-led", "id": "led_y", "top": -50, "left": 90, "attrs": { "color": "yellow" } },
+    { "type": "wokwi-led", "id": "led_g", "top": -50, "left": 130, "attrs": { "color": "green" } }
+  ],
+  "connections": [
+    [ "esp:13", "led_r:A", "red", [ "v0" ] ],
+    [ "esp:GND.1", "led_r:C", "black", [ "v0" ] ],
+    
+    [ "esp:12", "led_y:A", "yellow", [ "v0" ] ],
+    [ "esp:GND.2", "led_y:C", "black", [ "v0" ] ],
+    
+    [ "esp:27", "led_g:A", "green", [ "v0" ] ],
+    [ "esp:GND.3", "led_g:C", "black", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}

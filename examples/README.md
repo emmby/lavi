@@ -44,3 +44,4 @@ If you use VS Code:
 -   **Guards** (`guards.html`): Conditional transitions based on context.
 -   **Actions** (`actions.html`): Executing side-effects and updating functionality.
 -   **Dynamic Assignment** (`dynamic_assignment.html`): Modifying extended state (context) with math.
+-   **ESP32 Traffic Light (PlatformIO)** (`stoplight-esp32/`): Arduino/ESP32 firmware project using the C++ wrapper (`xstate::PortableXState`) via PlatformIO.

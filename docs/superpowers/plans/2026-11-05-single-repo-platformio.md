@@ -46,7 +46,7 @@
   - `build_rust.build_rust_lib(mcu: str, rust_target: str | None, active_env=None, *args, **kwargs) -> None`
   - `npm run test:c-cpp:pio` in `package.json`
 
-- [ ] **Step 1: Write the failing unit test suite in `portable-xstate-c-cpp/tests/test_build_rust.py`**
+- [x] **Step 1: Write the failing unit test suite in `portable-xstate-c-cpp/tests/test_build_rust.py`**
 
 Create `portable-xstate-c-cpp/tests/test_build_rust.py`:
 
@@ -259,12 +259,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the unit test to verify it fails**
+- [x] **Step 2: Run the unit test to verify it fails**
 
 Run: `python3 -m unittest portable-xstate-c-cpp/tests/test_build_rust.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'build_rust'`.
 
-- [ ] **Step 3: Create `library.json` and `build_rust.py` at the repository root and update `package.json`**
+- [x] **Step 3: Create `library.json` and `build_rust.py` at the repository root and update `package.json`**
 
 1. Create `library.json` at the repository root with the exact JSON from Spec Section 4.1.
 2. Create `build_rust.py` at the repository root:
@@ -272,12 +272,12 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'build_rust'`.
    - Implement `_detect_host_rust_target()`, `resolve_target(platform, mcu)`, `get_lib_release_dir(rust_dir, rust_target, is_native)`, `build_cargo_cmd(cargo_to_use, rust_target, is_riscv, is_native, manifest_path=CARGO_TOML)`, `_source_esp_env(build_env)`, `_ensure_esp_toolchain_path(build_env)`, and `build_rust_lib(mcu, rust_target, active_env=None, *args, **kwargs)` per Spec Section 4.2 (building in-place against `LIB_ROOT` with no git cloning and no header copying).
 3. In `package.json`, add `"test:c-cpp:pio": "python3 -m unittest portable-xstate-c-cpp/tests/test_build_rust.py"` and update `"test:c-cpp"` to `"npm run build:c-cpp && npm run test:c-cpp:c && npm run test:c-cpp:cpp && npm run test:c-cpp:pio"`.
 
-- [ ] **Step 4: Run `npm run test:c-cpp` to verify C, C++, and PlatformIO build script tests pass**
+- [x] **Step 4: Run `npm run test:c-cpp` to verify C, C++, and PlatformIO build script tests pass**
 
 Run: `npm run test:c-cpp`
 Expected: PASS (`All C FFI tests passed!`, `All C++ FFI tests passed!`, and `Ran 9 tests ... OK`).
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add library.json build_rust.py package.json portable-xstate-c-cpp/tests/test_build_rust.py
@@ -305,7 +305,7 @@ git commit -m "feat(platformio): add in-repo library.json, build_rust.py, and un
 - Consumes: `REPO_ROOT` in `portable-xstate-c-cpp/tests/test_build_rust.py`
 - Produces: Migrated `examples/stoplight-esp32` project, updated PlatformIO documentation, and retired `trigger-platformio-update.yml`
 
-- [ ] **Step 1: Add failing test assertions in `portable-xstate-c-cpp/tests/test_build_rust.py` for the migrated example and removed workflow**
+- [x] **Step 1: Add failing test assertions in `portable-xstate-c-cpp/tests/test_build_rust.py` for the migrated example and removed workflow**
 
 Add `test_stoplight_esp32_example_and_workflow_cleanup` to `TestBuildRust` in `portable-xstate-c-cpp/tests/test_build_rust.py`:
 
@@ -326,24 +326,24 @@ Add `test_stoplight_esp32_example_and_workflow_cleanup` to `TestBuildRust` in `p
         self.assertFalse(os.path.exists(dispatch_workflow))
 ```
 
-- [ ] **Step 2: Run `npm run test:c-cpp:pio` to verify the new test fails**
+- [x] **Step 2: Run `npm run test:c-cpp:pio` to verify the new test fails**
 
 Run: `npm run test:c-cpp:pio`
 Expected: FAIL (`AssertionError: False is not true` for `examples/stoplight-esp32/platformio.ini`).
 
-- [ ] **Step 3: Migrate `examples/stoplight-esp32`, delete `.github/workflows/trigger-platformio-update.yml`, and update docs**
+- [x] **Step 3: Migrate `examples/stoplight-esp32`, delete `.github/workflows/trigger-platformio-update.yml`, and update docs**
 
 1. Create `examples/stoplight-esp32/.gitignore` (`/.pio\n`), `examples/stoplight-esp32/platformio.ini` (pointing `lib_deps` to `https://github.com/emmby/portable-xstate.git` per Spec Section 4.4), `examples/stoplight-esp32/src/main.cpp`, `examples/stoplight-esp32/wokwi.toml`, and `examples/stoplight-esp32/wokwi-circuit.json` from `/Users/mike/GitHub/portable-xstate-platformio/examples/stoplight-esp32/`.
 2. Remove `.github/workflows/trigger-platformio-update.yml` using `trash .github/workflows/trigger-platformio-update.yml`.
 3. Update `portable-xstate-c-cpp/README.md`, `README.md`, and `examples/README.md` to document PlatformIO installation (`lib_deps = https://github.com/emmby/portable-xstate.git`) and the `examples/stoplight-esp32` project.
 4. Update Section 3 of `AGENTS.md` to replace `Companion Repository Synchronization (portable-xstate-platformio)` with in-repo PlatformIO maintenance rules (`library.json`, `build_rust.py`, `portable-xstate-c-cpp/tests/test_build_rust.py`, and `examples/stoplight-esp32`).
 
-- [ ] **Step 4: Run the full project build and test suite**
+- [x] **Step 4: Run the full project build and test suite**
 
 Run: `npm run build && npm test && cargo clippy --all-targets`
 Expected: PASS across `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp` (including `test:c-cpp:pio`), `test:unit`, and `cargo clippy` with zero warnings.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add -A

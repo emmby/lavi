@@ -34,11 +34,10 @@ Whenever adding functionality or enabling conformance tests in `portable-xstate`
    - Run the full test suite (`npm test`) to verify zero regressions across native, WASM, and E2E suites.
    - Update [XSTATE_5_FEATURES.md](./XSTATE_5_FEATURES.md) (and [README.md](./README.md) if significant capabilities were added).
 
-## 3. Companion Repository Synchronization (`portable-xstate-platformio`)
+## 3. PlatformIO Integration Maintenance (`library.json` & `build_rust.py`)
 
-Whenever making changes to `portable-xstate`, you **MUST** include updating the companion PlatformIO repository (`/Users/mike/GitHub/portable-xstate-platformio`) in scope:
+PlatformIO support lives directly in this repository (`library.json`, `build_rust.py`, `portable-xstate-c-cpp/tests/test_build_rust.py`, and `examples/stoplight-esp32`):
 
-- **Build Script & Paths**: If crate names, directory paths, Cargo flags, or static library names in `portable-xstate-c-cpp` change, update `build_rust.py`, `test_build_rust.py`, and `README.md` in `/Users/mike/GitHub/portable-xstate-platformio`.
-- **Headers**: If `portable-xstate-c-cpp/include/portable_xstate.h` or `portable_xstate.hpp` changes, synchronize them into `/Users/mike/GitHub/portable-xstate-platformio/include/`.
-- **Commit Pin (`DEPENDENCY_REF`)**: When committing changes in `portable-xstate`, update `DEPENDENCY_REF` in `/Users/mike/GitHub/portable-xstate-platformio/build_rust.py` to the new `portable-xstate` commit SHA.
-- **Verification**: Always run `python3 -m unittest test_build_rust.py -v` in `/Users/mike/GitHub/portable-xstate-platformio` before claiming completion.
+- **Build Script & Manifest**: If crate names, directory paths, Cargo flags, or static library names in `portable-xstate-c-cpp` change, update `library.json`, `build_rust.py`, and `portable-xstate-c-cpp/tests/test_build_rust.py` in lockstep.
+- **Headers & Examples**: Keep `portable-xstate-c-cpp/include/portable_xstate.h`, `portable_xstate.hpp`, and `examples/stoplight-esp32` aligned with any C/C++ API changes.
+- **Verification**: Always run `npm run test:c-cpp` (which executes C, C++, and `test_build_rust.py` unit tests) before claiming completion.

@@ -8,7 +8,25 @@ This library compiles to `libportable_xstate_c_cpp.a`. It exposes:
 1.  **Raw C API**: `include/portable_xstate.h`
 2.  **C++ Wrapper**: `include/portable_xstate.hpp` (RAII-enabled, easy to use)
 
-## Building for ESP32 (Xtensa)
+## PlatformIO Integration
+
+`portable-xstate` includes a root [`library.json`](../library.json) and [`build_rust.py`](../build_rust.py) script so it can be added directly to any PlatformIO project (`espressif32` or `native`).
+
+### 1. Add to `platformio.ini`
+```ini
+[env:featheresp32]
+platform = espressif32
+board = featheresp32
+framework = arduino
+lib_deps =
+    https://github.com/emmby/portable-xstate.git
+```
+
+For ESP32 Xtensa targets (`esp32`, `esp32s2`, `esp32s3`), install [`espup`](https://github.com/esp-rs/espup) (`cargo install espup && espup install`) so `build_rust.py` can cross-compile `libportable_xstate_c_cpp.a` automatically during `pio run`. For `platform = native`, the standard host Rust toolchain is used automatically.
+
+See [`examples/stoplight-esp32`](../examples/stoplight-esp32) for a complete Arduino/ESP32 PlatformIO example.
+
+## Building Manually for ESP32 (Xtensa)
 
 **Requirement:** The **Espressif Rust Toolchain** is required **only** for Xtensa-based chips (ESP32, S2, S3).
 

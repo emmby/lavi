@@ -15,7 +15,8 @@ Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON 
 
 *   **`portable-xstate-rust`**: The pure Rust library containing the `RuntimeMachine` logic and state storage.
 *   **`portable-xstate-wasm`**: The WebAssembly adapter that exposes the runtime to JavaScript/TypeScript.
-*   **`portable-xstate-c-cpp`**: The C/C++ static library and headers for embedded and native platforms.
+*   **`portable-xstate-c-cpp`**: The C/C++ static library and headers for embedded (PlatformIO / ESP32) and native platforms.
+*   **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/portable-xstate.git`).
 *   **`index.html`**: A demo web page visualizing a Traffic Light state machine.
 
 ## Getting Started
