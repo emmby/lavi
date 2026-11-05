@@ -161,7 +161,7 @@ private:
         return 0;
     }
 
-    void bind_registered_handlers() {
+    void rebind_this_pointers() {
         if (!machine) return;
         for (const auto& pair : m_callbacks) {
             fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
@@ -169,11 +169,17 @@ private:
         for (const auto& pair : m_guards) {
             fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
         }
+        if (!m_simClock && m_clockFn) {
+            fsm_register_clock_with_data(machine, c_clock_thunk, this);
+        }
+    }
+
+    void bind_registered_handlers() {
+        if (!machine) return;
+        rebind_this_pointers();
         if (m_simClock) {
             fsm_register_simulated_clock(machine, m_simClock);
-        } else if (m_clockFn) {
-            fsm_register_clock_with_data(machine, c_clock_thunk, this);
-        } else if (m_clockCallback) {
+        } else if (!m_clockFn && m_clockCallback) {
             fsm_register_clock(machine, m_clockCallback);
         }
     }
@@ -223,7 +229,7 @@ public:
         other.machine = nullptr;
         other.m_clockCallback = nullptr;
         other.m_simClock = nullptr;
-        bind_registered_handlers();
+        rebind_this_pointers();
     }
     PortableXState& operator=(PortableXState&& other) noexcept {
         if (this != &other) {
@@ -238,7 +244,7 @@ public:
             m_clockFn = std::move(other.m_clockFn);
             m_simClock = other.m_simClock;
             other.m_simClock = nullptr;
-            bind_registered_handlers();
+            rebind_this_pointers();
         }
         return *this;
     }

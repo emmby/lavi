@@ -1365,9 +1365,7 @@ impl SimulatedClock {
             }
         }
 
-        if target_ms > self.now_ms.get() {
-            self.now_ms.set(target_ms);
-        }
+        self.now_ms.set(target_ms);
 
         last_ret
     }

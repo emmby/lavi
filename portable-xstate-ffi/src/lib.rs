@@ -63,12 +63,18 @@ pub struct MachineContext {
     bound_clocks: alloc::vec::Vec<SharedMachineList>,
 }
 
-impl Drop for MachineContext {
-    fn drop(&mut self) {
+impl MachineContext {
+    fn detach_from_clocks(&mut self) {
         let self_ptr = self as *mut MachineContext;
-        for list in &self.bound_clocks {
+        for list in self.bound_clocks.drain(..) {
             list.borrow_mut().retain(|&ptr| ptr != self_ptr);
         }
+    }
+}
+
+impl Drop for MachineContext {
+    fn drop(&mut self) {
+        self.detach_from_clocks();
     }
 }
 
@@ -190,6 +196,7 @@ pub extern "C" fn fsm_register_clock(
         if ptr.is_null() { return -1; }
         &mut *ptr
     };
+    ctx.detach_from_clocks();
     if let Some(cb) = callback {
         let clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64> = alloc::rc::Rc::new(move || cb());
         ctx.machine.register_clock(clock_millis_fn);
@@ -207,6 +214,7 @@ pub extern "C" fn fsm_register_clock_with_data(
         if ptr.is_null() { return -1; }
         &mut *ptr
     };
+    ctx.detach_from_clocks();
     if let Some(cb) = callback {
         let clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64> =
             alloc::rc::Rc::new(move || cb(user_data));
@@ -263,6 +271,7 @@ pub extern "C" fn fsm_register_simulated_clock(
     let ctx = unsafe { &mut *ptr };
     let sim = unsafe { &mut *clock_ptr };
 
+    ctx.detach_from_clocks();
     ctx.machine.register_clock(&sim.clock);
     {
         let mut list = sim.machines.borrow_mut();
@@ -338,9 +347,7 @@ pub extern "C" fn fsm_simulated_clock_set(
         }
     }
 
-    if target_ms > sim.clock.now() {
-        sim.clock.set_now_raw(target_ms);
-    }
+    sim.clock.set_now_raw(target_ms);
 
     0
 }

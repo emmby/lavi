@@ -721,21 +721,23 @@ impl SimulatedClock {
             self.clock.set_now_raw(next_deadline);
 
             for (idx, a) in actors.iter_mut().enumerate() {
-                if !a.is_stopped && a.machine.tick(&a.guards, &a.actions).is_some() {
+                if !a.is_stopped {
+                    a.set_in_tick(true);
+                    let mut did_transition = a.machine.tick(&a.guards, &a.actions).is_some();
+                    if a.drain_reentrant_shared() {
+                        did_transition = true;
+                    }
+                    a.set_in_tick(false);
                     a.push_shared();
-                    if !transitioned_indices.contains(&idx) {
+                    if did_transition && !transitioned_indices.contains(&idx) {
                         transitioned_indices.push(idx);
                     }
-                } else {
-                    a.push_shared();
                 }
             }
             *self.actors.borrow_mut() = actors;
         }
 
-        if target_ms > self.clock.now() {
-            self.clock.set_now_raw(target_ms);
-        }
+        self.clock.set_now_raw(target_ms);
 
         let actors_snapshot = self.actors.borrow().clone();
         for idx in transitioned_indices {
@@ -757,6 +759,18 @@ impl SimulatedClock {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct SharedActorState {
+    pub machine: RuntimeMachine,
+    pub inspector: Option<js_sys::Function>,
+    pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub is_stopped: bool,
+    pub is_initialized: bool,
+    pub is_in_tick: bool,
+    pub reentrant_queue: std::collections::VecDeque<(String, Value)>,
+}
+
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct Actor {
@@ -767,7 +781,7 @@ pub struct Actor {
     pub(crate) config: JsValue,
     pub is_stopped: bool,
     pub(crate) is_initialized: bool,
-    pub(crate) shared_state: Rc<RefCell<Option<RuntimeMachine>>>,
+    pub(crate) shared_state: Rc<RefCell<Option<SharedActorState>>>,
     pub(crate) tick_override: Rc<core::cell::Cell<Option<u64>>>,
 }
 
@@ -1324,16 +1338,60 @@ impl Actor {
     }
 
     pub(crate) fn pull_shared(&mut self) {
-        if let Some(m) = self.shared_state.borrow().as_ref() {
-            self.machine = m.clone();
-            if self.machine.is_started {
-                self.is_initialized = true;
-            }
+        if let Some(shared) = self.shared_state.borrow().as_ref() {
+            self.machine = shared.machine.clone();
+            self.inspector = shared.inspector.clone();
+            self.guards = shared.guards.clone();
+            self.actions = shared.actions.clone();
+            self.is_stopped = shared.is_stopped;
+            self.is_initialized = shared.is_initialized || self.machine.is_started;
         }
     }
 
     pub(crate) fn push_shared(&self) {
-        *self.shared_state.borrow_mut() = Some(self.machine.clone());
+        let mut borrow = self.shared_state.borrow_mut();
+        let (is_in_tick, reentrant_queue) = borrow
+            .as_ref()
+            .map(|s| (s.is_in_tick, s.reentrant_queue.clone()))
+            .unwrap_or((false, std::collections::VecDeque::new()));
+        *borrow = Some(SharedActorState {
+            machine: self.machine.clone(),
+            inspector: self.inspector.clone(),
+            guards: self.guards.clone(),
+            actions: self.actions.clone(),
+            is_stopped: self.is_stopped,
+            is_initialized: self.is_initialized,
+            is_in_tick,
+            reentrant_queue,
+        });
+    }
+
+    pub(crate) fn set_in_tick(&self, in_tick: bool) {
+        if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+            shared.is_in_tick = in_tick;
+        }
+    }
+
+    pub(crate) fn drain_reentrant_shared(&mut self) -> bool {
+        let mut transitioned = false;
+        loop {
+            let next_evt = self
+                .shared_state
+                .borrow_mut()
+                .as_mut()
+                .and_then(|s| s.reentrant_queue.pop_front());
+            let Some((ev_name, ev_payload)) = next_evt else {
+                break;
+            };
+            if self
+                .machine
+                .transition(&ev_name, &ev_payload, &self.guards, &self.actions)
+                .is_some()
+            {
+                transitioned = true;
+            }
+        }
+        transitioned
     }
 
     pub(crate) fn apply_clock_option(&mut self, options: &JsValue) {
@@ -1461,9 +1519,20 @@ impl Actor {
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> Snapshot {
         let shared_borrow = self.shared_state.borrow();
-        let active_machine = shared_borrow.as_ref().unwrap_or(&self.machine);
+        let active_machine = shared_borrow
+            .as_ref()
+            .map(|s| &s.machine)
+            .unwrap_or(&self.machine);
+        let is_stopped = shared_borrow
+            .as_ref()
+            .map(|s| s.is_stopped)
+            .unwrap_or(self.is_stopped);
+        let is_initialized = shared_borrow
+            .as_ref()
+            .map(|s| s.is_initialized)
+            .unwrap_or(self.is_initialized);
         let preview;
-        let machine_ref = if !active_machine.is_started && !self.is_initialized {
+        let machine_ref = if !active_machine.is_started && !is_initialized {
             let mut m = active_machine.clone();
             m.start(&self.guards, &IndexMap::new());
             preview = m;
@@ -1494,7 +1563,7 @@ impl Actor {
             .get_state_definition(&machine_ref.state())
             .map(|def| def.type_.as_deref() == Some("final"))
             .unwrap_or(false);
-        let status = if self.is_stopped {
+        let status = if is_stopped {
             "stopped".to_string()
         } else if is_done {
             "done".to_string()
@@ -1628,6 +1697,13 @@ impl Actor {
 
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
+        if self.shared_state.borrow().as_ref().map(|s| s.is_in_tick).unwrap_or(false) {
+            if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                shared.reentrant_queue.push_back((event_name, event_payload));
+            }
+            return Ok(JsValue::UNDEFINED);
+        }
+
         if !self.machine.is_started { return Ok(JsValue::UNDEFINED); }
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
         self.push_shared();
@@ -1642,7 +1718,9 @@ impl Actor {
 
     #[wasm_bindgen(js_name = subscribe)]
     pub fn subscribe(&mut self, callback: js_sys::Function) {
+        self.pull_shared();
         self.set_inspector(callback);
+        self.push_shared();
     }
 
     #[wasm_bindgen]
@@ -1661,31 +1739,57 @@ impl Actor {
     #[wasm_bindgen(js_name = getNextDeadline)]
     pub fn get_next_deadline(&self) -> Option<f64> {
         let shared_borrow = self.shared_state.borrow();
-        let active_machine = shared_borrow.as_ref().unwrap_or(&self.machine);
+        if shared_borrow.as_ref().map(|s| s.is_stopped).unwrap_or(self.is_stopped) {
+            return None;
+        }
+        let active_machine = shared_borrow
+            .as_ref()
+            .map(|s| &s.machine)
+            .unwrap_or(&self.machine);
         active_machine.next_timer_deadline().map(|d| d as f64)
     }
 
     #[wasm_bindgen]
     pub fn tick(&mut self) -> Result<(), JsValue> {
         self.pull_shared();
-        if !self.machine.is_started { return Ok(()); }
+        if !self.machine.is_started || self.is_stopped {
+            return Ok(());
+        }
         let target_ms = self.machine.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         let mut transitioned = false;
-        let mut steps = 0usize;
+        let mut last_deadline: Option<u64> = None;
+        let mut same_deadline_steps = 0usize;
+        let mut total_steps = 0usize;
+
         while let Some(deadline) = self.machine.next_timer_deadline() {
             if deadline > target_ms {
                 break;
             }
-            self.tick_override.set(Some(deadline));
-            let res = self.machine.tick(&self.guards, &self.actions);
-            self.tick_override.set(None);
-            if res.is_none() {
+            if last_deadline == Some(deadline) {
+                same_deadline_steps += 1;
+                if same_deadline_steps >= 100 {
+                    break;
+                }
+            } else {
+                last_deadline = Some(deadline);
+                same_deadline_steps = 0;
+            }
+            total_steps += 1;
+            if total_steps > 1_000_000 {
                 break;
             }
-            transitioned = true;
-            steps += 1;
-            if steps >= 10_000 {
-                break;
+
+            self.tick_override.set(Some(deadline));
+            self.set_in_tick(true);
+            let mut did_transition = self.machine.tick(&self.guards, &self.actions).is_some();
+            if self.drain_reentrant_shared() {
+                did_transition = true;
+            }
+            self.set_in_tick(false);
+            self.tick_override.set(None);
+
+            if did_transition {
+                transitioned = true;
             }
         }
         self.tick_override.set(None);
