@@ -27,6 +27,7 @@ At the same time, an API based *solely* on relative time steps (`advance(dt_ms)`
 ## 2. Goals, Non-Goals, and Anti-Goals
 
 ### Goals
+- **Consistency with XState 5**: Maintain strict compliance with XState 5 statechart semantics (including `after` delayed transitions, `SimulatedClock`'s chronological deadline evaluation for absolute `set(timestamp)` and relative `increment(ms)`, `always` eventless transitions, and `reenter` transition domain rules) while providing idiomatic synchronous APIs for Rust, C, C++, and WASM/JS.
 - **Drift-free absolute time primitive (`tick_at` / `tickAt`)**: Allow callers across Rust, C, C++, and WASM/JS to pass the current monotonic timestamp (`now_ms`) and advance the state machine across any time window `[t_start, t_end]` in a single call.
 - **Ergonomic relative time wrapper (`advance`)**: Allow virtual-time and unit-test callers to advance by an elapsed duration (`dt_ms`) in a single call without maintaining an external timestamp variable.
 - **Exact chronological firing & `t_fire` anchoring**: Fire all active `after` timers with `deadline <= target_now_ms` one by one in strict chronological deadline order (`deadline_a < deadline_b`), advancing the machine's internal clock to `t_fire` at each step so newly armed `after` timers are anchored at `t_fire + delay`.
@@ -55,7 +56,7 @@ At the same time, an API based *solely* on relative time steps (`advance(dt_ms)`
 
 ## 4. Technical Design
 
-### 4.1 Cross-Language API Surface
+### 4.1 Cross-Language API Surface & Example Usages
 
 Consistent naming is used across all language bindings (`snake_case` in Rust and C; `camelCase` in C++ and JS/WASM):
 
@@ -68,6 +69,116 @@ Consistent naming is used across all language bindings (`snake_case` in Rust and
 
 Additionally, `RuntimeMachine` exposes `pub fn now_ms(&self) -> u64` (and `pub now_ms: u64` field) for inspecting the machine's current timestamp.
 
+#### Example 1: C++ Real-Time Embedded Loop (Drift-Free with `millis()`)
+
+**Option A — Passing absolute hardware time via `tickAt(now_ms)` (no callback needed):**
+```cpp
+#include "portable_xstate.hpp"
+
+xstate::PortableXState fsm(APRIL_CLOCK_JSON);
+
+void setup() {
+    fsm.registerGuard("isConnected", [](const xstate::Value& ctx, const xstate::Value& evt) {
+        return WiFi.status() == WL_CONNECTED;
+    });
+    // Optional: seed boot timestamp if MCU millis() is non-zero before start()
+    fsm.tickAt(millis());
+    fsm.start();
+}
+
+void loop() {
+    // Advances through all intermediate `after` deadlines up to current millis()
+    // with zero cumulative drift.
+    fsm.tickAt(millis());
+}
+```
+
+**Option B — Registering hardware `millis()` once via `registerClock`:**
+```cpp
+void setup() {
+    fsm.registerClock([]() -> uint64_t { return millis(); });
+    fsm.start(); // Automatically anchors initial timers to current millis()
+}
+
+void loop() {
+    fsm.tick();  // Reads registered clock and fires all timers <= millis() in order
+}
+```
+
+#### Example 2: C++ Unit Testing / Virtual Time (`AprilClockFSM`)
+
+```cpp
+xstate::PortableXState fsm(APRIL_CLOCK_JSON);
+bool wifi_ready = false;
+int poll_count = 0;
+
+fsm.registerGuard("isConnected", [&](const xstate::Value&, const xstate::Value&) {
+    return wifi_ready;
+});
+fsm.registerAction("pollWifi", [&](const xstate::Value&, const xstate::Value&) {
+    poll_count++;
+    if (poll_count == 10) {
+        wifi_ready = true; // Becomes true at t = 5,000 ms (10 * 500 ms)
+    }
+});
+
+fsm.start(); // Starts at t = 0 in ConnectToNetwork.Polling
+
+// Single call advances across 60,000 ms:
+// - Fires Polling's `after: 500` self-transition at t = 500, 1000, ..., 5000 ms
+// - At t = 5000 ms, pollWifi sets wifi_ready = true and transitions out of ConnectToNetwork
+// - Settles clock at t = 60,000 ms (or fires subsequent states' timers in [5000, 60000])
+fsm.advance(60000);
+
+// Or using absolute virtual timestamps directly:
+fsm.tickAt(86460000); // Advances from t = 60,000 ms to t = 86,460,000 ms (24 hours later)
+```
+
+#### Example 3: C FFI (`portable_xstate.h`)
+
+```c
+MachineContext* fsm = fsm_create(APRIL_CLOCK_JSON);
+fsm_register_guard(fsm, "isConnected", is_connected_cb, &app_state);
+fsm_start(fsm);
+
+// Real-time caller (absolute monotonic timestamp in ms, drift-free):
+fsm_tick_at(fsm, get_monotonic_ms());
+
+// Virtual-time / test caller (relative elapsed delta in ms):
+fsm_advance(fsm, 60000);
+```
+
+#### Example 4: Rust (`portable-xstate-core`)
+
+```rust
+let mut machine = RuntimeMachine::from_json(json)?;
+machine.start(&guards, &actions);
+
+// Advance to an absolute timestamp (ms):
+machine.tick_at(60_000, &guards, &actions);
+
+// Or advance by a relative duration (ms):
+machine.advance(86_400_000, &guards, &actions);
+assert_eq!(machine.now_ms(), 86_460_000);
+```
+
+#### Example 5: WASM / TypeScript (`portable-xstate-wasm`)
+
+```ts
+import { createMachine, createActor } from 'portable-xstate-wasm';
+
+// Pattern A: Direct virtual time advancement (no fake timers needed)
+const actor = createActor(machine).start();
+actor.advance(60_000);      // Steps through all intermediate deadlines in [0, 60000]
+actor.tickAt(120_000);      // Steps through all intermediate deadlines in [60000, 120000]
+
+// Pattern B: Existing Vitest fake timers + actor.tick()
+vi.useFakeTimers();
+const actorWithFakeTimers = createActor(machine).start();
+vi.advanceTimersByTime(60_000);
+actorWithFakeTimers.tick(); // Reads Date.now() and steps chronologically through all intermediate deadlines
+```
+
 ### 4.2 Internal Clock Ownership & Lifecycle (`RuntimeMachine`)
 
 `RuntimeMachine` in `portable-xstate-core/src/lib.rs` will store:
@@ -75,7 +186,7 @@ Additionally, `RuntimeMachine` exposes `pub fn now_ms(&self) -> u64` (and `pub n
 
 **Clock synchronization rules across lifecycle methods:**
 1. **Pre-start seeding (`tick_at` before `start`)**:
-   - If `tick_at(now_ms, ...)` is called before `start()`, `self.now_ms` is updated to `now_ms` and the call returns `None`. This allows embedded callers using `tick_at(millis())` without `register_clock` to seed the boot timestamp before calling `start()`, or they can simply pass `millis()` via `register_clock`.
+   - If `tick_at(now_ms, ...)` is called before `start()`, `self.now_ms` is updated to `now_ms`, `self.clock_millis_fn` is cleared (switching the machine into explicit timestamp mode so `start()` does not overwrite the seeded timestamp with a default callback like `Date::now()`), and the call returns `None`. This allows embedded or WASM callers using `tick_at(now_ms)` to seed the initial timestamp before calling `start()`.
 2. **`start(&mut self, guards, actions)`**:
    - If `self.clock_millis_fn` is `Some(ref cb)`, update `self.now_ms = cb()`. Otherwise keep the current `self.now_ms` (default `0`, or pre-seeded value).
    - All initial `after` timers (on the root machine and initial active state hierarchy) are scheduled with `deadline = self.now_ms.saturating_add(*delay)`.
@@ -145,30 +256,14 @@ When `RuntimeMachine::tick_at(&mut self, target_now_ms: u64, guards, actions) ->
    - Set `self.is_processing = false`.
    - Drain any remaining `external_queue` events and return `last_ret`.
 
-### 4.4 Self-Transitions on `after` Timers (`Polling -> Polling`)
+### 4.4 Hierarchical Self-Transitions & XState 5 `reenter` Semantics
 
-In statecharts authored in JSON (including XState v4-style JSON or hand-authored statecharts like `AprilClockFSM`), polling child states are commonly written either with or without an explicit `"reenter": true` property:
-```json
-"Polling": {
-  "after": {
-    "500": "Polling"
-  }
-}
-```
-or with guarded branches:
-```json
-"Polling": {
-  "after": {
-    "500": [
-      { "target": "#Connected", "guard": "isConnected" },
-      { "target": "Polling" }
-    ]
-  }
-}
-```
-Wait: In `portable-xstate-core/src/parser.rs`, `parse_transition_object` and `parse_single_transition` currently default `reenter` to `false`. For `on` event transitions, XState 5 defaults `reenter` to `false` (internal transition unless `reenter: true` is passed). However, for an `after` transition that specifies a `target` resolving to its own source state (`target_full == current_path`), an internal transition (`reenter: false`) would neither exit nor re-enter the state, which means the `after` timer that just expired would **never be re-armed** unless `reenter` is true.
-- Therefore, in `parse_after` (in `portable-xstate-core/src/parser.rs`), transitions parsed under `after` that specify a `target` (and do not explicitly set `"reenter": false`) will default `reenter` to `true` when `target_full == current_path` (or `force_transition.is_some()` in `transition_internal` when `dom_lca == current_parts.len() && dom_lca == target_parts.len()`).
-- Because `domain_depth` for `Polling -> Polling` with re-entry is `current_parts.len() - 1` (the parent state `ConnectToNetwork`), only `Polling` (`i = current_parts.len()`) is exited and re-entered. `ConnectToNetwork` is **not** exited, so `ConnectToNetwork`'s `after: 300000` timer remains intact at its original deadline while `Polling`'s `after: 500` timer is re-armed at `t_fire + 500`.
+To maintain strict consistency with XState 5's transition domain (LCA) rules:
+- When a child state re-enters itself (e.g., `Polling` with `"after": { "500": { "target": "Polling", "reenter": true } }`, or when a compound parent state transitions to a child `.Polling`), the transition domain is inside the parent compound state (`ConnectToNetwork`).
+- Consequently, only `Polling` (`i = current_parts.len()`) is exited and re-entered:
+  - `Polling`'s expired timer is consumed and a new `after: 500` timer for `Polling` is armed at `self.now_ms + 500` (`t_fire + 500`).
+  - `ConnectToNetwork` is **not** exited (`exited_paths` does not contain `"ConnectToNetwork"`), so `ConnectToNetwork`'s `after: 300000` timer remains intact at its original deadline.
+- In accordance with XState 5, self-transitions on atomic leaf states without `reenter: true` remain internal transitions (do not exit/re-enter the leaf state), whereas self-transitions on compound states (`ConnectToNetwork -> ConnectToNetwork` with default `reenter: false`) exit and re-enter their descendant states without exiting the compound state itself.
 
 ### 4.5 Adapter Updates (`portable-xstate-ffi` and `portable-xstate-wasm`)
 
