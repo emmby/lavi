@@ -1,4 +1,4 @@
-use portable_xstate_core::{JsonError, Value};
+use portable_xstate_rust::{JsonError, Value};
 
 #[test]
 fn test_json_primitives_and_containers() {

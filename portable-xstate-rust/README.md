@@ -1,4 +1,4 @@
-# Portable XState Core
+# Portable XState Rust
 
 A pure Rust implementation of the Portable XState runtime configuration and execution logic.
 
@@ -10,10 +10,10 @@ A pure Rust implementation of the Portable XState runtime configuration and exec
 
 ## Usage
 
-This crate is primarily intended to be used by consumers like `portable-xstate-json` or `portable-xstate-wasm`, but can be used directly if you manually construct the `MachineDefinition`.
+This crate can be used directly in Rust or by target adapters like `portable-xstate-wasm` and `portable-xstate-c-cpp`.
 
 ```rust
-use portable_xstate_core::{RuntimeMachine, MachineDefinition, Value};
+use portable_xstate_rust::{RuntimeMachine, MachineDefinition, Value};
 
 // Construct definition manually...
 let machine = RuntimeMachine::new(definition);

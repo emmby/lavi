@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use portable_xstate_core::{from_json_str, RuntimeMachine, Value};
+use portable_xstate_rust::{from_json_str, RuntimeMachine, Value};
 
 #[test]
 fn test_raise_action_internal_queue() {

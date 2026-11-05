@@ -1,5 +1,5 @@
 [package]
-name = "portable-xstate-core"
+name = "portable-xstate-rust"
 version = "0.1.0"
 edition = "2021"
 

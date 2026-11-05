@@ -74,8 +74,8 @@ fn verify_scenario(scenario: JsValue) {
         let x_obj = xstate_snapshots.get(i as u32);
         let x_json = js_sys::JSON::stringify(&x_obj).unwrap().as_string().unwrap();
         
-        let w_val = portable_xstate_core::Value::from_json(w_json).unwrap();
-        let x_val = portable_xstate_core::Value::from_json(&x_json).unwrap();
+        let w_val = portable_xstate_rust::Value::from_json(w_json).unwrap();
+        let x_val = portable_xstate_rust::Value::from_json(&x_json).unwrap();
         
         let w_obj = w_val.as_object().unwrap();
         let x_obj_map = x_val.as_object().unwrap();
@@ -158,8 +158,8 @@ fn test_js_to_value_ignores_undefined_and_functions() {
     js_sys::Reflect::set(&obj, &"c".into(), &func).unwrap();
 
     let val = portable_xstate_wasm::utils::js_to_value(&obj.clone().into());
-    if let portable_xstate_core::Value::Object(map) = &val {
-        assert_eq!(map.get("a"), Some(&portable_xstate_core::Value::Number(1.0)));
+    if let portable_xstate_rust::Value::Object(map) = &val {
+        assert_eq!(map.get("a"), Some(&portable_xstate_rust::Value::Number(1.0)));
         assert!(!map.contains_key("b"), "undefined property should be ignored");
         assert!(!map.contains_key("c"), "function property should be ignored");
     } else {

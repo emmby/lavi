@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use portable_xstate_core::{RuntimeMachine, Value};
+use portable_xstate_rust::{RuntimeMachine, Value};
 use crate::utils::{js_to_value, value_to_js};
 use indexmap::IndexMap;
 // use std::collections::BTreeMap; // Keep BTreeMap for internal maps if not critical, or move them too.
@@ -123,7 +123,7 @@ impl StateNode {
     pub fn events(&self) -> Vec<String> {
         let mut events_vec = Vec::new();
         // Helper function for recursion
-        fn collect_events(state: &portable_xstate_core::StateDefinition, events: &mut Vec<String>) {
+        fn collect_events(state: &portable_xstate_rust::StateDefinition, events: &mut Vec<String>) {
              // Iterate keys in definition order (IndexMap)
              for (key, transitions) in &state.on {
                  if transitions.is_empty() {
@@ -192,7 +192,7 @@ impl StateNode {
         state_obj.into()
     }
 
-    fn is_state_done(&self, val: &JsValue, states: &IndexMap<String, portable_xstate_core::StateDefinition>) -> bool {
+    fn is_state_done(&self, val: &JsValue, states: &IndexMap<String, portable_xstate_rust::StateDefinition>) -> bool {
          if let Some(key) = val.as_string() {
               if let Some(def) = states.get(&key) {
                    return def.type_.as_deref() == Some("final");
@@ -230,7 +230,7 @@ impl StateNode {
          false
     }
 
-    fn resolve_state_from_key(&self, key: &str, states: &IndexMap<String, portable_xstate_core::StateDefinition>) -> JsValue {
+    fn resolve_state_from_key(&self, key: &str, states: &IndexMap<String, portable_xstate_rust::StateDefinition>) -> JsValue {
         if let Some(def) = states.get(key) {
              if !def.states.is_empty() {
                  if let Some(initial) = &def.initial {
@@ -318,7 +318,7 @@ impl StateNode {
 
 // Helper to map a map of states to a JS object of StateNodes
 fn map_state_map(
-    states_def: &IndexMap<String, portable_xstate_core::StateDefinition>,
+    states_def: &IndexMap<String, portable_xstate_rust::StateDefinition>,
     states_config: &JsValue,
     parent_id: &str
 ) -> JsValue {
@@ -523,7 +523,7 @@ impl StateNode {
                  if let Ok(v) = js_sys::Reflect::get(&snap_obj, &value_key) {
                      if !v.is_undefined() {
                          web_sys::console::log_2(&JsValue::from_str("StateNode restoring value:"), &v);
-                         runner.machine.current_state = portable_xstate_core::value_to_state_value(js_to_value(&v));
+                         runner.machine.current_state = portable_xstate_rust::value_to_state_value(js_to_value(&v));
                          runner.is_initialized = true;
                          web_sys::console::log_1(&JsValue::from_str("StateNode initialized from snapshot"));
                      }
@@ -590,13 +590,13 @@ impl StateNode {
                                           }
                                       }
                                       if let Some(p) = longest_path {
-                                          runner.machine.history_value.insert(parent_path, portable_xstate_core::StateValue::Atomic(p));
+                                          runner.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(p));
                                       }
                                  } else if v.is_string() {
-                                      runner.machine.history_value.insert(parent_path, portable_xstate_core::StateValue::Atomic(v.as_string().unwrap()));
+                                      runner.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(v.as_string().unwrap()));
                                  } else {
                                       // Complex compound object
-                                      runner.machine.history_value.insert(parent_path, portable_xstate_core::value_to_state_value(js_to_value(&v)));
+                                      runner.machine.history_value.insert(parent_path, portable_xstate_rust::value_to_state_value(js_to_value(&v)));
                                  }
                              }
                         }
@@ -610,7 +610,7 @@ impl StateNode {
                               let h_val = js_to_value(&h);
                               if let Some(map) = h_val.into_object() {
                                   for (k, v) in map {
-                                      runner.machine.history_value.insert(k, portable_xstate_core::value_to_state_value(v));
+                                      runner.machine.history_value.insert(k, portable_xstate_rust::value_to_state_value(v));
                                   }
                               }
                           }
@@ -1048,7 +1048,7 @@ impl Actor {
              internal_state.machine
         } else if val.is_string() {
              let json_definition = val.as_string().unwrap();
-             let def = portable_xstate_core::create_machine(&json_definition)
+             let def = portable_xstate_rust::create_machine(&json_definition)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
              RuntimeMachine::from_definition(def).map_err(|e| JsValue::from_str(&e))?
         } else {
@@ -1064,7 +1064,7 @@ impl Actor {
              let json_string = js_sys::JSON::stringify(&cleaned_val)
                 .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
                 .as_string().unwrap_or_default();
-             let machine_def = portable_xstate_core::create_machine(&json_string)
+             let machine_def = portable_xstate_rust::create_machine(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
              RuntimeMachine::from_definition(machine_def).map_err(|e| JsValue::from_str(&e))?
         };
@@ -1100,7 +1100,7 @@ impl Actor {
                     let v_key = JsValue::from_str("value");
                     if let Ok(v) = js_sys::Reflect::get(&state_val, &v_key) {
                         if !v.is_undefined() {
-                             actor.machine.current_state = portable_xstate_core::value_to_state_value(js_to_value(&v));
+                             actor.machine.current_state = portable_xstate_rust::value_to_state_value(js_to_value(&v));
                              actor.is_initialized = true;
                         }
                     }
@@ -1151,12 +1151,12 @@ impl Actor {
                                               }
                                          }
                                          if let Some(p) = longest_path {
-                                             actor.machine.history_value.insert(parent_path, portable_xstate_core::StateValue::Atomic(p));
+                                             actor.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(p));
                                          }
                                      } else if v.is_string() {
-                                         actor.machine.history_value.insert(parent_path, portable_xstate_core::StateValue::Atomic(v.as_string().unwrap()));
+                                         actor.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(v.as_string().unwrap()));
                                      } else {
-                                         actor.machine.history_value.insert(parent_path, portable_xstate_core::value_to_state_value(js_to_value(&v)));
+                                         actor.machine.history_value.insert(parent_path, portable_xstate_rust::value_to_state_value(js_to_value(&v)));
                                      }
                                  }
                              }
@@ -1171,7 +1171,7 @@ impl Actor {
                                  let h_val = js_to_value(&h);
                                  if let Some(map) = h_val.into_object() {
                                      for (k, v) in map {
-                                         actor.machine.history_value.insert(k, portable_xstate_core::value_to_state_value(v));
+                                         actor.machine.history_value.insert(k, portable_xstate_rust::value_to_state_value(v));
                                      }
                                  }
                              }
@@ -1534,7 +1534,7 @@ impl Snapshot {
             self.machine_ref.current_state.matches(&path)
         } else if is_valid_state_value_js(&test_value) {
             let val = js_to_value(&test_value);
-            let partial = portable_xstate_core::value_to_state_value(val);
+            let partial = portable_xstate_rust::value_to_state_value(val);
             self.machine_ref.current_state.matches_state_value(&partial)
         } else {
             false
@@ -1568,7 +1568,7 @@ impl Snapshot {
         for path in active_paths {
             let mut current_path = path.clone();
             loop {
-                if let Some(def) = portable_xstate_core::RuntimeMachine::get_state_def_recursive(&self.machine_ref.definition.states, &current_path) {
+                if let Some(def) = portable_xstate_rust::RuntimeMachine::get_state_def_recursive(&self.machine_ref.definition.states, &current_path) {
                     if def.tags.iter().any(|t| t == tag) {
                         return true;
                     }
@@ -1664,7 +1664,7 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
              }
 
              if !val.is_undefined() {
-                  runner.machine.current_state = portable_xstate_core::value_to_state_value(js_to_value(&val));
+                  runner.machine.current_state = portable_xstate_rust::value_to_state_value(js_to_value(&val));
                   runner.is_initialized = true;
              }
              if !ctx.is_undefined() {
@@ -1681,7 +1681,7 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
                       let k = keys.get(i).as_string().unwrap_or_default();
                       let v = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)).unwrap_or(JsValue::UNDEFINED);
                       if let Some(s) = v.as_string() {
-                          runner.machine.history_value.insert(k, portable_xstate_core::StateValue::Atomic(s));
+                          runner.machine.history_value.insert(k, portable_xstate_rust::StateValue::Atomic(s));
                       } else if js_sys::Array::is_array(&v) {
                           let arr: &js_sys::Array = v.unchecked_ref();
                           let mut longest_path: Option<String> = None;
@@ -1713,10 +1713,10 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
                                   // Strip last segment to get parent
                                   if let Some(idx) = history_node_path.rfind('.') {
                                       let parent_path = &history_node_path[0..idx];
-                                      runner.machine.history_value.insert(parent_path.to_string(), portable_xstate_core::StateValue::Atomic(p.clone()));
+                                      runner.machine.history_value.insert(parent_path.to_string(), portable_xstate_rust::StateValue::Atomic(p.clone()));
                                   } else {
                                       // History node at root?
-                                      runner.machine.history_value.insert("".to_string(), portable_xstate_core::StateValue::Atomic(p));
+                                      runner.machine.history_value.insert("".to_string(), portable_xstate_rust::StateValue::Atomic(p));
                                   }
                               } else {
                                   web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve History Node ID during hydration: {}", k)));

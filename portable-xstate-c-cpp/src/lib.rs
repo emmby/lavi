@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
 use alloc::collections::BTreeMap;
-use portable_xstate_core::{from_json_str, RuntimeMachine, Value};
+use portable_xstate_rust::{from_json_str, RuntimeMachine, Value};
 use indexmap::IndexMap;
 
 #[repr(C)]
@@ -46,8 +46,8 @@ pub struct MachineContext {
     machine: RuntimeMachine,
     callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
     guard_callbacks: BTreeMap<alloc::string::String, RegisteredGuard>,
-    actions: IndexMap<alloc::string::String, portable_xstate_core::ActionFunction>,
-    guards: IndexMap<alloc::string::String, portable_xstate_core::GuardFunction>,
+    actions: IndexMap<alloc::string::String, portable_xstate_rust::ActionFunction>,
+    guards: IndexMap<alloc::string::String, portable_xstate_rust::GuardFunction>,
 }
 
 #[no_mangle]
@@ -278,7 +278,7 @@ pub extern "C" fn fsm_register_action(
     
     // Process the ActionFunction immediately
     let action_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
-    let action_fn: portable_xstate_core::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
+    let action_fn: portable_xstate_rust::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
         if let Some(cb) = callback {
             cb(
                 action_name_cstr.as_ptr(),
@@ -321,7 +321,7 @@ pub extern "C" fn fsm_register_guard(
     });
     
     let guard_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
-    let guard_fn: portable_xstate_core::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
+    let guard_fn: portable_xstate_rust::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
         if let Some(cb) = callback {
             cb(
                 guard_name_cstr.as_ptr(),

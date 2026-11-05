@@ -1,10 +1,10 @@
-# Portable XState FFI
+# Portable XState C/C++
 
 This crate provides a **C/C++ compatible Static Library** for the Portable XState runtime, allowing it to be used in embedded firmware (like ESP32), iOS, or other systems.
 
 ## Architecture
 
-This library compiles to `libportable_xstate_ffi.a`. It exposes:
+This library compiles to `libportable_xstate_c_cpp.a`. It exposes:
 1.  **Raw C API**: `include/portable_xstate.h`
 2.  **C++ Wrapper**: `include/portable_xstate.hpp` (RAII-enabled, easy to use)
 
@@ -41,10 +41,10 @@ For standard targets (including ESP32-C3 which is RISC-V), you can use the **Sta
 ## Usage
 
 ### 1. Include Headers
-Add `portable-xstate-ffi/include` to your project's include path.
+Add `portable-xstate-c-cpp/include` to your project's include path.
 
 ### 2. Link Library
-Link against the generated `.a` file in `target/xtensa-esp32-espidf/release/libportable_xstate_ffi.a`.
+Link against the generated `.a` file in `target/xtensa-esp32-espidf/release/libportable_xstate_c_cpp.a`.
 
 ### 3. C++ Example
 ```cpp

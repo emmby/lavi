@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use portable_xstate_core::Value;
+use portable_xstate_rust::Value;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 
