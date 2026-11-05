@@ -255,10 +255,10 @@ fn parse_states_iterative(
                 resolve_initial_info(child_map.swap_remove("initial"));
 
             let history_val = child_map.swap_remove("history");
-            let history_present = match &history_val {
-                None | Some(Value::Null) | Some(Value::Bool(false)) => false,
-                _ => true,
-            };
+            let history_present = !matches!(
+                &history_val,
+                None | Some(Value::Null) | Some(Value::Bool(false))
+            );
             let is_deep_history = match &history_val {
                 Some(Value::String(s)) if s == "deep" => true,
                 Some(Value::Object(o)) => {
@@ -575,8 +575,8 @@ fn parse_on(v: Option<Value>) -> IndexMap<String, Vec<TransitionDefinition>> {
 
 fn parse_after(v: Option<Value>) -> IndexMap<u64, Vec<TransitionDefinition>> {
     let mut result: IndexMap<u64, Vec<TransitionDefinition>> = IndexMap::new();
-    match v {
-        Some(mut val) => match &mut val {
+    if let Some(mut val) = v {
+        match &mut val {
             Value::Object(map) => {
                 for (k, val) in core::mem::take(map) {
                     if let Ok(delay) = k.parse::<u64>() {
@@ -603,8 +603,7 @@ fn parse_after(v: Option<Value>) -> IndexMap<u64, Vec<TransitionDefinition>> {
                 }
             }
             _ => {}
-        },
-        None => {}
+        }
     }
     result
 }

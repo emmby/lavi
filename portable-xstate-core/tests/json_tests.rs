@@ -53,7 +53,7 @@ fn test_json_deep_nesting_in_small_stack_thread() {
     for _ in 0..depth {
         s.push_str(r#"{"a":["#);
     }
-    s.push_str("1");
+    s.push('1');
     for _ in 0..depth {
         s.push_str("]}");
     }
