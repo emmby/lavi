@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use portable_xstate_core::Value;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 
 pub fn js_to_value(val: &JsValue) -> Value {
@@ -12,7 +13,7 @@ pub fn js_to_value(val: &JsValue) -> Value {
     } else if let Some(s) = val.as_string() {
         Value::String(s)
     } else if js_sys::Array::is_array(val) {
-        let arr = js_sys::Array::from(val);
+        let arr: &js_sys::Array = val.unchecked_ref();
         let len = arr.length();
         let mut vec = Vec::with_capacity(len as usize);
         for i in 0..len {

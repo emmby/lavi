@@ -157,7 +157,7 @@ fn test_assign_api() {
     match action {
         Action::Assign(a) => {
             assert_eq!(a.action_type, "xstate.assign");
-            match a.assignment {
+            match &a.assignment {
                 Value::Object(map) => {
                     assert_eq!(map.get("count"), Some(&Value::Number(1.0)));
                 }

@@ -93,12 +93,13 @@ pub fn value_to_state_value(v: Value) -> StateValue {
             } else {
                 return comp;
             }
-        } else if let Some(val) = pending_val.take() {
-            match val {
+        } else if let Some(mut val) = pending_val.take() {
+            match &mut val {
                 Value::String(s) => {
-                    completed = Some(StateValue::Atomic(s));
+                    completed = Some(StateValue::Atomic(core::mem::take(s)));
                 }
                 Value::Object(obj) => {
+                    let obj = core::mem::take(obj);
                     if obj.is_empty() {
                         completed = Some(StateValue::Parallel(IndexMap::new()));
                     } else if obj.len() == 1 {
@@ -128,9 +129,9 @@ pub fn value_to_state_value(v: Value) -> StateValue {
 }
 
 pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonError> {
-    let mut root = match val {
-        Value::Object(map) => map,
-        _ => {
+    let mut root = match val.into_object() {
+        Some(map) => map,
+        None => {
             return Err(JsonError {
                 message: "Expected JSON object for machine definition".to_string(),
                 offset: 0,
@@ -138,15 +139,12 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
         }
     };
 
-    let id = match root.swap_remove("id") {
-        Some(Value::String(s)) => s,
-        _ => "(machine)".to_string(),
-    };
+    let id = root
+        .swap_remove("id")
+        .and_then(|v| v.into_string())
+        .unwrap_or_else(|| "(machine)".to_string());
 
-    let raw_type = match root.swap_remove("type") {
-        Some(Value::String(s)) => Some(s),
-        _ => None,
-    };
+    let raw_type = root.swap_remove("type").and_then(|v| v.into_string());
 
     let (initial_str, initial_actions) = resolve_initial_info(root.swap_remove("initial"));
     let states_val = root.swap_remove("states");
@@ -219,9 +217,9 @@ fn parse_states_iterative(
     machine_id: &str,
     id_map: &mut IndexMap<String, String>,
 ) -> IndexMap<String, StateDefinition> {
-    let root_children = match states_val {
-        Some(Value::Object(map)) => map.into_iter(),
-        _ => return IndexMap::new(),
+    let root_children = match states_val.and_then(|v| v.into_object()) {
+        Some(map) => map.into_iter(),
+        None => return IndexMap::new(),
     };
 
     let root_frame = StateWorkFrame {
@@ -241,15 +239,8 @@ fn parse_states_iterative(
                 format!("{}.{}", top.current_path, child_key)
             };
 
-            let mut child_map = match child_val {
-                Value::Object(map) => map,
-                _ => IndexMap::new(),
-            };
-
-            let child_id = match child_map.swap_remove("id") {
-                Some(Value::String(s)) => Some(s),
-                _ => None,
-            };
+            let mut child_map = child_val.into_object().unwrap_or_default();
+            let child_id = child_map.swap_remove("id").and_then(|v| v.into_string());
 
             if let Some(id) = &child_id {
                 id_map.insert(id.clone(), child_path.clone());
@@ -258,10 +249,7 @@ fn parse_states_iterative(
                 id_map.insert(default_id, child_path.clone());
             }
 
-            let raw_type = match child_map.swap_remove("type") {
-                Some(Value::String(s)) => Some(s),
-                _ => None,
-            };
+            let raw_type = child_map.swap_remove("type").and_then(|v| v.into_string());
 
             let (initial_str, initial_actions) =
                 resolve_initial_info(child_map.swap_remove("initial"));
@@ -295,10 +283,10 @@ fn parse_states_iterative(
             let tags = parse_string_list(child_map.swap_remove("tags"));
             let invoke = parse_invoke_list(child_map.swap_remove("invoke"));
 
-            let grandchild_map = match child_map.swap_remove("states") {
-                Some(Value::Object(m)) => m,
-                _ => IndexMap::new(),
-            };
+            let grandchild_map = child_map
+                .swap_remove("states")
+                .and_then(|v| v.into_object())
+                .unwrap_or_default();
             let is_compound = !grandchild_map.is_empty();
             let is_parallel = raw_type.as_deref() == Some("parallel");
 
@@ -359,14 +347,14 @@ fn parse_states_iterative(
                 remaining_children: grandchild_map.into_iter(),
             });
         } else {
-            let finished = stack.pop().unwrap();
+            let mut finished = stack.pop().unwrap();
             if let Some(parent) = stack.last_mut() {
                 parent
                     .state_def
                     .states
                     .insert(finished.key, finished.state_def);
             } else {
-                return finished.state_def.states;
+                return core::mem::take(&mut finished.state_def.states);
             }
         }
     }
@@ -376,45 +364,52 @@ fn parse_states_iterative(
 
 fn resolve_initial_info(v: Option<Value>) -> (Option<String>, Vec<Action>) {
     match v {
-        Some(Value::String(s)) => (Some(s), Vec::new()),
-        Some(Value::Object(mut o)) => {
-            let target = match o.swap_remove("target") {
-                Some(Value::String(t)) => Some(t),
-                Some(Value::Array(t_arr)) => t_arr.into_iter().find_map(|item| match item {
-                    Value::String(s) => Some(s),
-                    _ => None,
-                }),
-                _ => None,
-            };
-            let actions = parse_action_list(o.swap_remove("actions"));
-            (target, actions)
-        }
-        _ => (None, Vec::new()),
+        Some(mut val) => match &mut val {
+            Value::String(s) => (Some(core::mem::take(s)), Vec::new()),
+            Value::Object(o) => {
+                let mut o = core::mem::take(o);
+                let target = match o.swap_remove("target") {
+                    Some(mut t) => match &mut t {
+                        Value::String(s) => Some(core::mem::take(s)),
+                        Value::Array(t_arr) => core::mem::take(t_arr)
+                            .into_iter()
+                            .find_map(|item| item.into_string()),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                let actions = parse_action_list(o.swap_remove("actions"));
+                (target, actions)
+            }
+            _ => (None, Vec::new()),
+        },
+        None => (None, Vec::new()),
     }
 }
 
 fn parse_string_list(v: Option<Value>) -> Vec<String> {
     match v {
-        Some(Value::String(s)) => vec![s],
-        Some(Value::Array(arr)) => arr
-            .into_iter()
-            .filter_map(|item| match item {
-                Value::String(s) => Some(s),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
+        Some(mut val) => match &mut val {
+            Value::String(s) => vec![core::mem::take(s)],
+            Value::Array(arr) => core::mem::take(arr)
+                .into_iter()
+                .filter_map(|item| item.into_string())
+                .collect(),
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
     }
 }
 
-fn parse_action(val: Value) -> Action {
-    match val {
-        Value::String(s) => Action::Named(s),
-        Value::Object(mut obj) => {
-            let action_type = match obj.swap_remove("type") {
-                Some(Value::String(s)) => s,
-                _ => "unknown".to_string(),
-            };
+fn parse_action(mut val: Value) -> Action {
+    match &mut val {
+        Value::String(s) => Action::Named(core::mem::take(s)),
+        Value::Object(obj) => {
+            let mut obj = core::mem::take(obj);
+            let action_type = obj
+                .swap_remove("type")
+                .and_then(|v| v.into_string())
+                .unwrap_or_else(|| "unknown".to_string());
             let assignment = obj.swap_remove("assignment");
             let params = obj.swap_remove("params");
             let event = obj.swap_remove("event");
@@ -450,21 +445,25 @@ fn parse_action(val: Value) -> Action {
 
 fn parse_action_list(v: Option<Value>) -> Vec<Action> {
     match v {
-        Some(Value::Array(arr)) => arr.into_iter().map(parse_action).collect(),
-        Some(Value::String(s)) => vec![Action::Named(s)],
-        Some(Value::Object(obj)) => vec![parse_action(Value::Object(obj))],
-        _ => Vec::new(),
+        Some(mut val) => match &mut val {
+            Value::Array(arr) => core::mem::take(arr).into_iter().map(parse_action).collect(),
+            Value::String(s) => vec![Action::Named(core::mem::take(s))],
+            Value::Object(obj) => vec![parse_action(Value::Object(core::mem::take(obj)))],
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
     }
 }
 
-fn parse_guard(val: Value) -> Option<TransitionGuard> {
-    match val {
-        Value::String(name) => Some(TransitionGuard::Name(name)),
-        Value::Object(mut obj) => {
-            let guard_type = match obj.swap_remove("type") {
-                Some(Value::String(s)) => s,
-                _ => String::new(),
-            };
+fn parse_guard(mut val: Value) -> Option<TransitionGuard> {
+    match &mut val {
+        Value::String(name) => Some(TransitionGuard::Name(core::mem::take(name))),
+        Value::Object(obj) => {
+            let mut obj = core::mem::take(obj);
+            let guard_type = obj
+                .swap_remove("type")
+                .and_then(|v| v.into_string())
+                .unwrap_or_default();
             let params = obj.swap_remove("params");
             Some(TransitionGuard::Object(GuardObject { guard_type, params }))
         }
@@ -474,22 +473,22 @@ fn parse_guard(val: Value) -> Option<TransitionGuard> {
 
 fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefinition {
     let target = match obj.swap_remove("target") {
-        Some(Value::String(s)) => Some(vec![s]),
-        Some(Value::Array(arr)) => {
-            let v: Vec<String> = arr
-                .into_iter()
-                .filter_map(|item| match item {
-                    Value::String(s) => Some(s),
-                    _ => None,
-                })
-                .collect();
-            if v.is_empty() {
-                None
-            } else {
-                Some(v)
+        Some(mut val) => match &mut val {
+            Value::String(s) => Some(vec![core::mem::take(s)]),
+            Value::Array(arr) => {
+                let v: Vec<String> = core::mem::take(arr)
+                    .into_iter()
+                    .filter_map(|item| item.into_string())
+                    .collect();
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
             }
-        }
-        _ => None,
+            _ => None,
+        },
+        None => None,
     };
     let cond_val = obj.swap_remove("guard").or_else(|| obj.swap_remove("cond"));
     let cond = cond_val.and_then(parse_guard);
@@ -507,17 +506,17 @@ fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefini
     }
 }
 
-fn parse_single_transition(val: Value) -> TransitionDefinition {
-    match val {
+fn parse_single_transition(mut val: Value) -> TransitionDefinition {
+    match &mut val {
         Value::String(target) => TransitionDefinition {
-            target: Some(vec![target]),
+            target: Some(vec![core::mem::take(target)]),
             cond: None,
             actions: Vec::new(),
             reenter: false,
         },
-        Value::Object(obj) => parse_transition_object(obj),
+        Value::Object(obj) => parse_transition_object(core::mem::take(obj)),
         _ => TransitionDefinition {
-            target: Some(vec![String::new()]),
+            target: None,
             cond: None,
             actions: Vec::new(),
             reenter: false,
@@ -527,21 +526,27 @@ fn parse_single_transition(val: Value) -> TransitionDefinition {
 
 fn parse_transition_list(v: Option<Value>) -> Vec<TransitionDefinition> {
     match v {
-        Some(Value::Array(arr)) => arr.into_iter().map(parse_single_transition).collect(),
-        Some(Value::String(s)) => vec![TransitionDefinition {
-            target: Some(vec![s]),
-            cond: None,
-            actions: Vec::new(),
-            reenter: false,
-        }],
-        Some(Value::Object(obj)) => vec![parse_transition_object(obj)],
-        _ => Vec::new(),
+        Some(mut val) => match &mut val {
+            Value::Array(arr) => core::mem::take(arr)
+                .into_iter()
+                .map(parse_single_transition)
+                .collect(),
+            Value::String(s) => vec![TransitionDefinition {
+                target: Some(vec![core::mem::take(s)]),
+                cond: None,
+                actions: Vec::new(),
+                reenter: false,
+            }],
+            Value::Object(obj) => vec![parse_transition_object(core::mem::take(obj))],
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
     }
 }
 
 fn parse_on(v: Option<Value>) -> IndexMap<String, Vec<TransitionDefinition>> {
     let mut result = IndexMap::new();
-    if let Some(Value::Object(map)) = v {
+    if let Some(map) = v.and_then(|v| v.into_object()) {
         for (k, val) in map {
             result.insert(k, parse_transition_list(Some(val)));
         }
@@ -552,55 +557,61 @@ fn parse_on(v: Option<Value>) -> IndexMap<String, Vec<TransitionDefinition>> {
 fn parse_after(v: Option<Value>) -> IndexMap<u64, Vec<TransitionDefinition>> {
     let mut result: IndexMap<u64, Vec<TransitionDefinition>> = IndexMap::new();
     match v {
-        Some(Value::Object(map)) => {
-            for (k, val) in map {
-                if let Ok(delay) = k.parse::<u64>() {
-                    let transitions = parse_transition_list(Some(val));
-                    result.entry(delay).or_default().extend(transitions);
+        Some(mut val) => match &mut val {
+            Value::Object(map) => {
+                for (k, val) in core::mem::take(map) {
+                    if let Ok(delay) = k.parse::<u64>() {
+                        let transitions = parse_transition_list(Some(val));
+                        result.entry(delay).or_default().extend(transitions);
+                    }
                 }
             }
-        }
-        Some(Value::Array(arr)) => {
-            for item in arr {
-                if let Value::Object(mut map) = item {
-                    if let Some(delay_val) = map.swap_remove("delay") {
-                        let delay_opt = match delay_val {
-                            Value::Number(n) => Some(n as u64),
-                            Value::String(s) => s.parse::<u64>().ok(),
-                            _ => None,
-                        };
-                        if let Some(delay) = delay_opt {
-                            let transition = parse_transition_object(map);
-                            result.entry(delay).or_default().push(transition);
+            Value::Array(arr) => {
+                for item in core::mem::take(arr) {
+                    if let Some(mut map) = item.into_object() {
+                        if let Some(delay_val) = map.swap_remove("delay") {
+                            let delay_opt = match &delay_val {
+                                Value::Number(n) => Some(*n as u64),
+                                Value::String(s) => s.parse::<u64>().ok(),
+                                _ => None,
+                            };
+                            if let Some(delay) = delay_opt {
+                                let transition = parse_transition_object(map);
+                                result.entry(delay).or_default().push(transition);
+                            }
                         }
                     }
                 }
             }
-        }
-        _ => {}
+            _ => {}
+        },
+        None => {}
     }
     result
 }
 
 fn parse_invoke_list(v: Option<Value>) -> Vec<InvokeDefinition> {
     let items = match v {
-        Some(Value::Array(arr)) => arr,
-        Some(other) => vec![other],
+        Some(mut v) => {
+            if let Value::Array(arr) = &mut v {
+                core::mem::take(arr)
+            } else {
+                vec![v]
+            }
+        }
         None => Vec::new(),
     };
     items
         .into_iter()
-        .filter_map(|item| match item {
-            Value::Object(mut o) => {
+        .filter_map(|mut item| match &mut item {
+            Value::Object(o) => {
+                let mut o = core::mem::take(o);
                 let src = o.swap_remove("src").unwrap_or(Value::Null);
-                let id = match o.swap_remove("id") {
-                    Some(Value::String(s)) => Some(s),
-                    _ => None,
-                };
+                let id = o.swap_remove("id").and_then(|v| v.into_string());
                 Some(InvokeDefinition { src, id })
             }
             Value::String(s) => Some(InvokeDefinition {
-                src: Value::String(s),
+                src: Value::String(core::mem::take(s)),
                 id: None,
             }),
             _ => None,

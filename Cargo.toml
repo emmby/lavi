@@ -10,7 +10,5 @@ resolver = "2"
 wasm-bindgen = "0.2"
 portable-xstate-core = { path = "./portable-xstate-core" }
 
-[profile.test]
-opt-level = 1
 
 

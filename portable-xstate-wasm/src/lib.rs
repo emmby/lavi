@@ -608,7 +608,7 @@ impl StateNode {
                      if let Ok(h) = js_sys::Reflect::get(&snap_obj, &h_v5_key) {
                           if !h.is_undefined() && !h.is_null() {
                               let h_val = js_to_value(&h);
-                              if let Value::Object(map) = h_val {
+                              if let Some(map) = h_val.into_object() {
                                   for (k, v) in map {
                                       runner.machine.history_value.insert(k, portable_xstate_core::value_to_state_value(v));
                                   }
@@ -1179,7 +1179,7 @@ impl Actor {
                         if let Ok(h) = js_sys::Reflect::get(&state_val, &h_v5_key) {
                              if !h.is_undefined() && !h.is_null() && h.is_object() {
                                  let h_val = js_to_value(&h);
-                                 if let Value::Object(map) = h_val {
+                                 if let Some(map) = h_val.into_object() {
                                      for (k, v) in map {
                                          actor.machine.history_value.insert(k, portable_xstate_core::value_to_state_value(v));
                                      }

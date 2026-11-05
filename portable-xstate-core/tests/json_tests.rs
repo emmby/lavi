@@ -30,9 +30,9 @@ fn test_json_unicode_and_surrogate_pairs() {
 
 #[test]
 fn test_json_unpaired_utf16_surrogates_rejected() {
-    for bad in [r#""\uD800""#, r#""\uD800\u0041""#, r#""\uDC00""#, r#""\uD800x""#] {
+    for bad in [r#""\uD800""#, r#""\uD800\u0041""#, r#""\uDC00""#, r#""\uD800x""#, r#""\u+123""#] {
         let res = Value::from_json(bad);
-        assert!(res.is_err(), "Expected error for unpaired surrogate: {}", bad);
+        assert!(res.is_err(), "Expected error for invalid unicode escape / unpaired surrogate: {}", bad);
     }
 }
 

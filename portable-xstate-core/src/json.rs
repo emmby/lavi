@@ -54,6 +54,12 @@ fn parse_hex4(bytes: &[u8], pos: &mut usize) -> Result<u16, JsonError> {
         });
     }
     let slice = &bytes[*pos..*pos + 4];
+    if !slice.iter().all(|b| b.is_ascii_hexdigit()) {
+        return Err(JsonError {
+            message: "invalid hex digits in unicode escape".to_string(),
+            offset: *pos,
+        });
+    }
     *pos += 4;
     let s = core::str::from_utf8(slice).map_err(|_| JsonError {
         message: "invalid utf8 in unicode escape".to_string(),
