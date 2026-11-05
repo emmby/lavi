@@ -1,0 +1,44 @@
+{
+  "name": "portable-xstate",
+  "version": "0.1.1",
+  "description": "Portable XState runtime for C/C++ and PlatformIO, powered by Rust.",
+  "keywords": [
+    "xstate",
+    "fsm",
+    "state-machine",
+    "statechart",
+    "rust",
+    "ffi"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emmby/portable-xstate.git"
+  },
+  "build": {
+    "extraScript": "build_rust.py",
+    "includeDir": "portable-xstate-c-cpp/include",
+    "srcFilter": [
+      "-<*>"
+    ]
+  },
+  "export": {
+    "include": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "build_rust.py",
+      "portable-xstate-rust/**",
+      "portable-xstate-c-cpp/Cargo.toml",
+      "portable-xstate-c-cpp/src/**",
+      "portable-xstate-c-cpp/include/**",
+      "portable-xstate-wasm/Cargo.toml",
+      "portable-xstate-wasm/src/**",
+      "examples/stoplight-esp32/**"
+    ]
+  },
+  "frameworks": [
+    "*"
+  ],
+  "platforms": [
+    "*"
+  ]
+}

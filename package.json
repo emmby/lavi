@@ -9,9 +9,10 @@
     "test:wasm": "cd portable-xstate-wasm && wasm-pack test --headless --chrome",
     "test:e2e": "playwright test",
     "build:c-cpp": "cargo build --package portable-xstate-c-cpp",
-    "test:c-cpp": "npm run build:c-cpp && npm run test:c-cpp:c && npm run test:c-cpp:cpp",
+    "test:c-cpp": "npm run build:c-cpp && npm run test:c-cpp:c && npm run test:c-cpp:cpp && npm run test:c-cpp:pio",
     "test:c-cpp:c": "mkdir -p portable-xstate-c-cpp/tests/out && clang portable-xstate-c-cpp/tests/c_test.c -o portable-xstate-c-cpp/tests/out/c_test -I portable-xstate-c-cpp/include -L target/debug -lportable_xstate_c_cpp && ./portable-xstate-c-cpp/tests/out/c_test",
     "test:c-cpp:cpp": "mkdir -p portable-xstate-c-cpp/tests/out && clang++ portable-xstate-c-cpp/tests/cpp_test.cpp -o portable-xstate-c-cpp/tests/out/cpp_test -I portable-xstate-c-cpp/include -L target/debug -lportable_xstate_c_cpp -std=c++11 && ./portable-xstate-c-cpp/tests/out/cpp_test",
+    "test:c-cpp:pio": "python3 -m unittest portable-xstate-c-cpp/tests/test_build_rust.py -v",
     "test:unit": "vitest run"
   },
   "dependencies": {
