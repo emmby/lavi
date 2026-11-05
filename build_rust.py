@@ -19,7 +19,7 @@ MCU_TO_RUST_TARGET = {
 }
 
 # --- Define paths ---
-LIB_ROOT = os.path.dirname(os.path.abspath(__file__))
+LIB_ROOT = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 CRATE_NAME = "portable-xstate-c-cpp"
 LIB_NAME = "portable_xstate_c_cpp"
 STATIC_LIB_FILENAME = f"lib{LIB_NAME}.a"
