@@ -21,9 +21,9 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 | `actions.test.ts` | `legacy-baseline` (`TD-2`) | 99 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
 | `after.test.ts` | `legacy-baseline` (`TD-1`) | 5 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
 | `eventDescriptors.test.ts` | `strict` | 0 | [`tests/upstream/eventDescriptors.test.ts`](./tests/upstream/eventDescriptors.test.ts) |
-| `history.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
+| `history.test.ts` | `strict` | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
 | `machine.test.ts` | `strict` | 1 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
-| `state.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
+| `state.test.ts` | `strict` | 1 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
 
 ### Upstream Suites Not Yet Onboarded
 `transition.test.ts`, `parallel.test.ts`, `final.test.ts`, `guards.test.ts`, `assign.test.ts`, `raise.test.ts`, `input.test.ts`, `invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`, `json.test.ts`, `inspect.test.ts`, `meta.test.ts`, `tags.test.ts`.
@@ -39,12 +39,12 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
   - [x] `states` (Iterative state node hierarchy parsing) `[Rust | WASM | C/C++]`
   - [x] `version` (Machine versioning on `StateNode`) `[WASM]`
   - [x] `types` / `schemas` (TypeScript type schemas pass-through) `[Rust | WASM]`
-- [ ] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts) — 23/23 passing, 1 `todo` in `tests/state.test.ts`, pending `TD-3` strict graduation)
+- [ ] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts) — 20/21 passing in `tests/state.test.ts`, 1 `spawn` test skipped)
   - [x] Atomic States (Leaf nodes) `[Rust | WASM | C/C++]`
   - [x] Compound States (Nested states with `initial`) `[Rust | WASM | C/C++]`
   - [ ] Parallel States (Orthogonal regions) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/parallel.test.ts) — core support implemented; upstream `parallel.test.ts` not yet onboarded)
   - [ ] Final States (`type: 'final'`) `[Rust | WASM]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts) — parsed in Rust and sets `status: 'done'` in WASM; `onDone` transitions and upstream `final.test.ts` not yet implemented)
-  - [ ] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts) — 33/33 passing in `tests/history.test.ts`, pending `TD-3` strict graduation)
+  - [x] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts) — 33/33 passing in `tests/history.test.ts`)
     - [x] Shallow history (default) `[Rust | WASM | C/C++]`
     - [x] Deep history (`history: 'deep'`) `[Rust | WASM | C/C++]`
     - [x] History with default `target` `[Rust | WASM | C/C++]`

@@ -6,15 +6,19 @@
       "allowed_skips": []
     },
     "state.test.ts": {
-      "status": "legacy-baseline",
-      "legacy_baseline_sha256": "e413aec7b24573449c90cb44f0b891ee73748f842559ad45602918db42624dad",
-      "tech_debt_id": "TD-3",
-      "allowed_skips": []
+      "status": "strict",
+      "allowed_skips": [
+        {
+          "title": "should not spawn actors when determining if an event is accepted",
+          "category": "unimplemented-feature",
+          "feature": "spawn",
+          "reason": "Actor spawning (spawn / fromCallback) is not yet implemented",
+          "ref": "XSTATE_5_FEATURES.md"
+        }
+      ]
     },
     "history.test.ts": {
-      "status": "legacy-baseline",
-      "legacy_baseline_sha256": "04dea7d7ed54f32ca499c605f4d5bfe67669378e07b68b046107547f607276d1",
-      "tech_debt_id": "TD-3",
+      "status": "strict",
       "allowed_skips": []
     },
     "actions.test.ts": {
