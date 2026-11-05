@@ -66,6 +66,58 @@ int main() {
     assert(c_action_called == true);
 
     fsm_free(machine);
+
+    // Virtual time advancement test using SimulatedClock*
+    const char* APRIL_JSON = "{"
+      "\"id\": \"april\","
+      "\"initial\": \"ConnectToNetwork\","
+      "\"states\": {"
+        "\"ConnectToNetwork\": {"
+          "\"initial\": \"Polling\","
+          "\"after\": { \"300000\": \"Wait\" },"
+          "\"states\": {"
+            "\"Polling\": {"
+              "\"after\": { \"500\": { \"target\": \"Polling\", \"reenter\": true } }"
+            "}"
+          "}"
+        "},"
+        "\"Wait\": {"
+          "\"after\": { \"60000\": \"Sleep\" }"
+        "},"
+        "\"Sleep\": {"
+          "\"after\": { \"3600000\": \"Wake\" }"
+        "},"
+        "\"Wake\": {}"
+      "}"
+    "}";
+
+    SimulatedClock* sim_clock = fsm_simulated_clock_create(0);
+    assert(sim_clock != NULL);
+    MachineContext* april_fsm = fsm_create(APRIL_JSON);
+    assert(april_fsm != NULL);
+    assert(fsm_register_simulated_clock(april_fsm, sim_clock) == 0);
+    assert(fsm_start(april_fsm) == 0);
+
+    uint64_t next_deadline = 0;
+    assert(fsm_get_next_deadline(april_fsm, &next_deadline) == true);
+    assert(next_deadline == 500);
+
+    // Advance 300,000 ms -> parent timeout transitions ConnectToNetwork -> Wait at t = 300,000
+    assert(fsm_simulated_clock_increment(sim_clock, 300000) == 0);
+    assert(fsm_simulated_clock_now(sim_clock) == 300000);
+    assert(fsm_matches(april_fsm, "Wait"));
+    assert(fsm_get_next_deadline(april_fsm, &next_deadline) == true);
+    assert(next_deadline == 360000);
+
+    // Advance 24 hours (86,400,000 ms) in one call -> Wait -> Sleep at 360,000, Sleep -> Wake at 3,960,000
+    assert(fsm_simulated_clock_set(sim_clock, 86700000) == 0);
+    assert(fsm_simulated_clock_now(sim_clock) == 86700000);
+    assert(fsm_matches(april_fsm, "Wake"));
+    assert(fsm_get_next_deadline(april_fsm, &next_deadline) == false);
+
+    fsm_simulated_clock_free(sim_clock);
+    fsm_free(april_fsm);
+
     printf("C Test Passed!\n");
     return 0;
 }

@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -25,6 +26,9 @@ pub type fsm_action_callback_t = Option<extern "C" fn(
 pub type fsm_clock_callback_t = Option<extern "C" fn() -> u64>;
 
 #[allow(non_camel_case_types)]
+pub type fsm_clock_with_data_callback_t = Option<extern "C" fn(user_data: *mut core::ffi::c_void) -> u64>;
+
+#[allow(non_camel_case_types)]
 pub type fsm_guard_callback_t = Option<extern "C" fn(
     guard_name: *const c_char,
     context: *const fsm_value_t,
@@ -42,12 +46,35 @@ pub struct RegisteredGuard {
     pub user_data: *mut core::ffi::c_void,
 }
 
+type SharedMachineList = alloc::rc::Rc<core::cell::RefCell<alloc::vec::Vec<*mut MachineContext>>>;
+
+pub struct SimulatedClock {
+    clock: portable_xstate_rust::SimulatedClock,
+    machines: SharedMachineList,
+}
+
 pub struct MachineContext {
     machine: RuntimeMachine,
     callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
     guard_callbacks: BTreeMap<alloc::string::String, RegisteredGuard>,
     actions: IndexMap<alloc::string::String, portable_xstate_rust::ActionFunction>,
     guards: IndexMap<alloc::string::String, portable_xstate_rust::GuardFunction>,
+    bound_clocks: alloc::vec::Vec<SharedMachineList>,
+}
+
+impl MachineContext {
+    fn detach_from_clocks(&mut self) {
+        let self_ptr = self as *mut MachineContext;
+        for list in self.bound_clocks.drain(..) {
+            list.borrow_mut().retain(|&ptr| ptr != self_ptr);
+        }
+    }
+}
+
+impl Drop for MachineContext {
+    fn drop(&mut self) {
+        self.detach_from_clocks();
+    }
 }
 
 #[no_mangle]
@@ -74,6 +101,7 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
         guard_callbacks: BTreeMap::new(),
         actions: IndexMap::new(),
         guards: IndexMap::new(),
+        bound_clocks: alloc::vec::Vec::new(),
     });
     Box::into_raw(ctx)
 }
@@ -150,11 +178,172 @@ pub extern "C" fn fsm_register_clock(
         if ptr.is_null() { return -1; }
         &mut *ptr
     };
+    ctx.detach_from_clocks();
     if let Some(cb) = callback {
         let clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64> = alloc::rc::Rc::new(move || cb());
         ctx.machine.register_clock(clock_millis_fn);
     }
     0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_register_clock_with_data(
+    ptr: *mut MachineContext,
+    callback: fsm_clock_with_data_callback_t,
+    user_data: *mut core::ffi::c_void,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    ctx.detach_from_clocks();
+    if let Some(cb) = callback {
+        let clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64> =
+            alloc::rc::Rc::new(move || cb(user_data));
+        ctx.machine.register_clock(clock_millis_fn);
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_get_next_deadline(
+    ptr: *const MachineContext,
+    out_deadline: *mut u64,
+) -> bool {
+    if ptr.is_null() || out_deadline.is_null() {
+        return false;
+    }
+    let ctx = unsafe { &*ptr };
+    if let Some(deadline) = ctx.machine.next_timer_deadline() {
+        unsafe {
+            *out_deadline = deadline;
+        }
+        true
+    } else {
+        false
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_simulated_clock_create(initial_ms: u64) -> *mut SimulatedClock {
+    let sim = Box::new(SimulatedClock {
+        clock: portable_xstate_rust::SimulatedClock::with_initial(initial_ms),
+        machines: alloc::rc::Rc::new(core::cell::RefCell::new(alloc::vec::Vec::new())),
+    });
+    Box::into_raw(sim)
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_simulated_clock_free(clock_ptr: *mut SimulatedClock) {
+    if !clock_ptr.is_null() {
+        unsafe {
+            drop(Box::from_raw(clock_ptr));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_register_simulated_clock(
+    ptr: *mut MachineContext,
+    clock_ptr: *mut SimulatedClock,
+) -> c_int {
+    if ptr.is_null() || clock_ptr.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &mut *ptr };
+    let sim = unsafe { &mut *clock_ptr };
+
+    ctx.detach_from_clocks();
+    ctx.machine.register_clock(&sim.clock);
+    {
+        let mut list = sim.machines.borrow_mut();
+        if !list.contains(&ptr) {
+            list.push(ptr);
+        }
+    }
+    ctx.bound_clocks.push(sim.machines.clone());
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_simulated_clock_now(clock_ptr: *const SimulatedClock) -> u64 {
+    if clock_ptr.is_null() {
+        return 0;
+    }
+    let sim = unsafe { &*clock_ptr };
+    sim.clock.now()
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_simulated_clock_set(
+    clock_ptr: *mut SimulatedClock,
+    target_ms: u64,
+) -> c_int {
+    if clock_ptr.is_null() {
+        return -1;
+    }
+    let sim = unsafe { &mut *clock_ptr };
+
+    let mut last_deadline: Option<u64> = None;
+    let mut same_deadline_steps = 0usize;
+    let mut total_steps = 0usize;
+
+    loop {
+        let current_machines: alloc::vec::Vec<*mut MachineContext> =
+            sim.machines.borrow().clone();
+        let next_deadline_opt = current_machines
+            .iter()
+            .filter_map(|&m_ptr| {
+                let ctx = unsafe { &*m_ptr };
+                ctx.machine.next_timer_deadline()
+            })
+            .min();
+
+        let Some(next_deadline) = next_deadline_opt else {
+            break;
+        };
+        if next_deadline > target_ms {
+            break;
+        }
+        if last_deadline == Some(next_deadline) {
+            same_deadline_steps += 1;
+            if same_deadline_steps >= 100 {
+                break;
+            }
+        } else {
+            last_deadline = Some(next_deadline);
+            same_deadline_steps = 0;
+        }
+        total_steps += 1;
+        if total_steps > 1_000_000 {
+            break;
+        }
+
+        sim.clock.set_now_raw(next_deadline);
+
+        for m_ptr in current_machines {
+            if sim.machines.borrow().contains(&m_ptr) {
+                let ctx = unsafe { &mut *m_ptr };
+                let _ = ctx.machine.tick(&ctx.guards, &ctx.actions);
+            }
+        }
+    }
+
+    sim.clock.set_now_raw(target_ms);
+
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_simulated_clock_increment(
+    clock_ptr: *mut SimulatedClock,
+    dt_ms: u64,
+) -> c_int {
+    if clock_ptr.is_null() {
+        return -1;
+    }
+    let now = fsm_simulated_clock_now(clock_ptr);
+    fsm_simulated_clock_set(clock_ptr, now.saturating_add(dt_ms))
 }
 
 /// Evaluates queued `after` transition timers.
@@ -169,7 +358,7 @@ pub extern "C" fn fsm_tick(ptr: *mut MachineContext) -> c_int {
     
     if !ctx.machine.is_started { return 0; }
     
-    while let Some(_) = ctx.machine.tick(&ctx.guards, &ctx.actions) {}
+    let _ = ctx.machine.tick(&ctx.guards, &ctx.actions);
     
     0
 }
@@ -553,6 +742,141 @@ mod tests {
         assert_eq!(test_state.last_event_type, "EXTERNAL_FROM_BOOT");
 
         fsm_free(machine_ptr);
+    }
+
+    struct SimClockTestState {
+        machine_ptr: *mut MachineContext,
+        clock_ptr: *mut SimulatedClock,
+        polls: u32,
+        connected: bool,
+        reentrant_fired_at: u64,
+    }
+
+    extern "C" fn sim_poll_action(
+        _action_name: *const c_char,
+        _context: *const fsm_value_t,
+        _event: *const fsm_value_t,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        let st = unsafe { &mut *(user_data as *mut SimClockTestState) };
+        st.polls += 1;
+        if st.polls == 5 {
+            st.connected = true;
+        }
+    }
+
+    extern "C" fn sim_is_connected_guard(
+        _guard_name: *const c_char,
+        _context: *const fsm_value_t,
+        _event: *const fsm_value_t,
+        user_data: *mut core::ffi::c_void,
+    ) -> bool {
+        let st = unsafe { &*(user_data as *const SimClockTestState) };
+        st.connected
+    }
+
+    extern "C" fn sim_reentrant_action(
+        _action_name: *const c_char,
+        _context: *const fsm_value_t,
+        _event: *const fsm_value_t,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        let st = unsafe { &mut *(user_data as *mut SimClockTestState) };
+        st.reentrant_fired_at = fsm_simulated_clock_now(st.clock_ptr);
+        let ev = CString::new("SYNC_NOW").unwrap();
+        fsm_send_event(st.machine_ptr, ev.as_ptr());
+    }
+
+    #[test]
+    fn test_simulated_clock_hierarchical_and_reentrant_ffi() {
+        let json = CString::new(r##"{
+            "id": "april_ffi",
+            "initial": "ConnectToNetwork",
+            "states": {
+                "ConnectToNetwork": {
+                    "initial": "Polling",
+                    "after": {
+                        "300000": "Timeout"
+                    },
+                    "states": {
+                        "Polling": {
+                            "entry": ["poll"],
+                            "after": {
+                                "500": [
+                                    { "target": "#Connected", "guard": "isConnected", "actions": ["triggerSync"] },
+                                    { "target": "Polling", "reenter": true }
+                                ]
+                            }
+                        }
+                    }
+                },
+                "Connected": {
+                    "id": "Connected",
+                    "on": {
+                        "SYNC_NOW": "Wait"
+                    }
+                },
+                "Wait": {
+                    "after": {
+                        "60000": "Sleep"
+                    }
+                },
+                "Sleep": {},
+                "Timeout": {}
+            }
+        }"##).unwrap();
+
+        let clock_ptr = fsm_simulated_clock_create(1000);
+        assert!(!clock_ptr.is_null());
+        assert_eq!(fsm_simulated_clock_now(clock_ptr), 1000);
+
+        let machine_ptr = fsm_create(json.as_ptr());
+        assert!(!machine_ptr.is_null());
+        assert_eq!(fsm_register_simulated_clock(machine_ptr, clock_ptr), 0);
+
+        let mut st = SimClockTestState {
+            machine_ptr,
+            clock_ptr,
+            polls: 0,
+            connected: false,
+            reentrant_fired_at: 0,
+        };
+        let st_ptr = &mut st as *mut SimClockTestState as *mut core::ffi::c_void;
+
+        let poll_name = CString::new("poll").unwrap();
+        let sync_name = CString::new("triggerSync").unwrap();
+        let guard_name = CString::new("isConnected").unwrap();
+
+        fsm_register_action(machine_ptr, poll_name.as_ptr(), Some(sim_poll_action), st_ptr);
+        fsm_register_action(machine_ptr, sync_name.as_ptr(), Some(sim_reentrant_action), st_ptr);
+        fsm_register_guard(machine_ptr, guard_name.as_ptr(), Some(sim_is_connected_guard), st_ptr);
+
+        fsm_start(machine_ptr);
+
+        let mut next_dl = 0u64;
+        assert!(fsm_get_next_deadline(machine_ptr, &mut next_dl));
+        assert_eq!(next_dl, 1500);
+
+        // Advance 100,000 ms (from 1,000 to 101,000):
+        // - Poll 1 at t=1000, Poll 2 at 1500, Poll 3 at 2000, Poll 4 at 2500, Poll 5 at 3000 (sets connected = true)
+        // - At t=3500: guard is true -> transitions to Connected, triggerSync sends SYNC_NOW -> transitions to Wait at t=3500
+        // - Wait's 60,000ms timer is armed at 3500 + 60000 = 63,500
+        // - At t=63,500: Wait -> Sleep
+        // - Clock settles at 101,000
+        assert_eq!(fsm_simulated_clock_increment(clock_ptr, 100_000), 0);
+        assert_eq!(fsm_simulated_clock_now(clock_ptr), 101_000);
+        assert_eq!(st.polls, 5);
+        assert_eq!(st.reentrant_fired_at, 3500);
+
+        let sleep_state = CString::new("Sleep").unwrap();
+        assert!(fsm_matches(machine_ptr, sleep_state.as_ptr()));
+        assert!(!fsm_get_next_deadline(machine_ptr, &mut next_dl));
+
+        // Verify destruction-order safety: freeing machine before clock, then calling set on clock
+        fsm_free(machine_ptr);
+        assert_eq!(fsm_simulated_clock_set(clock_ptr, 200_000), 0);
+        assert_eq!(fsm_simulated_clock_now(clock_ptr), 200_000);
+        fsm_simulated_clock_free(clock_ptr);
     }
 
     #[test]

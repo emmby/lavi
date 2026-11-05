@@ -36,6 +36,8 @@ High usage, required for almost every state machine.
   - [x] Guarded Transitions
   - [x] Root-level transitions (combinatorial machines)
   - [x] Delayed Transitions (`after: { delay: target }`) (Partial) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/after.test.ts))
+    - [x] Deterministic virtual time advancement (`SimulatedClock` with `set(ms)` / `increment(ms)` and cascading `tick()` across Rust, C, C++, and WASM)
+    - [x] Deep-sleep deadline introspection (`next_timer_deadline` / `fsm_get_next_deadline` / `getNextDeadline`)
     - **Note**: Expressions computing timeouts dynamically via JS callbacks are not yet implemented (`delay expressions`).
     - **Note**: Internal memory clearing hooks (`clearTimeout`) and legacy string formatting validation are natively skipped by design.
   - [ ] Wildcard Transitions (`*`)
@@ -124,7 +126,7 @@ Features for complex use-cases or debugging.
   - [x] Tag checking via `state.hasTag()`
   - [x] Tag persistence across state restoration
 - [ ] **Metadata** (`meta: { ... }`)
-- [ ] **Custom Delays/Timers**
+- [x] **Custom Delays/Timers** (`SimulatedClock` & custom clock providers across Rust, C, C++, and WASM)
 
 ## Implementation Notes
 

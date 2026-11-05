@@ -395,12 +395,10 @@ impl RuntimeMachine {
         } else if !definition.initial.is_empty() {
              Self::resolve_initial_state(&definition, &definition.initial, &mut dummy)
                 .ok_or_else(|| format!("Could not resolve initial state: {}", definition.initial))?
+        } else if definition.states.is_empty() {
+             StateValue::Parallel(IndexMap::new())
         } else {
-             if definition.states.is_empty() {
-                  StateValue::Parallel(IndexMap::new())
-             } else {
-                  StateValue::Atomic("".to_string())
-             }
+             StateValue::Atomic("".to_string())
         };
 
         let context = definition.context.take().unwrap_or_else(|| Value::Object(IndexMap::new()));
@@ -429,8 +427,18 @@ impl RuntimeMachine {
         Self::from_definition(definition.clone())
     }
 
-    pub fn register_clock(&mut self, clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64>) {
-        self.clock_millis_fn = Some(clock_millis_fn);
+    pub fn register_clock<C: IntoClockFn>(&mut self, clock: C) {
+        self.clock_millis_fn = Some(clock.into_clock_fn());
+    }
+
+    pub fn next_timer_deadline(&self) -> Option<u64> {
+        if !self.is_started {
+            return None;
+        }
+        self.active_timers
+            .iter()
+            .map(|(_, deadline, _)| *deadline)
+            .min()
     }
 
     pub fn start(
@@ -577,7 +585,7 @@ impl RuntimeMachine {
     }
 
     pub fn resolve_initial_state(definition: &MachineDefinition, initial: &str, collected_actions: &mut Vec<Action>) -> Option<StateValue> {
-        let id_key = if initial.starts_with('#') { &initial[1..] } else { initial };
+        let id_key = initial.strip_prefix('#').unwrap_or(initial);
         let resolved = definition.id_map.get(id_key).map(|s| s.as_str()).unwrap_or(initial);
         let parts: Vec<&str> = resolved.split('.').collect();
         Self::resolve_state_value_from_path(definition, &parts, 0, collected_actions)
@@ -647,7 +655,7 @@ impl RuntimeMachine {
 
     pub fn resolve_target(&self, source_path: &str, target: &str) -> Option<String> {
         // 1. Check ID map
-        let id_key = if target.starts_with('#') { &target[1..] } else { target };
+        let id_key = target.strip_prefix('#').unwrap_or(target);
         if let Some(path) = self.definition.id_map.get(id_key) {
             return Some(path.clone());
         }
@@ -696,11 +704,11 @@ impl RuntimeMachine {
                  StateType::Atomic | StateType::Final => Some(StateValue::Atomic(current_name.to_string())),
                  StateType::History{..} => {
                       if let Some(default_target) = &def.history_target {
-                           let id_key = if default_target.starts_with('#') { &default_target[1..] } else { default_target };
+                           let id_key = default_target.strip_prefix('#').unwrap_or(default_target);
                            if let Some(res) = definition.id_map.get(id_key) {
                                 let t_parts: Vec<&str> = res.split('.').collect();
                                 collected_actions.extend(def.history_actions.clone());
-                                return Self::resolve_state_value_from_path(definition, &t_parts, 0, collected_actions);
+                                Self::resolve_state_value_from_path(definition, &t_parts, 0, collected_actions)
                            } else {
                                  // Try relative resolution
                                  if let Some(idx) = current_path.rfind('.') {
@@ -714,7 +722,7 @@ impl RuntimeMachine {
                                  }
                                  let t_parts: Vec<&str> = default_target.split('.').collect();
                                  collected_actions.extend(def.history_actions.clone());
-                                 return Self::resolve_state_value_from_path(definition, &t_parts, 0, collected_actions);
+                                 Self::resolve_state_value_from_path(definition, &t_parts, 0, collected_actions)
                             }
                       } else {
                            if let Some(idx) = current_path.rfind('.') {
@@ -874,21 +882,49 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
-        if !self.is_started || self.is_processing { return None; }
+        if !self.is_started || self.is_processing {
+            return None;
+        }
         self.is_processing = true;
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
-        
+
         let mut last_ret = None;
-        loop {
-            let expired = self.active_timers.iter().enumerate().rev()
-                .find(|(_, (_, timestamp, _))| now >= *timestamp)
+        let mut steps = 0usize;
+        while steps < 100 {
+            let expired = self
+                .active_timers
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, deadline, _))| *deadline <= now)
+                .min_by_key(|(_, (_, deadline, _))| *deadline)
                 .map(|(idx, (path, _, t_defs))| (idx, path.clone(), t_defs.clone()));
 
             if let Some((idx, path, t_defs)) = expired {
+                steps += 1;
                 self.active_timers.remove(idx);
-                let mut ret = self.transition_internal("", &Value::Null, guards, actions, 0, Some((&path, &t_defs)));
+
+                let evt_type = if path.is_empty() {
+                    "xstate.after".to_string()
+                } else {
+                    format!("xstate.after.{}", path)
+                };
+                let mut after_map = IndexMap::new();
+                after_map.insert("type".to_string(), Value::String(evt_type));
+                let after_event = Value::Object(after_map);
+
+                let mut ret = self.transition_internal(
+                    "",
+                    &after_event,
+                    guards,
+                    actions,
+                    0,
+                    Some((&path, &t_defs)),
+                );
                 if let Some(drained) = self.drain_internal_queue(guards, actions) {
                     ret = Some(drained);
+                }
+                if let Some(ext_drained) = self.drain_reentrant_external_queue(guards, actions) {
+                    ret = Some(ext_drained);
                 }
                 if let Some(final_ret) = ret {
                     last_ret = Some(final_ret);
@@ -897,13 +933,16 @@ impl RuntimeMachine {
                 break;
             }
         }
-        
+
         if let Some(drained) = self.drain_internal_queue(guards, actions) {
             last_ret = Some(drained);
         }
+        if let Some(ext_drained) = self.drain_reentrant_external_queue(guards, actions) {
+            last_ret = Some(ext_drained);
+        }
 
         self.is_processing = false;
-        self.drain_external_queue(guards, actions).or(last_ret)
+        last_ret
     }
 
     pub fn transition(
@@ -913,36 +952,49 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
-
-        self.external_queue.push_back((event_type.to_string(), event_payload.clone()));
+        self.external_queue
+            .push_back((event_type.to_string(), event_payload.clone()));
         self.drain_external_queue(guards, actions)
     }
 
-    fn drain_external_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue> {
+    fn drain_reentrant_external_queue(
+        &mut self,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+    ) -> Option<StateValue> {
+        let mut last_ret = None;
+        let mut loop_count = 0;
+
+        while !self.external_queue.is_empty() {
+            if loop_count > 100 {
+                panic!("Maximum external queue iteration depth exceeded!");
+            }
+            loop_count += 1;
+
+            let (e_type, e_payload) = self.external_queue.pop_front().unwrap();
+            let mut ret = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None);
+            if let Some(drained) = self.drain_internal_queue(guards, actions) {
+                ret = Some(drained);
+            }
+            if let Some(final_ret) = ret {
+                last_ret = Some(final_ret);
+            }
+        }
+
+        last_ret
+    }
+
+    fn drain_external_queue(
+        &mut self,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+    ) -> Option<StateValue> {
         if self.is_processing {
             return Some(self.current_state.clone());
         }
-        
+
         self.is_processing = true;
-        let mut last_ret = None;
-        let mut loop_count = 0;
-        
-        while !self.external_queue.is_empty() {
-             if loop_count > 100 {
-                 panic!("Maximum external queue iteration depth exceeded!");
-             }
-             loop_count += 1;
-             
-             let (e_type, e_payload) = self.external_queue.pop_front().unwrap();
-             let mut ret = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None);
-             if let Some(drained) = self.drain_internal_queue(guards, actions) {
-                 ret = Some(drained);
-             }
-             if let Some(final_ret) = ret {
-                 last_ret = Some(final_ret);
-             }
-        }
-        
+        let last_ret = self.drain_reentrant_external_queue(guards, actions);
         self.is_processing = false;
         last_ret
     }
@@ -998,7 +1050,7 @@ impl RuntimeMachine {
             }
         }
         if !all_search_paths.contains(&"".to_string()) { all_search_paths.push("".to_string()); }
-        all_search_paths.sort_by(|a, b| b.matches('.').count().cmp(&a.matches('.').count()));
+        all_search_paths.sort_by_key(|b| core::cmp::Reverse(b.matches('.').count()));
 
         struct SelectedTransition<'a> {
              source_path: String,
@@ -1047,17 +1099,15 @@ impl RuntimeMachine {
                                 while dom_lca < current_parts.len() && dom_lca < target_parts.len() && current_parts[dom_lca] == target_parts[dom_lca] { dom_lca += 1; }
                                 
                                 let mut domain_depth = dom_lca;
-                                if dom_lca == current_parts.len() && dom_lca == target_parts.len() {
-                                     if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
-                                } else if dom_lca == target_parts.len() {
-                                     domain_depth = dom_lca.saturating_sub(1);
-                                } else if dom_lca == current_parts.len() {
-                                     if t.reenter { domain_depth = dom_lca.saturating_sub(1); }
+                                if (dom_lca == current_parts.len() && t.reenter)
+                                    || (dom_lca == target_parts.len() && dom_lca < current_parts.len())
+                                {
+                                    domain_depth = dom_lca.saturating_sub(1);
                                 }
                                 if domain_depth < lowest_domain_depth { lowest_domain_depth = domain_depth; }
                            }
-                       } else {
-                           if t.reenter { lowest_domain_depth = current_parts.len().saturating_sub(1); }
+                       } else if t.reenter {
+                           lowest_domain_depth = current_parts.len().saturating_sub(1);
                        }
 
                        let domain_path = current_parts[0..lowest_domain_depth].join(".");
@@ -1110,10 +1160,8 @@ impl RuntimeMachine {
                                      let parent_is_active = active_leaves.iter().any(|p| p == &history_parent || p.starts_with(&format!("{}.", history_parent)));
                                      if parent_is_active {
                                          let mut is_internal = false;
-                                         if !t.reenter {
-                                              if target_full.starts_with(&format!("{}.", current_path)) || &target_full == current_path {
-                                                   is_internal = true;
-                                              }
+                                         if !t.reenter && (target_full.starts_with(&format!("{}.", current_path)) || &target_full == current_path) {
+                                              is_internal = true;
                                          }
                                          if !is_internal { hist_opt = Some(self.current_state.clone()); }
                                      }
@@ -1279,6 +1327,124 @@ impl RuntimeMachine {
         } else {
             None
         }
+    }
+}
+
+pub trait IntoClockFn {
+    fn into_clock_fn(self) -> alloc::rc::Rc<dyn Fn() -> u64>;
+}
+
+impl IntoClockFn for alloc::rc::Rc<dyn Fn() -> u64> {
+    fn into_clock_fn(self) -> alloc::rc::Rc<dyn Fn() -> u64> {
+        self
+    }
+}
+
+impl<F: Fn() -> u64 + 'static> IntoClockFn for alloc::rc::Rc<F> {
+    fn into_clock_fn(self) -> alloc::rc::Rc<dyn Fn() -> u64> {
+        self
+    }
+}
+
+impl<F: Fn() -> u64 + 'static> IntoClockFn for F {
+    fn into_clock_fn(self) -> alloc::rc::Rc<dyn Fn() -> u64> {
+        alloc::rc::Rc::new(self)
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct SimulatedClock {
+    now_ms: alloc::rc::Rc<core::cell::Cell<u64>>,
+}
+
+impl SimulatedClock {
+    pub fn new() -> Self {
+        Self {
+            now_ms: alloc::rc::Rc::new(core::cell::Cell::new(0)),
+        }
+    }
+
+    pub fn with_initial(initial_ms: u64) -> Self {
+        Self {
+            now_ms: alloc::rc::Rc::new(core::cell::Cell::new(initial_ms)),
+        }
+    }
+
+    pub fn now(&self) -> u64 {
+        self.now_ms.get()
+    }
+
+    pub fn set_now_raw(&self, now_ms: u64) {
+        self.now_ms.set(now_ms);
+    }
+
+    pub fn as_clock_fn(&self) -> alloc::rc::Rc<dyn Fn() -> u64> {
+        let cell = self.now_ms.clone();
+        alloc::rc::Rc::new(move || cell.get())
+    }
+
+    pub fn set(
+        &self,
+        target_ms: u64,
+        machine: &mut RuntimeMachine,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+    ) -> Option<StateValue> {
+        let mut last_ret = None;
+        let mut last_deadline: Option<u64> = None;
+        let mut same_deadline_steps = 0usize;
+        let mut total_steps = 0usize;
+
+        while let Some(next_deadline) = machine.next_timer_deadline() {
+            if next_deadline > target_ms {
+                break;
+            }
+            if last_deadline == Some(next_deadline) {
+                same_deadline_steps += 1;
+                if same_deadline_steps >= 100 {
+                    break;
+                }
+            } else {
+                last_deadline = Some(next_deadline);
+                same_deadline_steps = 0;
+            }
+            total_steps += 1;
+            if total_steps > 1_000_000 {
+                break;
+            }
+
+            self.now_ms.set(next_deadline);
+            if let Some(st) = machine.tick(guards, actions) {
+                last_ret = Some(st);
+            }
+        }
+
+        self.now_ms.set(target_ms);
+
+        last_ret
+    }
+
+    pub fn increment(
+        &self,
+        dt_ms: u64,
+        machine: &mut RuntimeMachine,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+    ) -> Option<StateValue> {
+        let target = self.now_ms.get().saturating_add(dt_ms);
+        self.set(target, machine, guards, actions)
+    }
+}
+
+impl IntoClockFn for &SimulatedClock {
+    fn into_clock_fn(self) -> alloc::rc::Rc<dyn Fn() -> u64> {
+        self.as_clock_fn()
+    }
+}
+
+impl IntoClockFn for SimulatedClock {
+    fn into_clock_fn(self) -> alloc::rc::Rc<dyn Fn() -> u64> {
+        self.as_clock_fn()
     }
 }
 

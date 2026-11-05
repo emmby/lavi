@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity, clippy::unused_unit)]
 use wasm_bindgen::prelude::*;
 use portable_xstate_rust::{RuntimeMachine, Value};
 use crate::utils::{js_to_value, value_to_js};
@@ -5,6 +6,7 @@ use indexmap::IndexMap;
 // use std::collections::BTreeMap; // Keep BTreeMap for internal maps if not critical, or move them too.
 // Actually Actor uses BTreeMap for guards/actions. XState impls order matters?
 // Probably better to switch guards/actions to IndexMap too for consistency.
+use std::cell::RefCell;
 use std::rc::Rc;
 
 pub mod utils;
@@ -481,6 +483,7 @@ pub fn assign(assignment: JsValue) -> JsValue {
 impl StateNode {
     #[wasm_bindgen(js_name = createActor)]
     pub fn create_actor_method(&self, options: JsValue) -> Result<Actor, JsValue> {
+         let tick_override = Rc::new(core::cell::Cell::new(None));
          let mut runner = Actor { 
             machine: self.machine.clone(), 
             inspector: None,
@@ -489,9 +492,14 @@ impl StateNode {
             is_stopped: false,
             config: self.config.clone(),
             is_initialized: false,
+            shared_state: Rc::new(RefCell::new(None)),
+            tick_override: tick_override.clone(),
         };
 
-        runner.machine.register_clock(Rc::new(|| js_sys::Date::now() as u64));
+        let override_cell = tick_override;
+        runner.machine.register_clock(Rc::new(move || {
+            override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
+        }));
 
         // Apply options
         if options.is_object() {
@@ -621,10 +629,146 @@ impl StateNode {
              // Overrides
              parse_implementations(&options, &mut runner.guards, &mut runner.actions);
              web_sys::console::log_1(&JsValue::from_str(&format!("Restored History Value: {:?}", runner.machine.history_value)));
+
+             runner.apply_clock_option(&options);
         }
 
+        runner.push_shared();
         Ok(runner)
     }
+}
+
+#[wasm_bindgen]
+#[derive(Clone, Default)]
+pub struct SimulatedClock {
+    clock: portable_xstate_rust::SimulatedClock,
+    actors: Rc<RefCell<Vec<Actor>>>,
+}
+
+#[wasm_bindgen]
+impl SimulatedClock {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> SimulatedClock {
+        SimulatedClock {
+            clock: portable_xstate_rust::SimulatedClock::new(),
+            actors: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    #[wasm_bindgen(js_name = __registerActor)]
+    pub fn register_actor(&mut self, actor: &Actor) {
+        let mut actor_clone = actor.clone();
+        actor_clone.pull_shared();
+        let tick_override = actor_clone.tick_override.clone();
+        let core_clock = self.clock.clone();
+        actor_clone.machine.register_clock(Rc::new(move || {
+            tick_override.get().unwrap_or_else(|| core_clock.now())
+        }));
+        actor_clone.push_shared();
+        self.actors.borrow_mut().push(actor_clone);
+    }
+
+    #[wasm_bindgen]
+    pub fn now(&self) -> f64 {
+        self.clock.now() as f64
+    }
+
+    #[wasm_bindgen]
+    pub fn set(&mut self, timestamp: f64) {
+        let target_ms = if timestamp.is_finite() && timestamp >= 0.0 {
+            timestamp as u64
+        } else {
+            0
+        };
+
+        let mut last_deadline: Option<u64> = None;
+        let mut same_deadline_steps = 0usize;
+        let mut total_steps = 0usize;
+        let mut transitioned_indices = Vec::new();
+
+        loop {
+            let mut actors = self.actors.borrow().clone();
+            for a in &mut actors {
+                a.pull_shared();
+            }
+
+            let next_deadline_opt = actors
+                .iter()
+                .filter(|a| !a.is_stopped)
+                .filter_map(|a| a.machine.next_timer_deadline())
+                .min();
+
+            let Some(next_deadline) = next_deadline_opt else {
+                break;
+            };
+            if next_deadline > target_ms {
+                break;
+            }
+            if last_deadline == Some(next_deadline) {
+                same_deadline_steps += 1;
+                if same_deadline_steps >= 100 {
+                    break;
+                }
+            } else {
+                last_deadline = Some(next_deadline);
+                same_deadline_steps = 0;
+            }
+            total_steps += 1;
+            if total_steps > 1_000_000 {
+                break;
+            }
+
+            self.clock.set_now_raw(next_deadline);
+
+            for (idx, a) in actors.iter_mut().enumerate() {
+                if !a.is_stopped {
+                    a.set_in_tick(true);
+                    let mut did_transition = a.machine.tick(&a.guards, &a.actions).is_some();
+                    if a.drain_reentrant_shared() {
+                        did_transition = true;
+                    }
+                    a.set_in_tick(false);
+                    a.push_shared();
+                    if did_transition && !transitioned_indices.contains(&idx) {
+                        transitioned_indices.push(idx);
+                    }
+                }
+            }
+            *self.actors.borrow_mut() = actors;
+        }
+
+        self.clock.set_now_raw(target_ms);
+
+        let actors_snapshot = self.actors.borrow().clone();
+        for idx in transitioned_indices {
+            if let Some(a) = actors_snapshot.get(idx) {
+                a.emit_snapshot();
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn increment(&mut self, ms: f64) {
+        let dt_ms = if ms.is_finite() && ms >= 0.0 {
+            ms as u64
+        } else {
+            0
+        };
+        let target = self.clock.now().saturating_add(dt_ms);
+        self.set(target as f64);
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SharedActorState {
+    pub machine: RuntimeMachine,
+    pub inspector: Option<js_sys::Function>,
+    pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub is_stopped: bool,
+    pub is_initialized: bool,
+    pub is_in_tick: bool,
+    pub reentrant_queue: std::collections::VecDeque<(String, Value)>,
 }
 
 #[wasm_bindgen]
@@ -637,6 +781,8 @@ pub struct Actor {
     pub(crate) config: JsValue,
     pub is_stopped: bool,
     pub(crate) is_initialized: bool,
+    pub(crate) shared_state: Rc<RefCell<Option<SharedActorState>>>,
+    pub(crate) tick_override: Rc<core::cell::Cell<Option<u64>>>,
 }
 
 // Helper to parse "guards" and "actions" from a JS object (either implementations object or options object)
@@ -955,7 +1101,7 @@ fn convert_inline_action(
                               let final_val_js = if let Ok(func) = val_or_fn.clone().dyn_into::<js_sys::Function>() {
                                   match func.call1(&JsValue::NULL, &arg_obj) {
                                       Ok(v) => v,
-                                      Err(e) => { let _ = web_sys::console::log_2(&JsValue::from_str("Error executing assign function:"), &e); JsValue::UNDEFINED }
+                                      Err(e) => { web_sys::console::log_2(&JsValue::from_str("Error executing assign function:"), &e); JsValue::UNDEFINED }
                                   }
                               } else { val_or_fn };
                               let key_str = key_js.as_string().unwrap_or_default();
@@ -999,7 +1145,7 @@ fn convert_inline_action(
                                 }
                            }
                       },
-                      Err(e) => { let _ = web_sys::console::log_2(&JsValue::from_str("Error executing dynamic action:"), &e); }
+                      Err(e) => { web_sys::console::log_2(&JsValue::from_str("Error executing dynamic action:"), &e); }
                   }
              }));
              let new_obj = js_sys::Object::new();
@@ -1069,7 +1215,11 @@ impl Actor {
              RuntimeMachine::from_definition(machine_def).map_err(|e| JsValue::from_str(&e))?
         };
 
-        machine.register_clock(Rc::new(|| js_sys::Date::now() as u64));
+        let tick_override = Rc::new(core::cell::Cell::new(None));
+        let override_cell = tick_override.clone();
+        machine.register_clock(Rc::new(move || {
+            override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
+        }));
 
         let mut actor = Actor { 
             machine, 
@@ -1079,6 +1229,8 @@ impl Actor {
             is_stopped: false,
             config: val.clone(),
             is_initialized: false,
+            shared_state: Rc::new(RefCell::new(None)),
+            tick_override,
         };
 
 
@@ -1180,9 +1332,122 @@ impl Actor {
                 }
             }
         }
+        actor.apply_clock_option(&options);
+        actor.push_shared();
         Ok(actor)
     }
 
+    pub(crate) fn pull_shared(&mut self) {
+        if let Some(shared) = self.shared_state.borrow().as_ref() {
+            self.machine = shared.machine.clone();
+            self.inspector = shared.inspector.clone();
+            self.guards = shared.guards.clone();
+            self.actions = shared.actions.clone();
+            self.is_stopped = shared.is_stopped;
+            self.is_initialized = shared.is_initialized || self.machine.is_started;
+        }
+    }
+
+    pub(crate) fn push_shared(&self) {
+        let mut borrow = self.shared_state.borrow_mut();
+        let (is_in_tick, reentrant_queue) = borrow
+            .as_ref()
+            .map(|s| (s.is_in_tick, s.reentrant_queue.clone()))
+            .unwrap_or((false, std::collections::VecDeque::new()));
+        *borrow = Some(SharedActorState {
+            machine: self.machine.clone(),
+            inspector: self.inspector.clone(),
+            guards: self.guards.clone(),
+            actions: self.actions.clone(),
+            is_stopped: self.is_stopped,
+            is_initialized: self.is_initialized,
+            is_in_tick,
+            reentrant_queue,
+        });
+    }
+
+    pub(crate) fn set_in_tick(&self, in_tick: bool) {
+        if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+            shared.is_in_tick = in_tick;
+        }
+    }
+
+    pub(crate) fn drain_reentrant_shared(&mut self) -> bool {
+        let mut transitioned = false;
+        loop {
+            let next_evt = self
+                .shared_state
+                .borrow_mut()
+                .as_mut()
+                .and_then(|s| s.reentrant_queue.pop_front());
+            let Some((ev_name, ev_payload)) = next_evt else {
+                break;
+            };
+            if self
+                .machine
+                .transition(&ev_name, &ev_payload, &self.guards, &self.actions)
+                .is_some()
+            {
+                transitioned = true;
+            }
+        }
+        transitioned
+    }
+
+    pub(crate) fn apply_clock_option(&mut self, options: &JsValue) {
+        if !options.is_object() || options.is_null() {
+            return;
+        }
+        let clock_key = JsValue::from_str("clock");
+        let clock_val = js_sys::Reflect::get(options, &clock_key).unwrap_or(JsValue::UNDEFINED);
+        if clock_val.is_undefined() || clock_val.is_null() {
+            return;
+        }
+
+        let tick_override = self.tick_override.clone();
+        if let Ok(func) = clock_val.clone().dyn_into::<js_sys::Function>() {
+            self.machine.register_clock(Rc::new(move || {
+                if let Some(override_now) = tick_override.get() {
+                    return override_now;
+                }
+                func.call0(&JsValue::NULL)
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v.max(0.0) as u64)
+                    .unwrap_or(0)
+            }));
+            return;
+        }
+
+        if clock_val.is_object() {
+            let attach = js_sys::Reflect::get(&clock_val, &JsValue::from_str("__registerActor"))
+                .unwrap_or(JsValue::UNDEFINED);
+            if let Ok(attach_fn) = attach.dyn_into::<js_sys::Function>() {
+                self.push_shared();
+                let actor_js: JsValue = self.clone().into();
+                let _ = attach_fn.call1(&clock_val, &actor_js);
+                self.pull_shared();
+                return;
+            }
+
+            let now_prop = js_sys::Reflect::get(&clock_val, &JsValue::from_str("now"))
+                .unwrap_or(JsValue::UNDEFINED);
+            if let Ok(now_fn) = now_prop.dyn_into::<js_sys::Function>() {
+                let clock_this = clock_val.clone();
+                self.machine.register_clock(Rc::new(move || {
+                    if let Some(override_now) = tick_override.get() {
+                        return override_now;
+                    }
+                    now_fn
+                        .call0(&clock_this)
+                        .ok()
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v.max(0.0) as u64)
+                        .unwrap_or(0)
+                }));
+            }
+        }
+    }
 
     pub(crate) fn set_inspector(&mut self, callback: js_sys::Function) {
         self.inspector = Some(callback);
@@ -1266,14 +1531,27 @@ impl Actor {
 
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> Snapshot {
+        let shared_borrow = self.shared_state.borrow();
+        let active_machine = shared_borrow
+            .as_ref()
+            .map(|s| &s.machine)
+            .unwrap_or(&self.machine);
+        let is_stopped = shared_borrow
+            .as_ref()
+            .map(|s| s.is_stopped)
+            .unwrap_or(self.is_stopped);
+        let is_initialized = shared_borrow
+            .as_ref()
+            .map(|s| s.is_initialized)
+            .unwrap_or(self.is_initialized);
         let preview;
-        let machine_ref = if !self.machine.is_started && !self.is_initialized {
-            let mut m = self.machine.clone();
+        let machine_ref = if !active_machine.is_started && !is_initialized {
+            let mut m = active_machine.clone();
             m.start(&self.guards, &IndexMap::new());
             preview = m;
             &preview
         } else {
-            &self.machine
+            active_machine
         };
 
         let active_paths = machine_ref.current_state.get_active_paths();
@@ -1301,7 +1579,7 @@ impl Actor {
                     .map(|def| def.type_.as_deref() == Some("final"))
                     .unwrap_or(false)
             });
-        let status = if self.is_stopped {
+        let status = if is_stopped {
             "stopped".to_string()
         } else if is_done {
             "done".to_string()
@@ -1315,7 +1593,7 @@ impl Actor {
             status,
             machine_ref: machine_ref.clone(),
             guards: self.guards.clone(),
-            history_value: history_obj.into(),
+            history_value: history_obj,
             config: self.config.clone(),
         }
     }
@@ -1371,6 +1649,7 @@ impl Actor {
     }
 
     pub fn start(&mut self) -> Actor {
+        self.pull_shared();
         if self.machine.is_started {
             return self.clone();
         }
@@ -1383,6 +1662,7 @@ impl Actor {
             self.machine.revive_timers();
             self.handle_always_transition();
         }
+        self.push_shared();
 
         // Emit initial snapshot
         self.emit_snapshot();
@@ -1412,6 +1692,7 @@ impl Actor {
     }
 
     pub fn send(&mut self, event: JsValue) -> Result<JsValue, JsValue> {
+        self.pull_shared();
         
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
@@ -1432,8 +1713,16 @@ impl Actor {
 
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
+        if self.shared_state.borrow().as_ref().map(|s| s.is_in_tick).unwrap_or(false) {
+            if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                shared.reentrant_queue.push_back((event_name, event_payload));
+            }
+            return Ok(JsValue::UNDEFINED);
+        }
+
         if !self.machine.is_started { return Ok(JsValue::UNDEFINED); }
         let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
+        self.push_shared();
 
         // 2. Inspect Snapshot
         // web_sys::console::error_2(&JsValue::from_str(&format!("AFTER TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
@@ -1445,12 +1734,16 @@ impl Actor {
 
     #[wasm_bindgen(js_name = subscribe)]
     pub fn subscribe(&mut self, callback: js_sys::Function) {
+        self.pull_shared();
         self.set_inspector(callback);
+        self.push_shared();
     }
 
     #[wasm_bindgen]
     pub fn stop(&mut self) -> Actor {
+        self.pull_shared();
         self.is_stopped = true;
+        self.push_shared();
         self.clone()
     }
 
@@ -1459,16 +1752,64 @@ impl Actor {
         self.get_snapshot().into()
     }
 
+    #[wasm_bindgen(js_name = getNextDeadline)]
+    pub fn get_next_deadline(&self) -> Option<f64> {
+        let shared_borrow = self.shared_state.borrow();
+        if shared_borrow.as_ref().map(|s| s.is_stopped).unwrap_or(self.is_stopped) {
+            return None;
+        }
+        let active_machine = shared_borrow
+            .as_ref()
+            .map(|s| &s.machine)
+            .unwrap_or(&self.machine);
+        active_machine.next_timer_deadline().map(|d| d as f64)
+    }
+
     #[wasm_bindgen]
     pub fn tick(&mut self) -> Result<(), JsValue> {
-        if !self.machine.is_started { return Ok(()); }
-        let mut transitioned = false;
-        let mut count = 0; // limit tick depth to prevent UI thread hangs
-        while let Some(_) = self.machine.tick(&self.guards, &self.actions) {
-            transitioned = true;
-            count += 1;
-            if count > 100 { break; }
+        self.pull_shared();
+        if !self.machine.is_started || self.is_stopped {
+            return Ok(());
         }
+        let target_ms = self.machine.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
+        let mut transitioned = false;
+        let mut last_deadline: Option<u64> = None;
+        let mut same_deadline_steps = 0usize;
+        let mut total_steps = 0usize;
+
+        while let Some(deadline) = self.machine.next_timer_deadline() {
+            if deadline > target_ms {
+                break;
+            }
+            if last_deadline == Some(deadline) {
+                same_deadline_steps += 1;
+                if same_deadline_steps >= 100 {
+                    break;
+                }
+            } else {
+                last_deadline = Some(deadline);
+                same_deadline_steps = 0;
+            }
+            total_steps += 1;
+            if total_steps > 1_000_000 {
+                break;
+            }
+
+            self.tick_override.set(Some(deadline));
+            self.set_in_tick(true);
+            let mut did_transition = self.machine.tick(&self.guards, &self.actions).is_some();
+            if self.drain_reentrant_shared() {
+                did_transition = true;
+            }
+            self.set_in_tick(false);
+            self.tick_override.set(None);
+
+            if did_transition {
+                transitioned = true;
+            }
+        }
+        self.tick_override.set(None);
+        self.push_shared();
         if transitioned {
             self.emit_snapshot();
         }
@@ -1728,6 +2069,8 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
         }
     }
 
+    runner.push_shared();
+
     Ok(runner.into())
 }
 
@@ -1776,7 +2119,7 @@ fn execute_js_action(func: &js_sys::Function, ctx_mut: &mut Value, evt: &Value, 
     match func.call1(&JsValue::NULL, &arg_obj) {
         Ok(v) => v,
         Err(e) => {
-            let _ = web_sys::console::log_2(&JsValue::from_str("Error executing JS action:"), &e);
+            web_sys::console::log_2(&JsValue::from_str("Error executing JS action:"), &e);
             JsValue::UNDEFINED
         }
     }
@@ -1806,7 +2149,6 @@ fn evaluate_assignment(assignment: &js_sys::Object, ctx_mut: &mut Value, evt: &V
             let val_core = js_to_value(&final_val);
             ctx_obj_mut.insert(key_str, val_core);
         }
-    } else {
     }
 }
 
@@ -2060,10 +2402,8 @@ fn process_invoke_list(
                 arr.set(i, new_item);
             }
         }
-    } else {
-        if let Some(new_item) = convert_inline_invoke(&val, actions_out, counter) {
-            let _ = js_sys::Reflect::set(state_obj, &invoke_key, &new_item);
-        }
+    } else if let Some(new_item) = convert_inline_invoke(&val, actions_out, counter) {
+        let _ = js_sys::Reflect::set(state_obj, &invoke_key, &new_item);
     }
 }
 
@@ -2093,7 +2433,7 @@ fn convert_inline_invoke(
                      let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("params"), &p_js);
                 }
                 if let Err(e) = func_clone.call1(&JsValue::NULL, &arg_obj) {
-                    let _ = web_sys::console::log_2(&JsValue::from_str("Error executing invoked function:"), &e);
+                    web_sys::console::log_2(&JsValue::from_str("Error executing invoked function:"), &e);
                 }
             }));
 
