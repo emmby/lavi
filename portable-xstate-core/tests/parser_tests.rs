@@ -102,3 +102,47 @@ fn test_deep_machine_on_small_stack() {
         .unwrap();
     handle.join().unwrap();
 }
+
+#[test]
+fn test_xstate_v5_params_event_and_assignment_and_compound_initial_fallback() {
+    let json = r#"{
+        "id": "v5Compat",
+        "initial": "start",
+        "context": { "count": 0 },
+        "states": {
+            "start": {
+                "entry": [
+                    {
+                        "type": "xstate.assign",
+                        "params": {
+                            "assignment": { "count": 42 }
+                        }
+                    },
+                    {
+                        "type": "xstate.raise",
+                        "params": {
+                            "event": { "type": "AUTO_NEXT" }
+                        }
+                    }
+                ],
+                "on": {
+                    "AUTO_NEXT": "parentWithoutInitial"
+                }
+            },
+            "parentWithoutInitial": {
+                "states": {
+                    "firstSub": {},
+                    "secondSub": {}
+                }
+            }
+        }
+    }"#;
+
+    let mut machine = RuntimeMachine::from_json(json).expect("should parse XState v5 serialized config");
+    machine.start(&indexmap::IndexMap::new());
+
+    assert_eq!(machine.state(), "parentWithoutInitial.firstSub");
+    let ctx = machine.context.as_object().expect("context object");
+    assert_eq!(ctx.get("count"), Some(&Value::from_json("42").unwrap()));
+    assert!(ctx.get("assignment").is_none());
+}

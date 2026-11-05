@@ -1400,7 +1400,7 @@ impl Actor {
         } else {
              // Assume object
              let payload = js_to_value(&event);
-             let name = payload.as_object().and_then(|m| m.get("type")).and_then(|t| t.as_string()).unwrap_or(&"UNKNOWN".to_string()).clone();
+             let name = payload.as_object().and_then(|m| m.get("type")).and_then(|t| t.as_string()).map(|s| s.as_str()).unwrap_or("UNKNOWN").to_string();
              (name, payload)
         };
 

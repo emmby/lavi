@@ -322,11 +322,17 @@ fn parse_states_iterative(
                 None
             };
 
+            let resolved_initial = if matches!(state_type, StateType::Compound) {
+                initial_str.or_else(|| grandchild_map.keys().next().cloned())
+            } else {
+                initial_str
+            };
+
             let child_state_def = StateDefinition {
                 id: child_id,
                 type_: inferred_type,
                 state_type,
-                initial: initial_str,
+                initial: resolved_initial,
                 initial_actions,
                 states: IndexMap::new(),
                 on: on_map,
@@ -417,7 +423,12 @@ fn parse_action(mut val: Value) -> Action {
             if action_type == "xstate.raise" {
                 if let Some(e) = event {
                     return Action::Raise(e);
-                } else if let Some(p) = params {
+                } else if let Some(mut p) = params {
+                    if let Value::Object(ref mut m) = p {
+                        if let Some(inner_evt) = m.swap_remove("event") {
+                            return Action::Raise(inner_evt);
+                        }
+                    }
                     return Action::Raise(p);
                 }
             }
@@ -427,7 +438,15 @@ fn parse_action(mut val: Value) -> Action {
                         action_type,
                         assignment: a,
                     });
-                } else if let Some(p) = params {
+                } else if let Some(mut p) = params {
+                    if let Value::Object(ref mut m) = p {
+                        if let Some(inner_assign) = m.swap_remove("assignment") {
+                            return Action::Assign(AssignAction {
+                                action_type,
+                                assignment: inner_assign,
+                            });
+                        }
+                    }
                     return Action::Assign(AssignAction {
                         action_type,
                         assignment: p,
