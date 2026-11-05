@@ -1,6 +1,5 @@
-use portable_xstate_core::{RuntimeMachine, Value};
-use portable_xstate_json::from_json_str;
 use indexmap::IndexMap;
+use portable_xstate_core::{from_json_str, RuntimeMachine, Value};
 
 #[test]
 fn test_raise_action_internal_queue() {
@@ -38,12 +37,15 @@ fn test_raise_action_internal_queue() {
     let guards = IndexMap::new();
 
     machine.start(&guards, &actions);
-    
+
     // Send external START event
     let payload = Value::Null;
     machine.transition("START", &payload, &guards, &actions);
 
-    // After transition("START"), it should go to step2, 
+    // After transition("START"), it should go to step2,
     // enqueue "INTERNAL_EV", and then autonomously drain it to reach step3.
-    assert!(machine.matches("step3"), "Machine didn't autonomously process the raised internal event");
+    assert!(
+        machine.matches("step3"),
+        "Machine didn't autonomously process the raised internal event"
+    );
 }

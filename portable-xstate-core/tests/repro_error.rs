@@ -1,6 +1,4 @@
-use portable_xstate_core::{RuntimeMachine, StateValue, Value};
-use portable_xstate_json::{create_machine, from_json_str};
-use std::collections::HashMap;
+use portable_xstate_core::{create_machine, RuntimeMachine, Value};
 
 #[test]
 fn test_parallel_deep_history_repro() {
@@ -93,7 +91,7 @@ fn test_parallel_deep_history_repro() {
     // 2. INNER_A -> on.A.C.D
     machine.transition("INNER_A", &Value::Null, &guards, &actions);
     println!("After INNER_A (1): {:?}", machine.current_state);
-    
+
     // 3. INNER_A -> on.A.C.E
     machine.transition("INNER_A", &Value::Null, &guards, &actions);
     println!("After INNER_A (2): {:?}", machine.current_state);
@@ -118,22 +116,27 @@ fn test_parallel_deep_history_repro() {
     machine.transition("DEEP_POWER", &Value::Null, &guards, &actions);
 
     println!("Restored State: {:?}", machine.current_state);
-    
+
     // Check paths
     let paths = machine.current_state.get_active_paths();
     assert!(paths.contains(&"on.A.C.E".to_string()), "Missing on.A.C.E");
     assert!(paths.contains(&"on.K.M.O".to_string()), "Missing on.K.M.O");
-    
+
     // 8. POWER -> off (Store history again)
     machine.transition("POWER", &Value::Null, &guards, &actions);
     println!("After POWER (2): {:?}", machine.current_state);
-    
+
     // 9. PARALLEL_TEST -> ["on.A.hist", "on.K.hist"]
     machine.transition("PARALLEL_TEST", &Value::Null, &guards, &actions);
     println!("After PARALLEL_TEST: {:?}", machine.current_state);
-    
-    let paths_multi = machine.current_state.get_active_paths();
-    assert!(paths_multi.contains(&"on.A.C.D".to_string()), "Missing on.A.C.D in Multi-Target");
-    assert!(paths_multi.contains(&"on.K.M.N".to_string()), "Missing on.K.M.N in Multi-Target");
-}
 
+    let paths_multi = machine.current_state.get_active_paths();
+    assert!(
+        paths_multi.contains(&"on.A.C.D".to_string()),
+        "Missing on.A.C.D in Multi-Target"
+    );
+    assert!(
+        paths_multi.contains(&"on.K.M.N".to_string()),
+        "Missing on.K.M.N in Multi-Target"
+    );
+}

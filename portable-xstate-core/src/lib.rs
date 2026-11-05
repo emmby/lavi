@@ -2,6 +2,12 @@
 
 extern crate alloc;
 
+pub mod json;
+pub use json::JsonError;
+
+pub mod parser;
+pub use parser::{assign, create_machine, from_json_str, setup, value_to_state_value, SetupObject};
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -153,6 +159,72 @@ impl Value {
             _ => None,
         }
     }
+
+    pub fn into_string(mut self) -> Option<String> {
+        match &mut self {
+            Value::String(s) => Some(core::mem::take(s)),
+            _ => None,
+        }
+    }
+
+    pub fn into_object(mut self) -> Option<IndexMap<String, Value>> {
+        match &mut self {
+            Value::Object(map) => Some(core::mem::take(map)),
+            _ => None,
+        }
+    }
+
+    pub fn into_array(mut self) -> Option<Vec<Value>> {
+        match &mut self {
+            Value::Array(arr) => Some(core::mem::take(arr)),
+            _ => None,
+        }
+    }
+}
+
+fn push_value_children(val: &mut Value, stack: &mut Vec<Value>) {
+    match val {
+        Value::Array(arr) => {
+            for item in core::mem::take(arr) {
+                match item {
+                    Value::Array(ref a) if !a.is_empty() => stack.push(item),
+                    Value::Object(ref o) if !o.is_empty() => stack.push(item),
+                    _ => {}
+                }
+            }
+        }
+        Value::Object(map) => {
+            for (_k, item) in core::mem::take(map) {
+                match item {
+                    Value::Array(ref a) if !a.is_empty() => stack.push(item),
+                    Value::Object(ref o) if !o.is_empty() => stack.push(item),
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+impl Drop for Value {
+    fn drop(&mut self) {
+        let has_children = match self {
+            Value::Array(arr) => !arr.is_empty(),
+            Value::Object(map) => !map.is_empty(),
+            _ => false,
+        };
+
+        if !has_children {
+            return;
+        }
+
+        let mut stack: Vec<Value> = Vec::new();
+        push_value_children(self, &mut stack);
+
+        while let Some(mut top) = stack.pop() {
+            push_value_children(&mut top, &mut stack);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -196,6 +268,29 @@ impl StateDefinition {
             initial_actions: vec![],
             states: IndexMap::new(), on: IndexMap::new(), after: IndexMap::new(), entry: vec![], exit: vec![], 
             history: None, history_target: None, tags: vec![], invoke: vec![], history_actions: vec![]
+        }
+    }
+}
+
+impl Drop for StateDefinition {
+    fn drop(&mut self) {
+        if self.states.is_empty() {
+            return;
+        }
+
+        let mut stack: Vec<StateDefinition> = Vec::new();
+        for (_k, child) in core::mem::take(&mut self.states) {
+            if !child.states.is_empty() {
+                stack.push(child);
+            }
+        }
+
+        while let Some(mut top) = stack.pop() {
+            for (_k, child) in core::mem::take(&mut top.states) {
+                if !child.states.is_empty() {
+                    stack.push(child);
+                }
+            }
         }
     }
 }
@@ -263,6 +358,12 @@ pub struct MachineDefinition {
     pub id_map: IndexMap<String, String>,
 }
 
+impl MachineDefinition {
+    pub fn from_value(val: Value) -> Result<Self, JsonError> {
+        parser::parse_machine_definition(val)
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeMachine {
     pub definition: MachineDefinition,
@@ -279,20 +380,20 @@ pub struct RuntimeMachine {
 }
 
 impl RuntimeMachine {
-    pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
+    pub fn from_definition(mut definition: MachineDefinition) -> Result<Self, String> {
         let mut dummy = definition.initial_actions.clone();
         let initial_state = if matches!(definition.state_type, StateType::Parallel) {
              let mut regions = IndexMap::new();
              for (r_name, r_def) in &definition.states {
                  if matches!(r_def.state_type, StateType::History{..}) || r_def.history.is_some() { continue; }
                  let r_parts: Vec<&str> = vec![r_name];
-                 if let Some(val) = Self::resolve_state_value_from_path(definition, &r_parts, 0, &mut dummy) {
+                 if let Some(val) = Self::resolve_state_value_from_path(&definition, &r_parts, 0, &mut dummy) {
                       regions.insert(r_name.clone(), val);
                  }
              }
              StateValue::Parallel(regions)
         } else if !definition.initial.is_empty() {
-             Self::resolve_initial_state(definition, &definition.initial, &mut dummy)
+             Self::resolve_initial_state(&definition, &definition.initial, &mut dummy)
                 .ok_or_else(|| format!("Could not resolve initial state: {}", definition.initial))?
         } else {
              if definition.states.is_empty() {
@@ -302,10 +403,12 @@ impl RuntimeMachine {
              }
         };
 
+        let context = definition.context.take().unwrap_or_else(|| Value::Object(IndexMap::new()));
+
         Ok(Self {
-            definition: definition.clone(),
+            definition,
             current_state: initial_state,
-            context: definition.context.clone().unwrap_or(Value::Object(IndexMap::new())),
+            context,
             history_value: IndexMap::new(),
             initial_actions: dummy,
             is_started: false,
@@ -315,6 +418,15 @@ impl RuntimeMachine {
             external_queue: alloc::collections::VecDeque::new(),
             internal_queue: alloc::collections::VecDeque::new(),
         })
+    }
+
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let def = crate::from_json_str(json).map_err(|e| e.to_string())?;
+        Self::from_definition(def)
+    }
+
+    pub fn new(definition: &MachineDefinition) -> Result<Self, String> {
+        Self::from_definition(definition.clone())
     }
 
     pub fn register_clock(&mut self, clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64>) {
@@ -517,7 +629,7 @@ impl RuntimeMachine {
             (StateValue::Parallel(old_map), StateValue::Compound(new_key, _)) => {
                 let mut merged_map = old_map.clone();
                 if let Some(old_sub_val) = old_map.get(new_key) {
-                     let sub_path = if current_path.is_empty() { new_key.clone() } else { format!("{}.{}", current_path, new_key) };
+                     let _sub_path = if current_path.is_empty() { new_key.clone() } else { format!("{}.{}", current_path, new_key) };
                      merged_map.insert(new_key.clone(), Self::merge_state_value(old_sub_val, new, current_path, target_path));
                 }
                 StateValue::Parallel(merged_map)
@@ -619,14 +731,49 @@ impl RuntimeMachine {
                       }
                  },
                  StateType::Compound => {
-                      if let Some(init) = &def.initial {
-                           collected_actions.extend(def.initial_actions.clone());
-                           let child_path = format!("{}.{}", current_path, init);
-                           let child_parts: Vec<&str> = child_path.split('.').collect();
-                            if let Some(val) = Self::resolve_state_value_from_path(definition, &child_parts, depth + 1, collected_actions) {
-                               Some(StateValue::Compound(current_name.to_string(), Box::new(val)))
-                           } else { None }
-                      } else { None }
+                      let mut compound_names: Vec<String> = vec![current_name.to_string()];
+                      let mut curr_def = def;
+                      collected_actions.extend(curr_def.initial_actions.clone());
+
+                      while let Some(init) = &curr_def.initial {
+                          if let Some(next_def) = curr_def.states.get(init) {
+                              if matches!(next_def.state_type, StateType::Compound) {
+                                  compound_names.push(init.clone());
+                                  collected_actions.extend(next_def.initial_actions.clone());
+                                  curr_def = next_def;
+                              } else if matches!(next_def.state_type, StateType::Atomic | StateType::Final) {
+                                  let mut res = StateValue::Atomic(init.clone());
+                                  for name in compound_names.into_iter().rev() {
+                                      res = StateValue::Compound(name, Box::new(res));
+                                  }
+                                  return Some(res);
+                              } else {
+                                  let full_child_path = if compound_names.len() == 1 {
+                                      format!("{}.{}", current_path, init)
+                                  } else {
+                                      format!("{}.{}.{}", current_path, compound_names[1..].join("."), init)
+                                  };
+                                  let child_parts: Vec<&str> = full_child_path.split('.').collect();
+                                  let leaf_val = Self::resolve_state_value_from_path(definition, &child_parts, child_parts.len() - 1, collected_actions)?;
+                                  let mut res = leaf_val;
+                                  for name in compound_names.into_iter().rev() {
+                                      res = StateValue::Compound(name, Box::new(res));
+                                  }
+                                  return Some(res);
+                              }
+                          } else {
+                              let base_path = parts[0..=depth].join(".");
+                              let child_path = format!("{}.{}", base_path, init);
+                              let child_parts: Vec<&str> = child_path.split('.').collect();
+                              let val = Self::resolve_state_value_from_path(definition, &child_parts, depth + 1, collected_actions)?;
+                              let mut res = val;
+                              for name in compound_names.into_iter().rev() {
+                                  res = StateValue::Compound(name, Box::new(res));
+                              }
+                              return Some(res);
+                          }
+                      }
+                      None
                  },
                  StateType::Parallel => {
                       let mut regions = IndexMap::new();

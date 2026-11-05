@@ -1,5 +1,4 @@
-use portable_xstate_core::StateType;
-use portable_xstate_json::create_machine;
+use portable_xstate_core::{create_machine, StateType};
 
 #[test]
 fn test_history_mapping() {
@@ -17,10 +16,14 @@ fn test_history_mapping() {
     }"#;
 
     let def = create_machine(json).expect("Failed to parse");
-    
+
     let on_state = def.states.get("on").expect("Missing 'on'");
     let hist_state = on_state.states.get("hist").expect("Missing 'hist'");
-    
+
     println!("Hist Type: {:?}", hist_state.state_type);
-    assert_eq!(hist_state.state_type, StateType::History { deep: false }, "Should be History (shallow) type");
+    assert_eq!(
+        hist_state.state_type,
+        StateType::History { deep: false },
+        "Should be History (shallow) type"
+    );
 }

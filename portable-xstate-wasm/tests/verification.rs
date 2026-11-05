@@ -74,17 +74,17 @@ fn verify_scenario(scenario: JsValue) {
         let x_obj = xstate_snapshots.get(i as u32);
         let x_json = js_sys::JSON::stringify(&x_obj).unwrap().as_string().unwrap();
         
-        let w_val: serde_json::Value = serde_json::from_str(w_json).unwrap();
-        let x_val: serde_json::Value = serde_json::from_str(&x_json).unwrap();
+        let w_val = portable_xstate_core::Value::from_json(w_json).unwrap();
+        let x_val = portable_xstate_core::Value::from_json(&x_json).unwrap();
         
         let w_obj = w_val.as_object().unwrap();
         let x_obj_map = x_val.as_object().unwrap();
         
         let mut w_filtered = w_obj.clone();
-        w_filtered.remove("type"); 
+        w_filtered.swap_remove("type"); 
         
         let mut x_filtered = x_obj_map.clone();
-        x_filtered.remove("machine"); 
+        x_filtered.swap_remove("machine"); 
         
         if w_filtered != x_filtered {
              console::log_1(&format!("Mismatch at step {}:\nWASM: {:?}\nXState: {:?}", i, w_filtered, x_filtered).into());
@@ -122,7 +122,7 @@ fn test_assign_identity() {
     console::log_1(&"Testing assign() identity...".into());
     
     // Case 1: Object assignment
-    let obj_assign = serde_wasm_bindgen::to_value(&serde_json::json!({ "count": 10 })).unwrap();
+    let obj_assign = js_sys::JSON::parse(r#"{"count":10}"#).unwrap();
     let xstate_res = getXStateAssign(&obj_assign);
     let wasm_res = portable_xstate_wasm::assign(obj_assign);
     
@@ -147,4 +147,38 @@ fn test_assign_identity() {
     assert_eq!(x_json, w_json, "Assignment content should match");
 
     console::log_1(&"Assign identity verified!".into());
+}
+
+#[wasm_bindgen_test]
+fn test_js_to_value_ignores_undefined_and_functions() {
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(&obj, &"a".into(), &JsValue::from_f64(1.0)).unwrap();
+    js_sys::Reflect::set(&obj, &"b".into(), &JsValue::UNDEFINED).unwrap();
+    let func = js_sys::Function::new_no_args("return 42;");
+    js_sys::Reflect::set(&obj, &"c".into(), &func).unwrap();
+
+    let val = portable_xstate_wasm::utils::js_to_value(&obj.clone().into());
+    if let portable_xstate_core::Value::Object(map) = &val {
+        assert_eq!(map.get("a"), Some(&portable_xstate_core::Value::Number(1.0)));
+        assert!(!map.contains_key("b"), "undefined property should be ignored");
+        assert!(!map.contains_key("c"), "function property should be ignored");
+    } else {
+        panic!("Expected Value::Object");
+    }
+
+    let machine_def = r#"{
+        "id": "test_ctx",
+        "initial": "idle",
+        "context": { "a": 0 },
+        "states": {
+            "idle": {}
+        }
+    }"#;
+    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
+    let provided = machine.provide(JsValue::NULL, Some(obj.into())).unwrap();
+    let runner = provided.create_actor_method(JsValue::NULL).unwrap();
+    let snapshot = runner.get_snapshot();
+    let ctx_js = snapshot.context();
+    let a_val = js_sys::Reflect::get(&ctx_js, &"a".into()).unwrap();
+    assert_eq!(a_val.as_f64(), Some(1.0));
 }

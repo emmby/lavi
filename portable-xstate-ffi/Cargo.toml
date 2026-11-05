@@ -9,6 +9,4 @@ crate-type = ["staticlib"]
 [dependencies]
 
 portable-xstate-core = { path = "../portable-xstate-core" }
-portable-xstate-json = { path = "../portable-xstate-json" }
-cty = "0.2"
 indexmap = { version = "2.7", default-features = false }
