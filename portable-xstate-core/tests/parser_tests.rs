@@ -96,7 +96,7 @@ fn test_deep_machine_on_small_stack() {
         .stack_size(64 * 1024)
         .spawn(move || {
             let mut machine = RuntimeMachine::from_json(&json).expect("should build on small stack");
-            machine.start(&indexmap::IndexMap::new());
+            machine.start(&indexmap::IndexMap::new(), &indexmap::IndexMap::new());
             assert!(machine.state().ends_with("s31"));
         })
         .unwrap();
@@ -104,7 +104,7 @@ fn test_deep_machine_on_small_stack() {
 }
 
 #[test]
-fn test_xstate_v5_params_event_and_assignment_and_compound_initial_fallback() {
+fn test_xstate_v5_params_event_and_assignment() {
     let json = r#"{
         "id": "v5Compat",
         "initial": "start",
@@ -126,22 +126,17 @@ fn test_xstate_v5_params_event_and_assignment_and_compound_initial_fallback() {
                     }
                 ],
                 "on": {
-                    "AUTO_NEXT": "parentWithoutInitial"
+                    "AUTO_NEXT": "doneState"
                 }
             },
-            "parentWithoutInitial": {
-                "states": {
-                    "firstSub": {},
-                    "secondSub": {}
-                }
-            }
+            "doneState": {}
         }
     }"#;
 
     let mut machine = RuntimeMachine::from_json(json).expect("should parse XState v5 serialized config");
-    machine.start(&indexmap::IndexMap::new());
+    machine.start(&indexmap::IndexMap::new(), &indexmap::IndexMap::new());
 
-    assert_eq!(machine.state(), "parentWithoutInitial.firstSub");
+    assert_eq!(machine.state(), "doneState");
     let ctx = machine.context.as_object().expect("context object");
     assert_eq!(ctx.get("count"), Some(&Value::from_json("42").unwrap()));
     assert!(ctx.get("assignment").is_none());

@@ -379,41 +379,105 @@ impl RuntimeMachine {
         self.clock_millis_fn = Some(clock_millis_fn);
     }
 
-    pub fn start(&mut self, actions: &IndexMap<String, ActionFunction>) {
-        if self.is_started { return; }
+    pub fn start(
+        &mut self,
+        guards: &IndexMap<String, GuardFunction>,
+        actions: &IndexMap<String, ActionFunction>,
+    ) {
+        if self.is_started {
+            return;
+        }
         self.is_started = true;
-        
-        let mut entry_actions = self.definition.entry.clone();
-        let mut seen_paths = alloc::vec::Vec::new();
+        self.is_processing = true;
+
+        let mut init_map = IndexMap::new();
+        init_map.insert("type".to_string(), Value::String("xstate.init".to_string()));
+        let init_event = Value::Object(init_map);
+
+        let _ = core::mem::take(&mut self.initial_actions);
+        let mut init_actions_to_run = self.definition.entry.clone();
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         for (delay, t_defs) in &self.definition.after {
-            self.active_timers.push(("".to_string(), now + delay, t_defs.clone()));
+            self.active_timers
+                .push(("".to_string(), now + delay, t_defs.clone()));
         }
+        init_actions_to_run.extend(self.definition.initial_actions.clone());
+        let root_init_key = if self.definition.initial.starts_with('#') {
+            &self.definition.initial[1..]
+        } else {
+            &self.definition.initial
+        };
+        let root_init_resolved = self
+            .definition
+            .id_map
+            .get(root_init_key)
+            .map(|s| s.as_str())
+            .unwrap_or(&self.definition.initial);
+        if let Some(root_init_def) =
+            Self::get_state_def_recursive(&self.definition.states, root_init_resolved)
+        {
+            if matches!(root_init_def.state_type, StateType::History { .. }) {
+                init_actions_to_run.extend(root_init_def.history_actions.clone());
+            }
+        }
+
+        let mut seen_paths = alloc::vec::Vec::new();
         for path in self.current_state.get_active_paths() {
-             let parts: Vec<&str> = path.split('.').collect();
-             for i in 1..=parts.len() {
-                 let curr_path = parts[0..i].join(".");
-                 if !seen_paths.contains(&curr_path) {
-                     if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &curr_path) {
-                         entry_actions.extend(def.entry.clone());
-                         for (delay, t_defs) in &def.after {
-                             self.active_timers.push((curr_path.clone(), now + delay, t_defs.clone()));
-                         }
-                     }
-                     seen_paths.push(curr_path);
-                 }
-             }
+            let parts: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
+            for i in 1..=parts.len() {
+                let curr_path = parts[0..i].join(".");
+                if !seen_paths.contains(&curr_path) {
+                    if let Some(def) =
+                        Self::get_state_def_recursive(&self.definition.states, &curr_path)
+                    {
+                        init_actions_to_run.extend(def.entry.clone());
+                        for (delay, t_defs) in &def.after {
+                            self.active_timers.push((
+                                curr_path.clone(),
+                                now + delay,
+                                t_defs.clone(),
+                            ));
+                        }
+                        if matches!(def.state_type, StateType::Compound) {
+                            init_actions_to_run.extend(def.initial_actions.clone());
+                            if let Some(child_init) = &def.initial {
+                                let child_path = format!("{}.{}", curr_path, child_init);
+                                if let Some(child_def) = Self::get_state_def_recursive(
+                                    &self.definition.states,
+                                    &child_path,
+                                ) {
+                                    if matches!(child_def.state_type, StateType::History { .. }) {
+                                        init_actions_to_run
+                                            .extend(child_def.history_actions.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    seen_paths.push(curr_path);
+                }
+            }
         }
-        
-        let to_run = core::mem::take(&mut self.initial_actions);
-        for action in &to_run {
-            Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
+
+        for action in &init_actions_to_run {
+            Self::execute_action(
+                &mut self.context,
+                action,
+                &init_event,
+                actions,
+                &mut self.internal_queue,
+            );
         }
-        for action in &entry_actions {
-            Self::execute_action(&mut self.context, action, &Value::Null, actions, &mut self.internal_queue);
-        }
-        // Process any events raised during initialization
-        let _ = self.drain_internal_queue(&IndexMap::new(), actions);
+
+        // 1. Settle initial eventless (`always`) transitions first
+        let _ = self.transition_internal("", &init_event, guards, actions, 0, None);
+
+        // 2. Drain internal events raised during initial entry or initial `always` transitions
+        let _ = self.drain_internal_queue(guards, actions);
+
+        // 3. Complete initialization macrostep and drain any reentrant external events
+        self.is_processing = false;
+        let _ = self.drain_external_queue(guards, actions);
     }
 
     pub fn revive_timers(&mut self) {
@@ -630,11 +694,10 @@ impl RuntimeMachine {
                                   }
                                   return Some(res);
                               } else {
-                                  let leaf_path = format!("{}.{}", parts[0..=depth].join("."), compound_names[1..].join("."));
-                                  let full_child_path = if leaf_path.is_empty() || leaf_path == current_path {
+                                  let full_child_path = if compound_names.len() == 1 {
                                       format!("{}.{}", current_path, init)
                                   } else {
-                                      format!("{}.{}", leaf_path, init)
+                                      format!("{}.{}.{}", current_path, compound_names[1..].join("."), init)
                                   };
                                   let child_parts: Vec<&str> = full_child_path.split('.').collect();
                                   let leaf_val = Self::resolve_state_value_from_path(definition, &child_parts, child_parts.len() - 1, collected_actions)?;

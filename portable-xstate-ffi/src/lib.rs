@@ -85,7 +85,7 @@ pub extern "C" fn fsm_start(ptr: *mut MachineContext) -> c_int {
         if ptr.is_null() { return -1; }
         &mut *ptr
     };
-    ctx.machine.start(&ctx.actions);
+    ctx.machine.start(&ctx.guards, &ctx.actions);
     0
 }
 
@@ -136,6 +136,9 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
         &mut *ptr
     };
     
+    if event_ptr.is_null() {
+        return -2;
+    }
     let event_c_str = unsafe { CStr::from_ptr(event_ptr) };
     let event = match event_c_str.to_str() {
         Ok(s) => s,
@@ -143,7 +146,12 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
     };
     
     if !ctx.machine.is_started { return 0; }
-    let payload = Value::Null;
+    let mut event_map = IndexMap::new();
+    event_map.insert(
+        alloc::string::String::from("type"),
+        Value::String(alloc::string::String::from(event)),
+    );
+    let payload = Value::Object(event_map);
     ctx.machine.transition(event, &payload, &ctx.guards, &ctx.actions);
     0
 }
@@ -448,6 +456,125 @@ mod tests {
         // Due to the external queue deferral, the "NEXT" event generated in the "step2" entry action
         // will be processed sequentially immediately after "START" completes.
         assert_eq!(state, "step3");
+
+        fsm_free(machine_ptr);
+    }
+
+    struct BootTestState {
+        machine_ptr: *mut MachineContext,
+        boot_entry_calls: usize,
+        last_event_type: alloc::string::String,
+    }
+
+    extern "C" fn on_boot_entry(
+        _action_name: *const c_char,
+        _context: *const fsm_value_t,
+        event: *const fsm_value_t,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        let state = unsafe { &mut *(user_data as *mut BootTestState) };
+        state.boot_entry_calls += 1;
+        let type_key = CString::new("type").unwrap();
+        let ev_type_val = fsm_value_get_property(event, type_key.as_ptr());
+        assert!(!ev_type_val.is_null());
+        let mut buf = vec![0u8; 32];
+        fsm_value_get_string(ev_type_val, buf.as_mut_ptr() as *mut c_char, buf.len());
+        let ev_str = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
+        assert_eq!(ev_str, "xstate.init");
+
+        let next_ev = CString::new("EXTERNAL_FROM_BOOT").unwrap();
+        fsm_send_event(state.machine_ptr, next_ev.as_ptr());
+    }
+
+    extern "C" fn on_running_entry(
+        _action_name: *const c_char,
+        _context: *const fsm_value_t,
+        event: *const fsm_value_t,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        let state = unsafe { &mut *(user_data as *mut BootTestState) };
+        let type_key = CString::new("type").unwrap();
+        let ev_type_val = fsm_value_get_property(event, type_key.as_ptr());
+        assert!(!ev_type_val.is_null());
+        let mut buf = vec![0u8; 64];
+        fsm_value_get_string(ev_type_val, buf.as_mut_ptr() as *mut c_char, buf.len());
+        let ev_str = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
+        state.last_event_type = alloc::string::String::from(ev_str);
+    }
+
+    extern "C" fn guard_is_allowed(
+        _guard_name: *const c_char,
+        _context: *const fsm_value_t,
+        event: *const fsm_value_t,
+        _user_data: *mut core::ffi::c_void,
+    ) -> bool {
+        let type_key = CString::new("type").unwrap();
+        let ev_type_val = fsm_value_get_property(event, type_key.as_ptr());
+        if ev_type_val.is_null() {
+            return false;
+        }
+        let mut buf = vec![0u8; 32];
+        fsm_value_get_string(ev_type_val, buf.as_mut_ptr() as *mut c_char, buf.len());
+        let ev_str = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
+        ev_str == "xstate.init"
+    }
+
+    #[test]
+    fn test_initial_always_and_reentrant_send_on_start_ffi() {
+        let json = CString::new(r#"{
+          "id": "bootMachine",
+          "initial": "boot",
+          "states": {
+            "boot": {
+              "entry": ["onBootEntry"],
+              "always": [
+                { "target": "ready", "guard": "isAllowed" }
+              ],
+              "on": {
+                "EXTERNAL_FROM_BOOT": { "target": "wrong_premature" }
+              }
+            },
+            "ready": {
+              "on": {
+                "EXTERNAL_FROM_BOOT": { "target": "running" }
+              }
+            },
+            "running": {
+              "entry": ["onRunningEntry"]
+            },
+            "wrong_premature": {}
+          }
+        }"#).unwrap();
+
+        let machine_ptr = fsm_create(json.as_ptr());
+        assert!(!machine_ptr.is_null());
+
+        let mut test_state = BootTestState {
+            machine_ptr,
+            boot_entry_calls: 0,
+            last_event_type: alloc::string::String::new(),
+        };
+        let state_ptr = &mut test_state as *mut BootTestState as *mut core::ffi::c_void;
+
+        let act_boot = CString::new("onBootEntry").unwrap();
+        let act_run = CString::new("onRunningEntry").unwrap();
+        let grd_allow = CString::new("isAllowed").unwrap();
+
+        fsm_register_action(machine_ptr, act_boot.as_ptr(), Some(on_boot_entry), state_ptr);
+        fsm_register_action(machine_ptr, act_run.as_ptr(), Some(on_running_entry), state_ptr);
+        fsm_register_guard(machine_ptr, grd_allow.as_ptr(), Some(guard_is_allowed), ptr::null_mut());
+
+        // Creating the machine must not execute initial actions before fsm_start
+        assert_eq!(test_state.boot_entry_calls, 0);
+
+        fsm_start(machine_ptr);
+
+        let mut buf = vec![0u8; 64];
+        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
+        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
+        assert_eq!(state, "running");
+        assert_eq!(test_state.boot_entry_calls, 1);
+        assert_eq!(test_state.last_event_type, "EXTERNAL_FROM_BOOT");
 
         fsm_free(machine_ptr);
     }

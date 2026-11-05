@@ -322,17 +322,11 @@ fn parse_states_iterative(
                 None
             };
 
-            let resolved_initial = if matches!(state_type, StateType::Compound) {
-                initial_str.or_else(|| grandchild_map.keys().next().cloned())
-            } else {
-                initial_str
-            };
-
             let child_state_def = StateDefinition {
                 id: child_id,
                 type_: inferred_type,
                 state_type,
-                initial: resolved_initial,
+                initial: initial_str,
                 initial_actions,
                 states: IndexMap::new(),
                 on: on_map,
