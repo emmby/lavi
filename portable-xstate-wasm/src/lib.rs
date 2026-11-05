@@ -1269,7 +1269,18 @@ impl Actor {
                      }
                      if target_to_serialize.is_none() {
                          if let Some(stored) = self.machine.history_value.get(parent_path) {
-                             target_to_serialize = stored.get_active_paths().first().cloned();
+                             let stored_paths = stored.get_active_paths();
+                             target_to_serialize = stored_paths
+                                 .iter()
+                                 .find(|p| {
+                                     if parent_path.is_empty() {
+                                         !p.is_empty()
+                                     } else {
+                                         *p == parent_path || p.starts_with(&format!("{}.", parent_path))
+                                     }
+                                 })
+                                 .or_else(|| stored_paths.first())
+                                 .cloned();
                          }
                      }
                      if let Some(target) = &target_to_serialize {
@@ -1514,6 +1525,25 @@ impl Actor {
     }
 }
 
+fn is_valid_state_value_js(val: &JsValue) -> bool {
+    if val.is_string() {
+        return true;
+    }
+    if val.is_object() && !val.is_null() && !js_sys::Array::is_array(val) && !val.is_function() {
+        let obj = js_sys::Object::from(val.clone());
+        let keys = js_sys::Object::keys(&obj);
+        for i in 0..keys.length() {
+            let k = keys.get(i);
+            let child = js_sys::Reflect::get(&obj, &k).unwrap_or(JsValue::UNDEFINED);
+            if !is_valid_state_value_js(&child) {
+                return false;
+            }
+        }
+        return true;
+    }
+    false
+}
+
 #[wasm_bindgen]
 pub struct Snapshot {
     value: JsValue,
@@ -1550,7 +1580,7 @@ impl Snapshot {
     pub fn matches(&self, test_value: JsValue) -> bool {
         if let Some(path) = test_value.as_string() {
             self.machine_ref.current_state.matches(&path)
-        } else if test_value.is_object() && !test_value.is_null() {
+        } else if is_valid_state_value_js(&test_value) {
             let v_json: serde_json::Value =
                 serde_wasm_bindgen::from_value(test_value).unwrap_or(serde_json::Value::Null);
             let partial = portable_xstate_json::map_value_to_state_value(v_json);

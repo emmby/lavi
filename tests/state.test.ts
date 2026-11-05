@@ -547,6 +547,26 @@ describe('State', () => {
       expect(
         snapshot.matches({ three: { first: 'p31', guarded: 'wrong' } })
       ).toBe(false);
+      expect(snapshot.matches({ three: 'first.p31' })).toBe(true);
+      expect(snapshot.matches({ three: {} })).toBe(true);
+      expect(
+        snapshot.matches({ three: { first: 'p31', nonexistent: {} } })
+      ).toBe(false);
+      expect(
+        snapshot.matches({
+          three: { first: { first: 'p31' }, guarded: 'p32' }
+        })
+      ).toBe(false);
+      expect(
+        snapshot.matches({
+          three: { first: 'p31', guarded: undefined as any }
+        })
+      ).toBe(false);
+      expect(
+        snapshot.matches({
+          three: { first: null as any }
+        })
+      ).toBe(false);
     });
   });
 });

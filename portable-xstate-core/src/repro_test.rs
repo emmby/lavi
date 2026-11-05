@@ -572,8 +572,14 @@ entry: vec![],
         let partial_both_regions = StateValue::Compound(
             "Display".to_string(),
             Box::new(StateValue::Parallel(indexmap::indexmap! {
-                "Theme".to_string() => StateValue::Atomic("Light".to_string()),
-                "Power".to_string() => StateValue::Atomic("On".to_string()),
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("On".to_string())),
+                ),
             })),
         );
         assert!(parallel.matches_state_value(&partial_both_regions));
@@ -581,10 +587,78 @@ entry: vec![],
         let partial_mismatch = StateValue::Compound(
             "Display".to_string(),
             Box::new(StateValue::Parallel(indexmap::indexmap! {
-                "Theme".to_string() => StateValue::Atomic("Light".to_string()),
-                "Power".to_string() => StateValue::Atomic("Off".to_string()),
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("Off".to_string())),
+                ),
             })),
         );
         assert!(!parallel.matches_state_value(&partial_mismatch));
+
+        // Empty sentinel Atomic("") should yield no active paths
+        assert!(StateValue::Atomic("".to_string()).get_active_paths().is_empty());
+
+        // Atomic region inside a parallel state ("a" => Atomic("a"))
+        let parallel_with_atomic_region = StateValue::Compound(
+            "P".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "a".to_string() => StateValue::Atomic("a".to_string()),
+                "b".to_string() => StateValue::Compound(
+                    "b".to_string(),
+                    Box::new(StateValue::Atomic("b1".to_string())),
+                ),
+            })),
+        );
+        assert_eq!(
+            parallel_with_atomic_region.get_active_paths(),
+            vec!["P.a".to_string(), "P.b.b1".to_string()]
+        );
+        assert!(parallel_with_atomic_region.matches("P.a"));
+        assert!(!parallel_with_atomic_region.matches("P.a.a"));
+
+        // Same-named child state inside a parallel region must not false-match shallower state
+        let partial_deeper_same_name = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Compound(
+                        "Theme".to_string(),
+                        Box::new(StateValue::Atomic("Light".to_string())),
+                    )),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("On".to_string())),
+                ),
+            })),
+        );
+        assert!(!parallel.matches_state_value(&partial_deeper_same_name));
+
+        // Empty parallel sub-branch ({ Display: {} } vs { Display: { Theme: 'Light', Nonexistent: {} } })
+        let partial_empty_compound = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(IndexMap::new())),
+        );
+        assert!(parallel.matches_state_value(&partial_empty_compound));
+
+        let partial_nonexistent_empty_branch = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Nonexistent".to_string() => StateValue::Compound(
+                    "Nonexistent".to_string(),
+                    Box::new(StateValue::Parallel(IndexMap::new())),
+                ),
+            })),
+        );
+        assert!(!parallel.matches_state_value(&partial_nonexistent_empty_branch));
     }
 }

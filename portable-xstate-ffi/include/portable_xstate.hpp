@@ -174,7 +174,7 @@ public:
      * @param state_path Dot-delimited state path (e.g. "green", "Display", "Display.Power.On").
      * @return true if the state path is active, false otherwise.
      */
-    bool matches(const char* state_path) const {
+    bool matches(const char* state_path) const noexcept {
         if (!machine || !state_path) return false;
         return fsm_matches(machine, state_path);
     }
@@ -185,7 +185,7 @@ public:
      * @param state_path Dot-delimited state path (e.g. "green", "Display", "Display.Power.On").
      * @return true if the state path is active, false otherwise.
      */
-    bool matches(const std::string& state_path) const {
+    bool matches(const std::string& state_path) const noexcept {
         return matches(state_path.c_str());
     }
 

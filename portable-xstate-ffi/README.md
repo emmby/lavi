@@ -69,9 +69,12 @@ void setup() {
 
 void setup() {
     MachineContext* machine = fsm_create(JSON_CONFIG);
-    
+    fsm_start(machine);
+
+    bool isGreen = fsm_matches(machine, "green");
+
     fsm_send_event(machine, "TIMER");
-    
+
     // Manual memory management required in C
     fsm_free(machine);
 }

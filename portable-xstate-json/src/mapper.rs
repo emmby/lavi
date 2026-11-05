@@ -286,22 +286,41 @@ pub fn map_value(v: serde_json::Value) -> Value {
  
 pub fn map_value_to_state_value(v: serde_json::Value) -> portable_xstate_core::StateValue {
     match v {
-        serde_json::Value::String(s) => portable_xstate_core::StateValue::Atomic(s),
+        serde_json::Value::String(s) => {
+            if s.contains('.') {
+                let mut iter = s.rsplit('.');
+                let last = iter.next().unwrap_or("").to_string();
+                let mut acc = portable_xstate_core::StateValue::Atomic(last);
+                for part in iter {
+                    acc = portable_xstate_core::StateValue::Compound(
+                        part.to_string(),
+                        Box::new(acc),
+                    );
+                }
+                acc
+            } else {
+                portable_xstate_core::StateValue::Atomic(s)
+            }
+        }
         serde_json::Value::Object(obj) => {
-             // Handle parallel state case or nested compound
-             // XState 5 represents compound as { parent: 'child' } 
-             // and parallel as { root: { r1: 's1', r2: 's2' } }
-             if obj.len() == 1 {
-                 let (k, v) = obj.into_iter().next().unwrap();
-                 portable_xstate_core::StateValue::Compound(k, Box::new(map_value_to_state_value(v)))
-             } else {
-                 let mut regions = IndexMap::new();
-                 for (k, v) in obj {
-                     regions.insert(k, map_value_to_state_value(v));
-                 }
-                 portable_xstate_core::StateValue::Parallel(regions)
-             }
-        },
+            // Handle parallel state case or nested compound
+            // XState 5 represents compound as { parent: 'child' }
+            // and parallel as { root: { r1: 's1', r2: 's2' } }
+            if obj.len() == 1 {
+                let (k, v) = obj.into_iter().next().unwrap();
+                portable_xstate_core::StateValue::Compound(k, Box::new(map_value_to_state_value(v)))
+            } else {
+                let mut regions = IndexMap::new();
+                for (k, v) in obj {
+                    let child = map_value_to_state_value(v);
+                    regions.insert(
+                        k.clone(),
+                        portable_xstate_core::StateValue::Compound(k, Box::new(child)),
+                    );
+                }
+                portable_xstate_core::StateValue::Parallel(regions)
+            }
+        }
         _ => portable_xstate_core::StateValue::Atomic("".to_string()),
     }
 }
