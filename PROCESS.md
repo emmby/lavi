@@ -40,7 +40,7 @@ Every statechart feature must be implemented across all three layers in the same
 
 1. **Core Portable Engine (`portable-xstate-rust`)**:
    - Implement the statechart semantics in `portable-xstate-rust/src/lib.rs` and deserialization in `src/json.rs` / `src/parser.rs`.
-   - Enforce embedded invariants: `#![no_std]` + `alloc` only, `indexmap` as the sole crate dependency, iterative heap `Vec` work-stacks (zero CPU call-stack recursion), and move semantics.
+   - Enforce embedded invariants: `#![no_std]` + `alloc` only, microcontroller dependency policy (`indexmap` by default; ask for user approval before adding any new `#![no_std]` crate rather than reinventing non-trivial data structures), iterative heap `Vec` work-stacks (zero CPU call-stack recursion), and move semantics.
    - Add native Rust unit tests (`cargo test`).
 2. **WASM / JS Adapter (`portable-xstate-wasm`)**:
    - Bridge JS APIs and inline JS functions (`js_sys::Function` $\rightarrow$ synthetic named callbacks) in `portable-xstate-wasm/src/lib.rs`.
