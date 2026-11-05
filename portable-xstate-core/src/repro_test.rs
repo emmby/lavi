@@ -512,4 +512,326 @@ entry: vec![],
         machine.tick(&IndexMap::new(), &IndexMap::new());
         assert_eq!(machine.state(), "timed_out");
     }
+
+    #[test]
+    fn test_simulated_clock_cascading_timers_wait_to_sleep() {
+        use alloc::rc::Rc;
+        use core::cell::RefCell;
+
+        let json = r#"{
+            "id": "april_sleep",
+            "initial": "Wait",
+            "states": {
+                "Wait": {
+                    "after": {
+                        "60000": { "target": "Sleep", "actions": ["onEnterSleep"] }
+                    }
+                },
+                "Sleep": {
+                    "after": {
+                        "3600000": { "target": "Wake", "actions": ["onWake"] }
+                    }
+                },
+                "Wake": {}
+            }
+        }"#;
+
+        let clock = SimulatedClock::new();
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        machine.register_clock(&clock);
+
+        let timestamps: Rc<RefCell<Vec<(String, u64, String)>>> = Rc::new(RefCell::new(Vec::new()));
+        let ts_sleep = timestamps.clone();
+        let clock_sleep = clock.clone();
+        let ts_wake = timestamps.clone();
+        let clock_wake = clock.clone();
+
+        let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+            "onEnterSleep".to_string() => Rc::new(move |_ctx: &mut Value, evt: &Value, _params: &Option<Value>| {
+                let evt_type = evt.as_object().and_then(|m| m.get("type")).and_then(|v| v.as_string()).cloned().unwrap_or_default();
+                ts_sleep.borrow_mut().push(("Sleep".to_string(), clock_sleep.now(), evt_type));
+            }) as ActionFunction,
+            "onWake".to_string() => Rc::new(move |_ctx: &mut Value, evt: &Value, _params: &Option<Value>| {
+                let evt_type = evt.as_object().and_then(|m| m.get("type")).and_then(|v| v.as_string()).cloned().unwrap_or_default();
+                ts_wake.borrow_mut().push(("Wake".to_string(), clock_wake.now(), evt_type));
+            }) as ActionFunction,
+        };
+
+        machine.start(&IndexMap::new(), &actions);
+        assert_eq!(machine.state(), "Wait");
+        assert_eq!(machine.next_timer_deadline(), Some(60_000));
+
+        // Advance 24 hours (86,400,000 ms) in a single call
+        clock.increment(86_400_000, &mut machine, &IndexMap::new(), &actions);
+
+        assert_eq!(machine.state(), "Wake");
+        assert_eq!(clock.now(), 86_400_000);
+        assert_eq!(machine.next_timer_deadline(), None);
+        assert_eq!(
+            *timestamps.borrow(),
+            vec![
+                ("Sleep".to_string(), 60_000, "xstate.after.Wait".to_string()),
+                ("Wake".to_string(), 3_660_000, "xstate.after.Sleep".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_simulated_clock_hierarchical_polling_and_parent_timeout_tie_break() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let json = r##"{
+            "id": "network",
+            "initial": "ConnectToNetwork",
+            "states": {
+                "ConnectToNetwork": {
+                    "initial": "Polling",
+                    "after": {
+                        "300000": "Timeout"
+                    },
+                    "states": {
+                        "Polling": {
+                            "entry": ["poll"],
+                            "after": {
+                                "500": [
+                                    { "target": "#Connected", "guard": "isConnected" },
+                                    { "target": "Polling", "reenter": true }
+                                ]
+                            }
+                        }
+                    }
+                },
+                "Connected": {
+                    "id": "Connected"
+                },
+                "Timeout": {}
+            }
+        }"##;
+
+        // Case A: Guard stays false -> polls 600 times (at t=0, 500, ..., 299500), then parent timeout fires at t=300000 before a 601st poll
+        {
+            let clock = SimulatedClock::new();
+            let mut machine = RuntimeMachine::from_json(json).unwrap();
+            machine.register_clock(&clock);
+
+            let poll_count = Rc::new(Cell::new(0u32));
+            let poll_count_ref = poll_count.clone();
+
+            let guards: IndexMap<String, GuardFunction> = indexmap::indexmap! {
+                "isConnected".to_string() => Rc::new(|_ctx: &Value, _evt: &Value, _params: &Option<Value>| false) as GuardFunction,
+            };
+            let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+                "poll".to_string() => Rc::new(move |_ctx: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                    poll_count_ref.set(poll_count_ref.get() + 1);
+                }) as ActionFunction,
+            };
+
+            machine.start(&guards, &actions);
+            assert_eq!(machine.state(), "ConnectToNetwork.Polling");
+            assert_eq!(poll_count.get(), 1); // Initial entry at t=0
+
+            clock.increment(300_000, &mut machine, &guards, &actions);
+
+            assert_eq!(machine.state(), "Timeout");
+            assert_eq!(clock.now(), 300_000);
+            assert_eq!(poll_count.get(), 600);
+            assert_eq!(machine.next_timer_deadline(), None);
+        }
+
+        // Case B: Guard becomes true on the 10th poll (at t=4500), transitioning to Connected at t=5000 and cancelling parent timeout
+        {
+            let clock = SimulatedClock::new();
+            let mut machine = RuntimeMachine::from_json(json).unwrap();
+            machine.register_clock(&clock);
+
+            let poll_count = Rc::new(Cell::new(0u32));
+            let is_connected = Rc::new(Cell::new(false));
+            let poll_count_ref = poll_count.clone();
+            let is_connected_action = is_connected.clone();
+            let is_connected_guard = is_connected.clone();
+
+            let guards: IndexMap<String, GuardFunction> = indexmap::indexmap! {
+                "isConnected".to_string() => Rc::new(move |_ctx: &Value, _evt: &Value, _params: &Option<Value>| {
+                    is_connected_guard.get()
+                }) as GuardFunction,
+            };
+            let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+                "poll".to_string() => Rc::new(move |_ctx: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                    let next = poll_count_ref.get() + 1;
+                    poll_count_ref.set(next);
+                    if next == 10 {
+                        is_connected_action.set(true);
+                    }
+                }) as ActionFunction,
+            };
+
+            machine.start(&guards, &actions);
+            clock.increment(300_000, &mut machine, &guards, &actions);
+
+            assert_eq!(machine.state(), "Connected");
+            assert_eq!(clock.now(), 300_000);
+            assert_eq!(poll_count.get(), 10);
+            assert_eq!(machine.next_timer_deadline(), None);
+        }
+    }
+
+    #[test]
+    fn test_simulated_clock_high_frequency_polling_with_parent_timeout() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let json = r#"{
+            "id": "ntp_sync",
+            "initial": "StartNetworkTimeSync",
+            "states": {
+                "StartNetworkTimeSync": {
+                    "initial": "Polling",
+                    "after": {
+                        "60000": "SyncTimeout"
+                    },
+                    "states": {
+                        "Polling": {
+                            "entry": ["tickPoll"],
+                            "after": {
+                                "1": { "target": "Polling", "reenter": true }
+                            }
+                        }
+                    }
+                },
+                "SyncTimeout": {}
+            }
+        }"#;
+
+        let clock = SimulatedClock::new();
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        machine.register_clock(&clock);
+
+        let polls = Rc::new(Cell::new(0u32));
+        let polls_ref = polls.clone();
+        let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+            "tickPoll".to_string() => Rc::new(move |_ctx: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                polls_ref.set(polls_ref.get() + 1);
+            }) as ActionFunction,
+        };
+
+        machine.start(&IndexMap::new(), &actions);
+        clock.increment(60_000, &mut machine, &IndexMap::new(), &actions);
+
+        assert_eq!(machine.state(), "SyncTimeout");
+        assert_eq!(clock.now(), 60_000);
+        assert_eq!(polls.get(), 60_000);
+    }
+
+    #[test]
+    fn test_simulated_clock_zero_delay_loop_is_bounded() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let json = r#"{
+            "id": "zero_loop",
+            "initial": "Loop",
+            "states": {
+                "Loop": {
+                    "entry": ["inc"],
+                    "after": {
+                        "0": { "target": "Loop", "reenter": true }
+                    }
+                }
+            }
+        }"#;
+
+        let clock = SimulatedClock::new();
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        machine.register_clock(&clock);
+
+        let count = Rc::new(Cell::new(0u32));
+        let count_ref = count.clone();
+        let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+            "inc".to_string() => Rc::new(move |_ctx: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                count_ref.set(count_ref.get() + 1);
+            }) as ActionFunction,
+        };
+
+        machine.start(&IndexMap::new(), &actions);
+        clock.increment(1000, &mut machine, &IndexMap::new(), &actions);
+
+        assert_eq!(machine.state(), "Loop");
+        assert_eq!(clock.now(), 1000);
+        assert!(count.get() > 1 && count.get() <= 10_100);
+    }
+
+    #[test]
+    fn test_simulated_clock_set_before_start_and_reentrant_transition_at_t_fire() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let json = r#"{
+            "id": "reentrant_timer",
+            "initial": "Boot",
+            "states": {
+                "Boot": {
+                    "after": {
+                        "500": [
+                            { "target": "NeverTaken", "guard": "alwaysFalse" },
+                            { "target": "Mid", "actions": ["sendReentrant"] }
+                        ]
+                    }
+                },
+                "Mid": {
+                    "on": {
+                        "REENTRANT": "ArmedAtTFire"
+                    }
+                },
+                "ArmedAtTFire": {
+                    "after": {
+                        "1000": "Done"
+                    }
+                },
+                "NeverTaken": {},
+                "Done": {}
+            }
+        }"#;
+
+        let clock = SimulatedClock::new();
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        machine.register_clock(&clock);
+
+        // Set clock to 2500 before start() -> Boot's 500ms timer must anchor at 2500 + 500 = 3000ms
+        clock.set(2500, &mut machine, &IndexMap::new(), &IndexMap::new());
+        assert_eq!(clock.now(), 2500);
+
+        let machine_ptr: Rc<Cell<*mut RuntimeMachine>> = Rc::new(Cell::new(&mut machine as *mut RuntimeMachine));
+        let machine_ptr_cb = machine_ptr.clone();
+        let fired_done_at = Rc::new(Cell::new(0u64));
+        let fired_done_cb = fired_done_at.clone();
+        let clock_cb = clock.clone();
+
+        let guards: IndexMap<String, GuardFunction> = indexmap::indexmap! {
+            "alwaysFalse".to_string() => Rc::new(|_ctx: &Value, _evt: &Value, _params: &Option<Value>| false) as GuardFunction,
+        };
+        let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+            "sendReentrant".to_string() => Rc::new(move |_ctx: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                assert_eq!(clock_cb.now(), 3000);
+                fired_done_cb.set(clock_cb.now());
+                unsafe {
+                    let m = &mut *machine_ptr_cb.get();
+                    m.transition("REENTRANT", &Value::Null, &IndexMap::new(), &IndexMap::new());
+                }
+            }) as ActionFunction,
+        };
+
+        machine.start(&guards, &actions);
+        assert_eq!(machine.next_timer_deadline(), Some(3000));
+
+        // Update pointer before calling clock.set
+        machine_ptr.set(&mut machine as *mut RuntimeMachine);
+        clock.set(5000, &mut machine, &guards, &actions);
+
+        // At t=3000: Boot -> Mid, sendReentrant queues REENTRANT, which transitions Mid -> ArmedAtTFire at t=3000,
+        // arming ArmedAtTFire's 1000ms timer for t=4000, which then fires at t=4000 -> Done!
+        assert_eq!(fired_done_at.get(), 3000);
+        assert_eq!(machine.state(), "Done");
+        assert_eq!(clock.now(), 5000);
+    }
 }
