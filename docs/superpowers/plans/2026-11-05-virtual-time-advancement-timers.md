@@ -44,7 +44,8 @@
 - Consumes: `RuntimeMachine`, `GuardFunction`, `ActionFunction`, `StateValue`, `Value` in `portable-xstate-core/src/lib.rs`
 - Produces:
   - `RuntimeMachine::next_timer_deadline(&self) -> Option<u64>`
-  - `RuntimeMachine::tick(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue>` (chronological earliest-deadline selection, FIFO tie-breaking, `"xstate.after"` event object, reentrant external queue drain per step, 100-step same-tick bound)
+  - `RuntimeMachine::tick(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue>` (chronological earliest-deadline selection, FIFO tie-breaking, `"xstate.after.<path>"` event object, reentrant external queue drain per step, 100-step same-tick bound)
+  - `pub trait IntoClockFn` implemented for `Rc<dyn Fn() -> u64>`, `&SimulatedClock`, and `SimulatedClock` so `machine.register_clock(&clock)` works directly alongside `machine.register_clock(Rc::new(|| ...))`
   - `pub struct SimulatedClock` in `portable-xstate-core` with:
     - `pub fn new() -> Self`
     - `pub fn with_initial(initial_ms: u64) -> Self`
@@ -70,16 +71,16 @@ Append tests to `portable-xstate-core/src/repro_test.rs` covering:
 Run: `cargo test --package portable-xstate-core`
 Expected: FAIL with unresolved `SimulatedClock` and `next_timer_deadline`.
 
-- [ ] **Step 3: Implement `next_timer_deadline`, updated `tick`, and `SimulatedClock` in `portable-xstate-core/src/lib.rs`**
+- [ ] **Step 3: Implement `next_timer_deadline`, updated `tick`, `IntoClockFn`, and `SimulatedClock` in `portable-xstate-core/src/lib.rs`**
 
 In `portable-xstate-core/src/lib.rs`:
 1. Factor a private helper `drain_reentrant_external_queue(&mut self, guards: &IndexMap<String, GuardFunction>, actions: &IndexMap<String, ActionFunction>) -> Option<StateValue>` that drains `self.external_queue` (with a 100-iteration loop guard) while `self.is_processing` is already `true`, and call it from `drain_external_queue` and inside each step of `tick`.
 2. Add `pub fn next_timer_deadline(&self) -> Option<u64>` to `RuntimeMachine`.
 3. Update `RuntimeMachine::tick` to:
-   - Construct `after_event` with `"type": Value::String("xstate.after".to_string())`.
+   - Construct `after_event` with `"type": Value::String(if path.is_empty() { "xstate.after".to_string() } else { format!("xstate.after.{}", path) })`.
    - Loop with `steps < 100`, selecting the expired timer via `.filter(|(_, (_, deadline, _))| *deadline <= now).min_by_key(|(_, (_, deadline, _))| *deadline)`.
    - After `transition_internal` and `drain_internal_queue`, call `self.drain_reentrant_external_queue(guards, actions)` inside the loop so reentrant `transition()` calls take effect at `now` (`t_fire`).
-4. Implement `pub struct SimulatedClock` in `portable-xstate-core/src/lib.rs` with `new`, `with_initial`, `now`, `set_now_raw`, `as_clock_fn`, `set`, and `increment` per Section 4.2 of the spec.
+4. Implement `pub trait IntoClockFn` and `pub struct SimulatedClock` in `portable-xstate-core/src/lib.rs` with `new`, `with_initial`, `now`, `set_now_raw`, `as_clock_fn`, `set`, and `increment` per Section 4.2 of the spec.
 
 - [ ] **Step 4: Run `cargo test --package portable-xstate-core` and `cargo clippy --package portable-xstate-core`**
 
@@ -104,21 +105,23 @@ git commit -m "feat(core): add SimulatedClock, next_timer_deadline, and chronolo
 - Test: `portable-xstate-ffi/src/lib.rs`, `portable-xstate-ffi/tests/c_test.c`, `portable-xstate-ffi/tests/cpp_test.cpp`
 
 **Interfaces:**
-- Consumes: `RuntimeMachine::next_timer_deadline`, `RuntimeMachine::tick` from Task 1 (`portable-xstate-core`)
+- Consumes: `SimulatedClock`, `RuntimeMachine::next_timer_deadline`, `RuntimeMachine::tick` from Task 1 (`portable-xstate-core`)
 - Produces:
   - C (`portable_xstate.h` & `portable-xstate-ffi/src/lib.rs`):
     - `typedef uint64_t (*fsm_clock_with_data_callback_t)(void* user_data);`
     - `int fsm_register_clock_with_data(MachineContext* ctx, fsm_clock_with_data_callback_t callback, void* user_data);`
     - `bool fsm_get_next_deadline(const MachineContext* ptr, uint64_t* out_deadline);`
-    - `typedef struct { uint64_t now_ms; } fsm_simulated_clock_t;`
-    - `void fsm_simulated_clock_init(fsm_simulated_clock_t* clock, uint64_t initial_ms);`
-    - `int fsm_register_simulated_clock(MachineContext* ctx, fsm_simulated_clock_t* clock);`
-    - `uint64_t fsm_simulated_clock_now(const fsm_simulated_clock_t* clock);`
-    - `int fsm_simulated_clock_set(MachineContext* ctx, fsm_simulated_clock_t* clock, uint64_t target_ms);`
-    - `int fsm_simulated_clock_increment(MachineContext* ctx, fsm_simulated_clock_t* clock, uint64_t dt_ms);`
+    - `typedef struct SimulatedClock SimulatedClock;`
+    - `SimulatedClock* fsm_simulated_clock_create(uint64_t initial_ms);`
+    - `void fsm_simulated_clock_free(SimulatedClock* clock);`
+    - `int fsm_register_simulated_clock(MachineContext* ctx, SimulatedClock* clock);`
+    - `uint64_t fsm_simulated_clock_now(const SimulatedClock* clock);`
+    - `int fsm_simulated_clock_set(SimulatedClock* clock, uint64_t target_ms);`
+    - `int fsm_simulated_clock_increment(SimulatedClock* clock, uint64_t dt_ms);`
   - C++ (`portable_xstate.hpp`):
     - `using ClockCallback = std::function<uint64_t()>;`
-    - `class SimulatedClock` with `SimulatedClock(uint64_t initial_ms = 0)`, `uint64_t now() const noexcept`, `void set(uint64_t target_ms)`, `void increment(uint64_t dt_ms)`
+    - `class SimulatedClock` (RAII wrapper around `SimulatedClock*`, movable, non-copyable) with `SimulatedClock(uint64_t initial_ms = 0)`, `uint64_t now() const noexcept`, `void set(uint64_t target_ms)`, `void increment(uint64_t dt_ms)`
+    - `PortableXState::PortableXState(const char* json_config, SimulatedClock& clock)`
     - `PortableXState::registerClock(fsm_clock_callback_t callback)`
     - `PortableXState::registerClock(ClockCallback callback)`
     - `PortableXState::registerClock(SimulatedClock& clock)`
@@ -126,11 +129,11 @@ git commit -m "feat(core): add SimulatedClock, next_timer_deadline, and chronolo
 
 - [ ] **Step 1: Write the failing FFI tests in `portable-xstate-ffi/src/lib.rs`, `c_test.c`, and `cpp_test.cpp`**
 
-1. In `portable-xstate-ffi/src/lib.rs` (`mod tests`), add `test_simulated_clock_hierarchical_and_reentrant_ffi` testing `fsm_simulated_clock_init`, `fsm_register_simulated_clock`, `fsm_simulated_clock_increment`, `fsm_simulated_clock_set`, `fsm_get_next_deadline`, and reentrant `fsm_send_event` inside an `after` action callback.
-2. In `portable-xstate-ffi/tests/c_test.c`, add a test section verifying `fsm_simulated_clock_t` advancing across a compound state with `Polling` (`after: 500`, `reenter: true`) and parent timeout (`after: 300000`), plus cascading `Wait` (`after: 60000`) -> `Sleep` (`after: 3600000`) across an `86,400,000 ms` increment.
+1. In `portable-xstate-ffi/src/lib.rs` (`mod tests`), add `test_simulated_clock_hierarchical_and_reentrant_ffi` testing `fsm_simulated_clock_create`, `fsm_register_simulated_clock`, `fsm_simulated_clock_increment`, `fsm_simulated_clock_set`, `fsm_get_next_deadline`, reentrant `fsm_send_event` inside an `after` action callback, and destruction-order safety (`fsm_free` before `fsm_simulated_clock_free` and vice versa).
+2. In `portable-xstate-ffi/tests/c_test.c`, add a test section verifying `SimulatedClock*` advancing across a compound state with `Polling` (`after: 500`, `reenter: true`) and parent timeout (`after: 300000`), plus cascading `Wait` (`after: 60000`) -> `Sleep` (`after: 3600000`) across an `86,400,000 ms` increment.
 3. In `portable-xstate-ffi/tests/cpp_test.cpp`, add tests verifying:
-   - `xstate::SimulatedClock` with `PortableXState::registerClock(clock)`, `clock.increment(60000)`, `clock.set(86460000)`, and `clock.now()` inspected inside C++ guard/action lambdas at intermediate `t_fire` steps.
-   - Moving `xstate::PortableXState` (`xstate::PortableXState moved = std::move(fsm);`) after `fsm.registerClock(clock)` and verifying `clock.increment(...)` advances `moved`.
+   - `xstate::SimulatedClock` with `PortableXState(json, clock)` and `PortableXState::registerClock(clock)`, `clock.increment(60000)`, `clock.set(86460000)`, and `clock.now()` inspected inside C++ guard/action lambdas at intermediate `t_fire` steps.
+   - Moving both `xstate::PortableXState` and `xstate::SimulatedClock` (`std::move`) and verifying `clock.increment(...)` advances the moved FSM.
 
 - [ ] **Step 2: Run `npm run test:ffi` to verify failure**
 
@@ -141,11 +144,11 @@ Expected: FAIL with missing C/C++ symbols and `SimulatedClock` definitions.
 
 1. In `portable-xstate-ffi/src/lib.rs`:
    - Update `fsm_tick` to call `let _ = ctx.machine.tick(&ctx.guards, &ctx.actions);` once (removing the outer `while let Some(_) = ...` loop).
-   - Implement `fsm_register_clock_with_data`, `fsm_get_next_deadline`, `fsm_simulated_clock_init`, `fsm_register_simulated_clock`, `fsm_simulated_clock_now`, `fsm_simulated_clock_set`, and `fsm_simulated_clock_increment`.
+   - Implement `fsm_register_clock_with_data`, `fsm_get_next_deadline`, `fsm_simulated_clock_create`, `fsm_simulated_clock_free`, `fsm_register_simulated_clock`, `fsm_simulated_clock_now`, `fsm_simulated_clock_set`, `fsm_simulated_clock_increment`, and `Drop for MachineContext` detaching from bound `SimulatedClock` instances.
 2. In `portable-xstate-ffi/include/portable_xstate.h`:
    - Declare all new C types and functions.
 3. In `portable-xstate-ffi/include/portable_xstate.hpp`:
-   - Define `xstate::SimulatedClock` and `PortableXState` methods (`registerClock` overloads, `getNextDeadline`, and move/destructor updating `m_simClock`).
+   - Define `xstate::SimulatedClock` and `PortableXState` methods (`PortableXState(const char*, SimulatedClock&)`, `registerClock` overloads, `getNextDeadline`, and move constructor/assignment fixes).
 
 - [ ] **Step 4: Run `cargo test --package portable-xstate-ffi`, `npm run test:ffi`, and `cargo clippy --package portable-xstate-ffi`**
 
@@ -171,6 +174,7 @@ git commit -m "feat(ffi): add C/C++ SimulatedClock, clock user_data, and getNext
 - Consumes: `portable_xstate_core::SimulatedClock`, `RuntimeMachine::next_timer_deadline`, `RuntimeMachine::tick` from Task 1
 - Produces:
   - `#[wasm_bindgen] pub struct SimulatedClock` in `portable-xstate-wasm` with `new()`, `set(timestamp: f64)`, `increment(ms: f64)`, `now() -> f64`
+  - Shared `Rc<RefCell<ActorInner>>` inside `Actor` so `const actor = createActor(machine, { clock }).start()` and `clock` share the exact same underlying `RuntimeMachine`
   - `Actor::get_next_deadline(&self) -> Option<f64>` (`js_name = getNextDeadline`)
   - Support for `{ clock }` option in `createActor(machine, { clock })` and `StateNode::create_actor_method`
   - Chronological multi-step advancement in `Actor::tick()` when `Date::now()` jumps forward under fake timers (`vi.advanceTimersByTime(dt)`)

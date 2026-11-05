@@ -59,9 +59,9 @@ To stay strictly aligned with XState 5's architecture while keeping the state ma
 
 | Layer | Real-Time Clock Binding | Next Timer Deadline Query | Virtual Time (`SimulatedClock`) |
 | :--- | :--- | :--- | :--- |
-| **Rust (`portable-xstate-core`)** | `machine.register_clock(cb)` + `machine.tick(&guards, &actions)` | `machine.next_timer_deadline() -> Option<u64>` | `SimulatedClock::new()`, `clock.set(now_ms, &mut machine, &guards, &actions)`, `clock.increment(dt_ms, ...)`, `clock.now() -> u64` |
-| **C (`portable_xstate.h`)** | `fsm_register_clock(ctx, cb)` or `fsm_register_clock_with_data(ctx, cb, data)` + `fsm_tick(ctx)` | `bool fsm_get_next_deadline(const MachineContext* ctx, uint64_t* out_ms)` | `fsm_simulated_clock_t`, `fsm_register_simulated_clock(ctx, &clock)`, `fsm_simulated_clock_set(ctx, &clock, now_ms)`, `fsm_simulated_clock_increment(ctx, &clock, dt_ms)`, `fsm_simulated_clock_now(&clock)` |
-| **C++ (`portable_xstate.hpp`)** | `fsm.registerClock(millis)` (or `std::function<uint64_t()>`) + `fsm.tick()` | `bool fsm.getNextDeadline(uint64_t& out_ms) const` | `xstate::SimulatedClock clock;`, `fsm.registerClock(clock);`, `clock.set(now_ms);`, `clock.increment(dt_ms);`, `clock.now()` |
+| **Rust (`portable-xstate-core`)** | `machine.register_clock(cb)` + `machine.tick(&guards, &actions)` | `machine.next_timer_deadline() -> Option<u64>` | `SimulatedClock::new()`, `machine.register_clock(&clock)`, `clock.set(now_ms, &mut machine, &guards, &actions)`, `clock.increment(dt_ms, ...)`, `clock.now() -> u64` |
+| **C (`portable_xstate.h`)** | `fsm_register_clock(ctx, cb)` or `fsm_register_clock_with_data(ctx, cb, data)` + `fsm_tick(ctx)` | `bool fsm_get_next_deadline(const MachineContext* ctx, uint64_t* out_ms)` | `SimulatedClock* fsm_simulated_clock_create(0)`, `fsm_register_simulated_clock(ctx, clock)`, `fsm_simulated_clock_set(clock, now_ms)`, `fsm_simulated_clock_increment(clock, dt_ms)`, `fsm_simulated_clock_now(clock)`, `fsm_simulated_clock_free(clock)` |
+| **C++ (`portable_xstate.hpp`)** | `fsm.registerClock(millis)` (or `std::function<uint64_t()>`) + `fsm.tick()` | `bool fsm.getNextDeadline(uint64_t& out_ms) const` | `xstate::SimulatedClock clock;`, `xstate::PortableXState fsm(JSON, clock);` (or `fsm.registerClock(clock);`), `clock.set(now_ms);`, `clock.increment(dt_ms);`, `clock.now()` |
 | **WASM / JS (`portable-xstate-wasm`)** | Default `Date.now()` + `actor.tick()` | `actor.getNextDeadline(): number \| undefined` | `const clock = new SimulatedClock(); createActor(machine, { clock });`, `clock.set(nowMs)`, `clock.increment(dtMs)`, `clock.now()` |
 
 #### Example 1: C++ Real-Time Embedded (`ESP32` with `millis()`)
@@ -97,7 +97,7 @@ void loop() {
 #include "portable_xstate.hpp"
 
 xstate::SimulatedClock clock;
-xstate::PortableXState fsm(APRIL_CLOCK_JSON);
+xstate::PortableXState fsm(APRIL_CLOCK_JSON, clock); // or fsm.registerClock(clock)
 
 bool wifi_ready = false;
 int poll_count = 0;
@@ -113,7 +113,6 @@ fsm.registerAction("pollWifi", [&](const xstate::Value&, const xstate::Value&) {
     }
 });
 
-fsm.registerClock(clock);
 fsm.start(); // Starts at clock.now() == 0 in ConnectToNetwork.Polling
 
 // Advance virtual time by 60,000 ms (relative):
@@ -137,14 +136,16 @@ fsm_start(fsm);
 fsm_tick(fsm);
 
 // Virtual-time C test caller:
+SimulatedClock* sim_clock = fsm_simulated_clock_create(0);
 MachineContext* test_fsm = fsm_create(APRIL_CLOCK_JSON);
-fsm_simulated_clock_t sim_clock;
-fsm_simulated_clock_init(&sim_clock, 0);
-fsm_register_simulated_clock(test_fsm, &sim_clock);
+fsm_register_simulated_clock(test_fsm, sim_clock);
 fsm_start(test_fsm);
 
-fsm_simulated_clock_increment(test_fsm, &sim_clock, 60000);
-fsm_simulated_clock_set(test_fsm, &sim_clock, 86460000);
+fsm_simulated_clock_increment(sim_clock, 60000);
+fsm_simulated_clock_set(sim_clock, 86460000);
+
+fsm_free(test_fsm);
+fsm_simulated_clock_free(sim_clock);
 ```
 
 #### Example 4: Rust (`portable-xstate-core`)
@@ -152,7 +153,7 @@ fsm_simulated_clock_set(test_fsm, &sim_clock, 86460000);
 ```rust
 let clock = SimulatedClock::new();
 let mut machine = RuntimeMachine::from_json(json)?;
-machine.register_clock(clock.as_clock_fn());
+machine.register_clock(&clock);
 machine.start(&guards, &actions);
 
 clock.increment(60_000, &mut machine, &guards, &actions);
@@ -203,20 +204,25 @@ clock.set(120_000);
           Because `Iterator::min_by_key` returns the **first** element when multiple elements tie for the minimum key, and `self.active_timers` is appended in registration order, ties on identical `deadline` are broken by **FIFO registration order** (the timer armed earlier fires first).
        2. If `expired` is `None`, breaks out of the loop.
        3. Removes `idx` from `self.active_timers`.
-       4. Constructs synthetic event `after_event` (`Value::Object` with `"type": Value::String("xstate.after".to_string())`) so action/guard callbacks inspecting `event.type` receive a valid string.
+       4. Constructs synthetic event `after_event` (`Value::Object` with `"type": Value::String(format!("xstate.after.{}", path))` or `"xstate.after"` when root) so action/guard callbacks inspecting `event.type` receive a valid XState 5 `after` event string.
        5. Calls `self.transition_internal("", &after_event, guards, actions, 0, Some((&path, &t_defs)))`.
        6. Drains `self.internal_queue` (`self.drain_internal_queue(guards, actions)`).
        7. Drains any reentrant external events queued by action callbacks during this transition (`self.drain_reentrant_external_queue(guards, actions)`) while keeping `self.is_processing = true`, so any state transitions triggered by reentrant `send()` calls take effect immediately at the current `now` before the next timer is evaluated.
 
-3. **`SimulatedClock` in `portable-xstate-core`**:
+3. **`SimulatedClock` & `IntoClockFn` in `portable-xstate-core`**:
    - Defined in `portable-xstate-core`:
      ```rust
      #[derive(Clone, Default)]
      pub struct SimulatedClock {
          now_ms: Rc< core::cell::Cell<u64> >,
      }
+
+     pub trait IntoClockFn {
+         fn into_clock_fn(self) -> Rc<dyn Fn() -> u64>;
+     }
      ```
-   - Methods:
+     `IntoClockFn` is implemented for `Rc<dyn Fn() -> u64>`, `&SimulatedClock`, and `SimulatedClock` so `machine.register_clock(&clock)` works alongside existing `machine.register_clock(Rc::new(|| ...))` calls.
+   - Methods on `SimulatedClock`:
      - `pub fn new() -> Self`
      - `pub fn with_initial(initial_ms: u64) -> Self`
      - `pub fn now(&self) -> u64`
@@ -268,46 +274,48 @@ In accordance with XState 5's transition domain (LCA) rules:
      ```c
      bool fsm_get_next_deadline(const MachineContext* ptr, uint64_t* out_deadline);
      ```
-   - Add C `SimulatedClock` API:
+   - Add opaque C `SimulatedClock*` API (consistent with `MachineContext*`):
      ```c
-     typedef struct {
-         uint64_t now_ms;
-     } fsm_simulated_clock_t;
+     typedef struct SimulatedClock SimulatedClock;
 
-     void fsm_simulated_clock_init(fsm_simulated_clock_t* clock, uint64_t initial_ms);
-     int fsm_register_simulated_clock(MachineContext* ctx, fsm_simulated_clock_t* clock);
-     uint64_t fsm_simulated_clock_now(const fsm_simulated_clock_t* clock);
-     int fsm_simulated_clock_set(MachineContext* ctx, fsm_simulated_clock_t* clock, uint64_t target_ms);
-     int fsm_simulated_clock_increment(MachineContext* ctx, fsm_simulated_clock_t* clock, uint64_t dt_ms);
+     SimulatedClock* fsm_simulated_clock_create(uint64_t initial_ms);
+     void fsm_simulated_clock_free(SimulatedClock* clock);
+     int fsm_register_simulated_clock(MachineContext* ctx, SimulatedClock* clock);
+     uint64_t fsm_simulated_clock_now(const SimulatedClock* clock);
+     int fsm_simulated_clock_set(SimulatedClock* clock, uint64_t target_ms);
+     int fsm_simulated_clock_increment(SimulatedClock* clock, uint64_t dt_ms);
      ```
+     - `SimulatedClock` holds `portable_xstate_core::SimulatedClock` (`Rc<Cell<u64>>`) and a shared registry of bound `MachineContext*` pointers (`Rc<RefCell<Vec<*mut MachineContext>>>`).
+     - `Drop for MachineContext` removes itself from any bound `SimulatedClock` registry so destroying `MachineContext` and `SimulatedClock` in **either** order is 100% memory-safe.
    - Fix `fsm_tick(MachineContext* ptr)` to call `ctx.machine.tick(&ctx.guards, &ctx.actions)` once (relying on `RuntimeMachine::tick`'s bounded loop rather than an unbounded `while let Some(_) = ...` loop in FFI).
 
 2. **`portable_xstate.hpp` (`xstate::PortableXState` & `xstate::SimulatedClock`)**:
-   - Define `xstate::SimulatedClock`:
-     - Holds `fsm_simulated_clock_t m_clock{0};` and `PortableXState* m_fsm = nullptr;`.
-     - Methods:
-       - `explicit SimulatedClock(uint64_t initial_ms = 0)`
-       - `uint64_t now() const noexcept`
-       - `void set(uint64_t target_ms)`
-       - `void increment(uint64_t dt_ms)`
+   - Define RAII `xstate::SimulatedClock` wrapping `SimulatedClock*` (`fsm_simulated_clock_create` / `fsm_simulated_clock_free`), non-copyable and movable:
+     - `explicit SimulatedClock(uint64_t initial_ms = 0)`
+     - `uint64_t now() const noexcept`
+     - `void set(uint64_t target_ms)`
+     - `void increment(uint64_t dt_ms)`
    - On `xstate::PortableXState`:
+     - Add constructor overload `PortableXState(const char* json_config, SimulatedClock& clock)` (mirrors XState 5's `createActor(machine, { clock })`).
      - Keep `void registerClock(fsm_clock_callback_t callback)` (zero-overhead raw function pointer path for `millis`).
-     - Add `void registerClock(SimulatedClock& clock)` (binds `clock` to this `PortableXState` instance; move-aware in `PortableXState`'s move constructor/assignment operator and destructor).
+     - Add `void registerClock(SimulatedClock& clock)`.
      - Add `using ClockCallback = std::function<uint64_t()>;` and `void registerClock(ClockCallback callback)` (for custom C++ lambdas/functors via `fsm_register_clock_with_data`).
      - Add `bool getNextDeadline(uint64_t& out_deadline) const`.
+     - Fix `PortableXState(PortableXState&& other)` move constructor so moving an already-started `PortableXState` re-registers `this` for actions/guards/clock callbacks.
 
 ---
 
 ### 4.5 WASM / JS Adapter (`portable-xstate-wasm`)
 
 1. **`SimulatedClock` (`#[wasm_bindgen] pub struct SimulatedClock`)**:
-   - Wraps `portable_xstate_core::SimulatedClock` and holds weak/shared handle(s) to bound `Actor` internal state (or `Rc<RefCell<...>>` shared with `Actor` when `{ clock }` is passed in `createActor(machine, { clock })`).
+   - Wraps `portable_xstate_core::SimulatedClock` and holds `Rc<RefCell<Vec<Weak<RefCell<ActorInner>>>>>` to bound `Actor` instances.
    - Exposes to JS:
      - `#[wasm_bindgen(constructor)] pub fn new() -> SimulatedClock`
      - `#[wasm_bindgen] pub fn set(&mut self, timestamp: f64)`
      - `#[wasm_bindgen] pub fn increment(&mut self, ms: f64)`
      - `#[wasm_bindgen] pub fn now(&self) -> f64`
-2. **`Actor`**:
+2. **`Actor` Shared Inner State**:
+   - Wrap `Actor`'s mutable state in `Rc<RefCell<ActorInner>>` so `const actor = createActor(machine, { clock }).start()` (which clones `Actor` in `.start()`) and `clock` operate on the exact same underlying `RuntimeMachine`.
    - If `options.clock` is provided to `createActor(machine, { clock })`, registers `clock` with the actor so `clock.increment(ms)` and `clock.set(timestamp)` step the actor's machine and emit snapshots on transitions.
    - Also supports Vitest fake timers (`vi.useFakeTimers()` + `vi.advanceTimersByTime(dt)` + `actor.tick()`): if `Date.now()` jumps ahead by `dt` under fake timers, `actor.tick()` steps through all intermediate deadlines in `[last_tick_ms, Date.now()]` using the same chronological deadline progression.
    - Exposes `#[wasm_bindgen(js_name = getNextDeadline)] pub fn get_next_deadline(&self) -> Option<f64>`.
