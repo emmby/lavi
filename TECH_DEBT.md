@@ -21,15 +21,10 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: `tests/actions.test.ts` contains historical `it.skip` additions and minor inline edits that predate `npm run test:conformance-check`.
 - **Resolution**: Restore `tests/actions.test.ts` to match `tests/upstream/actions.test.ts` under strict normalization, register any legitimately unimplemented sub-features in `tests/conformance-manifest.json` `allowed_skips`, and graduate `actions.test.ts` from `"legacy-baseline"` to `"strict"`.
 
-### `TD-3`: Graduate `tests/machine.test.ts`, `tests/state.test.ts`, and `tests/history.test.ts` to Strict Provenance
-- **Files**: [`tests/machine.test.ts`](./tests/machine.test.ts), [`tests/state.test.ts`](./tests/state.test.ts), [`tests/history.test.ts`](./tests/history.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json)
-- **Problem**: These three suites pass or skip individual tests but contain historical edits relative to `tests/upstream/{machine,state,history}.test.ts`.
+### `TD-3`: Graduate `tests/state.test.ts` and `tests/history.test.ts` to Strict Provenance
+- **Files**: [`tests/state.test.ts`](./tests/state.test.ts), [`tests/history.test.ts`](./tests/history.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json)
+- **Problem**: These suites pass or skip individual tests but contain historical edits relative to `tests/upstream/{state,history}.test.ts` (`tests/machine.test.ts` has already been graduated to `"strict"`).
 - **Resolution**: Diff each file against `tests/upstream/`, remove any non-whitelisted edits, register legitimate skips in `tests/conformance-manifest.json`, and set `"status": "strict"`.
-
-### `TD-4`: Remove Debug File Logging and `createActor` Monkey-Patching in `tests/utils.ts`
-- **Files**: [`tests/utils.ts`](./tests/utils.ts)
-- **Problem**: `trackEntries` in `tests/utils.ts` calls `fs.appendFileSync('trace.log', ...)`, `fs.appendFileSync('debug.log', ...)`, logs `console.log("HELLO XSTATE V5 createActor invoked!")`, and monkey-patches `machine.createActor`.
-- **Resolution**: Restore clean, in-memory `trackEntries` matching upstream `packages/core/test/utils.ts` without filesystem side effects or console noise.
 
 ### `TD-5`: Replace Remaining Recursive Traversal Helpers with Iterative Heap Work-Stacks
 - **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
@@ -50,3 +45,10 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), [`portable-xstate-c-cpp/include/portable_xstate.h`](./portable-xstate-c-cpp/include/portable_xstate.h), [`portable-xstate-c-cpp/include/portable_xstate.hpp`](./portable-xstate-c-cpp/include/portable_xstate.hpp)
 - **Problem**: `Snapshot::can`, `Snapshot::has_tag`, `status` (`active`/`done`/`stopped`), and snapshot restoration are currently implemented inside `portable-xstate-wasm/src/lib.rs` rather than on `RuntimeMachine` in `portable-xstate-rust`, and are not exposed in C/C++.
 - **Resolution**: Move `can()`, `has_tag()`, `status()`, and snapshot serialize/restore into `portable-xstate-rust::RuntimeMachine`, delegate to them from `portable-xstate-wasm`, and expose C/C++ bindings in `portable-xstate-c-cpp`.
+
+---
+
+## Resolved Cleanup Items
+
+- **`TD-4`** (Resolved): Removed `fs.appendFileSync('trace.log', ...)`, `fs.appendFileSync('debug.log', ...)`, `console.log` spam, and `machine.createActor` / `machine.provide` monkey-patching from [`tests/utils.ts`](./tests/utils.ts), bridging tracked entry/exit callbacks iteratively in `portable-xstate-wasm`.
+- **`TD-3` (`tests/machine.test.ts`)** (Resolved): Reconciled [`tests/machine.test.ts`](./tests/machine.test.ts) with [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) and graduated `machine.test.ts` from `"legacy-baseline"` to `"strict"` in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json).

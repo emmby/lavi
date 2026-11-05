@@ -2,9 +2,7 @@
   "upstreamTag": "xstate@5.25.0",
   "files": {
     "machine.test.ts": {
-      "status": "legacy-baseline",
-      "legacy_baseline_sha256": "fd24b4b6959ddfa4ac698cbf69fc67b4fa43b1b6d910c607913a52c9f39898b5",
-      "tech_debt_id": "TD-3",
+      "status": "strict",
       "allowed_skips": []
     },
     "state.test.ts": {

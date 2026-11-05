@@ -21,7 +21,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 | `actions.test.ts` | `legacy-baseline` (`TD-2`) | 99 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
 | `after.test.ts` | `legacy-baseline` (`TD-1`) | 5 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
 | `history.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
-| `machine.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
+| `machine.test.ts` | `strict` | 1 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
 | `state.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
 
 ### Upstream Suites Not Yet Onboarded
@@ -31,7 +31,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 
 ## 1. Core Structure (Essential)
 
-- [ ] **Machine Definition** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/machine.test.ts) — 14/14 passing in `tests/machine.test.ts`, pending `TD-3` strict graduation)
+- [x] **Machine Definition** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/machine.test.ts) — 14/14 active tests passing in `tests/machine.test.ts`, 1 upstream-skipped XState v4 test)
   - [x] `id` (Root machine identifier) `[Rust | WASM | C/C++]`
   - [x] `initial` (Initial state key & initial transition actions) `[Rust | WASM | C/C++]`
   - [x] `context` (Initial extended state object) `[Rust | WASM | C/C++]`

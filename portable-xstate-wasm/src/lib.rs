@@ -454,7 +454,7 @@ impl SetupObject {
 
          Ok(StateNode {
              machine,
-        path: "".to_string(),
+             path: "".to_string(),
              guards,
              actions,
              config: val,
@@ -495,6 +495,7 @@ impl StateNode {
             shared_state: Rc::new(RefCell::new(None)),
             tick_override: tick_override.clone(),
         };
+        runner.sync_tracked_entry_exit(&self.config);
 
         let override_cell = tick_override;
         runner.machine.register_clock(Rc::new(move || {
@@ -1332,9 +1333,79 @@ impl Actor {
                 }
             }
         }
+        actor.sync_tracked_entry_exit(&actor.config.clone());
         actor.apply_clock_option(&options);
         actor.push_shared();
         Ok(actor)
+    }
+
+    pub(crate) fn sync_tracked_entry_exit(&mut self, config: &JsValue) {
+        if !config.is_object() || config.is_null() {
+            return;
+        }
+        let mut counter = 0u32;
+        let mut stack: Vec<(JsValue, String)> = vec![(config.clone(), String::new())];
+        while let Some((node_val, path)) = stack.pop() {
+            if !node_val.is_object() || node_val.is_null() {
+                continue;
+            }
+            let node_obj = js_sys::Object::from(node_val);
+            let path_label = if path.is_empty() { "__root__" } else { &path };
+            let mut entry_actions = extract_unprocessed_fn_actions(
+                &node_obj,
+                "entry",
+                path_label,
+                &mut self.actions,
+                &mut counter,
+            );
+            let mut exit_actions = extract_unprocessed_fn_actions(
+                &node_obj,
+                "exit",
+                path_label,
+                &mut self.actions,
+                &mut counter,
+            );
+            if path.is_empty() {
+                if !entry_actions.is_empty() {
+                    entry_actions.append(&mut self.machine.definition.entry);
+                    self.machine.definition.entry = entry_actions;
+                }
+                if !exit_actions.is_empty() {
+                    exit_actions.append(&mut self.machine.definition.exit);
+                    self.machine.definition.exit = exit_actions;
+                }
+            } else if !entry_actions.is_empty() || !exit_actions.is_empty() {
+                if let Some(def) = get_state_def_mut(&mut self.machine.definition.states, &path) {
+                    if !entry_actions.is_empty() {
+                        entry_actions.append(&mut def.entry);
+                        def.entry = entry_actions;
+                    }
+                    if !exit_actions.is_empty() {
+                        exit_actions.append(&mut def.exit);
+                        def.exit = exit_actions;
+                    }
+                }
+            }
+            let states_val = js_sys::Reflect::get(&node_obj, &JsValue::from_str("states"))
+                .unwrap_or(JsValue::UNDEFINED);
+            if states_val.is_object() && !states_val.is_null() {
+                let states_obj = js_sys::Object::from(states_val);
+                let keys = js_sys::Object::keys(&states_obj);
+                for i in 0..keys.length() {
+                    let k = keys.get(i);
+                    if let Some(k_str) = k.as_string() {
+                        let child_val = js_sys::Reflect::get(&states_obj, &k)
+                            .unwrap_or(JsValue::UNDEFINED);
+                        let child_path = if path.is_empty() {
+                            k_str
+                        } else {
+                            format!("{}.{}", path, k_str)
+                        };
+                        stack.push((child_val, child_path));
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn pull_shared(&mut self) {
@@ -2442,6 +2513,63 @@ fn convert_inline_invoke(
         }
     }
     None
+}
+
+fn get_state_def_mut<'a>(
+    mut states: &'a mut IndexMap<String, portable_xstate_rust::StateDefinition>,
+    path: &str,
+) -> Option<&'a mut portable_xstate_rust::StateDefinition> {
+    let mut parts = path.split('.').peekable();
+    while let Some(part) = parts.next() {
+        let def = states.get_mut(part)?;
+        if parts.peek().is_none() {
+            return Some(def);
+        }
+        states = &mut def.states;
+    }
+    None
+}
+
+fn extract_unprocessed_fn_actions(
+    state_obj: &js_sys::Object,
+    prop_name: &str,
+    path_label: &str,
+    actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    counter: &mut u32,
+) -> Vec<portable_xstate_rust::Action> {
+    let mut prepended = Vec::new();
+    let key = JsValue::from_str(prop_name);
+    let val = js_sys::Reflect::get(state_obj, &key).unwrap_or(JsValue::UNDEFINED);
+    if val.is_undefined() || val.is_null() {
+        return prepended;
+    }
+    let mut funcs: Vec<js_sys::Function> = Vec::new();
+    let track_key = JsValue::from_str("__xstate_track");
+    if js_sys::Array::is_array(&val) {
+        let arr: &js_sys::Array = val.unchecked_ref();
+        for i in 0..arr.length() {
+            let item = arr.get(i);
+            if let Ok(func) = item.dyn_into::<js_sys::Function>() {
+                if js_sys::Reflect::get(&func, &track_key).unwrap_or(JsValue::UNDEFINED) == JsValue::TRUE {
+                    funcs.push(func);
+                }
+            }
+        }
+    } else if let Ok(func) = val.dyn_into::<js_sys::Function>() {
+        if js_sys::Reflect::get(&func, &track_key).unwrap_or(JsValue::UNDEFINED) == JsValue::TRUE {
+            funcs.push(func);
+        }
+    }
+    for func in funcs {
+        *counter += 1;
+        let id = format!("__tracked_{}_{}_{}", prop_name, path_label, counter);
+        let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+            let _ = execute_js_action(&func, ctx_mut, evt, params);
+        });
+        actions_out.insert(id.clone(), closure);
+        prepended.push(portable_xstate_rust::Action::Named(id));
+    }
+    prepended
 }
 
 fn normalize_undefined(val: &JsValue, depth: usize) -> JsValue {

@@ -307,3 +307,86 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     clock_cb.forget();
     false_guard.forget();
 }
+
+#[wasm_bindgen_test]
+fn test_wasm_initial_state_deferral_and_compound_order() {
+    let order = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let make_logger = |label: &'static str| {
+        let order_clone = order.clone();
+        Closure::wrap(Box::new(move |arg: JsValue| {
+            let evt = js_sys::Reflect::get(&arg, &"event".into()).unwrap_or(JsValue::UNDEFINED);
+            let evt_type = js_sys::Reflect::get(&evt, &"type".into())
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            order_clone.borrow_mut().push(format!("{}:{}", label, evt_type));
+        }) as Box<dyn FnMut(JsValue)>)
+    };
+
+    let c1 = make_logger("root.entry");
+    let c2 = make_logger("root.initial.actions");
+    let c3 = make_logger("parent.entry");
+    let c4 = make_logger("parent.initial.actions");
+    let c5 = make_logger("child.entry");
+
+    let actions_obj = js_sys::Object::new();
+    js_sys::Reflect::set(&actions_obj, &"rootEntry".into(), c1.as_ref().unchecked_ref()).unwrap();
+    js_sys::Reflect::set(&actions_obj, &"rootInit".into(), c2.as_ref().unchecked_ref()).unwrap();
+    js_sys::Reflect::set(&actions_obj, &"parentEntry".into(), c3.as_ref().unchecked_ref()).unwrap();
+    js_sys::Reflect::set(&actions_obj, &"parentInit".into(), c4.as_ref().unchecked_ref()).unwrap();
+    js_sys::Reflect::set(&actions_obj, &"childEntry".into(), c5.as_ref().unchecked_ref()).unwrap();
+
+    let opts = js_sys::Object::new();
+    js_sys::Reflect::set(&opts, &"actions".into(), &actions_obj).unwrap();
+
+    let machine_def = r#"{
+        "entry": "rootEntry",
+        "initial": {
+            "target": "parent",
+            "actions": "rootInit"
+        },
+        "states": {
+            "parent": {
+                "entry": "parentEntry",
+                "initial": {
+                    "target": "child",
+                    "actions": "parentInit"
+                },
+                "states": {
+                    "child": {
+                        "entry": "childEntry"
+                    }
+                }
+            }
+        }
+    }"#;
+
+    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), Some(opts.into())).unwrap();
+    let mut actor = machine.create_actor_method(JsValue::NULL).unwrap();
+
+    // Pre-start createActor and getSnapshot() must not fire side-effect actions
+    assert!(order.borrow().is_empty());
+    let _ = actor.get_snapshot();
+    assert!(order.borrow().is_empty());
+
+    // start() executes once with xstate.init in root-to-leaf order; second start() is a no-op
+    let actor = actor.start().start();
+    assert_eq!(actor.get_snapshot().status(), "active");
+
+    assert_eq!(
+        *order.borrow(),
+        vec![
+            "root.entry:xstate.init",
+            "root.initial.actions:xstate.init",
+            "parent.entry:xstate.init",
+            "parent.initial.actions:xstate.init",
+            "child.entry:xstate.init",
+        ]
+    );
+
+    c1.forget();
+    c2.forget();
+    c3.forget();
+    c4.forget();
+    c5.forget();
+}

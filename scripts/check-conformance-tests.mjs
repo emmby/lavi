@@ -127,9 +127,15 @@ function checkFeaturesDocSync(rootDir, manifestFiles, errors) {
       const suiteName = suiteMatch[2];
       const manifestEntry = manifestFiles[suiteName];
       const localPath = path.join(testsDir, suiteName);
+      const upstreamPath = path.join(testsDir, 'upstream', suiteName);
+      const upstreamSkips = fs.existsSync(upstreamPath)
+        ? new Set(extractSkips(fs.readFileSync(upstreamPath, 'utf8')))
+        : new Set();
       const actualSkips =
         manifestEntry && fs.existsSync(localPath)
-          ? extractSkips(fs.readFileSync(localPath, 'utf8')).length
+          ? extractSkips(fs.readFileSync(localPath, 'utf8')).filter(
+              (title) => !upstreamSkips.has(title)
+            ).length
           : -1;
       if (!manifestEntry || manifestEntry.status !== 'strict' || actualSkips !== 0) {
         const reason = !manifestEntry
@@ -281,19 +287,23 @@ export function checkConformanceTests(options = {}) {
     }
 
     // Strict provenance check against upstream reference
+    const upstreamSkipSet = new Set(extractSkips(upstreamContent));
     const allowedSkipList = (config.allowed_skips || []).map((s) => s.title);
     const allowedSkipSet = new Set(allowedSkipList);
     const actualSkips = extractSkips(localContent);
 
     for (const skipTitle of actualSkips) {
-      if (!allowedSkipSet.has(skipTitle)) {
+      if (!allowedSkipSet.has(skipTitle) && !upstreamSkipSet.has(skipTitle)) {
         errors.push(
           `Unregistered skip in tests/${fileName}: "${skipTitle}". You must not skip tests to make the suite pass unless documented in XSTATE_5_FEATURES.md and tests/conformance-manifest.json.`
         );
       }
     }
 
-    const normalizedLocal = normalizeTestSource(localContent, allowedSkipList);
+    const localOnlyAllowedSkips = allowedSkipList.filter(
+      (title) => !upstreamSkipSet.has(title)
+    );
+    const normalizedLocal = normalizeTestSource(localContent, localOnlyAllowedSkips);
     const normalizedUpstream = normalizeTestSource(upstreamContent, []);
 
     if (normalizedLocal !== normalizedUpstream) {
