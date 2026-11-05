@@ -14,12 +14,12 @@ When XState 5 parity, target-language idioms, and microcontroller constraints pu
 1. **Conformance Test Integrity (`tests/*.test.ts` & `tests/upstream/`)**:
    - Upstream `statelyai/xstate` conformance tests are the immutable source of truth, verified mechanically by `npm run test:conformance-check`.
    - **NEVER** modify test assertions, machine definitions, or test bodies (e.g., never inject `actor.tick()` into tests, never delete/gut code inside `it.skip(...)`, and never edit files in `tests/upstream/`).
-   - **NEVER** add an unregistered `it.skip`, `describe.skip`, or `.only` to make a test suite pass.
+   - **NEVER** add an unregistered `it.skip`, `describe.skip`, or `.only`, and **NEVER** register a new `it.skip` in `tests/conformance-manifest.json` for an in-scope failing test to make a test suite pass.
 2. **Microcontroller Safety & Resource Envelope (`portable-xstate-rust` & `portable-xstate-c-cpp`)**:
    - **`#![no_std]` + `alloc` only**: Never depend on `std` in `portable-xstate-rust` or `portable-xstate-c-cpp`.
    - **Dependency Freeze**: `portable-xstate-rust` may depend **only** on `indexmap` (never add `serde`, `serde_json`, regex engines, or expression parsers).
    - **Bounded $O(1)$ CPU Call-Stack**: Microcontrollers (such as ESP32 FreeRTOS `loopTask` with an 8 KB stack) overflow on recursive functions. All JSON parsing, state tree traversal, value inspection, and `Drop` implementations **must** use iterative heap work-stacks (`Vec`), never CPU call-stack recursion.
-   - **Bounded Heap Memory**: Never introduce unbounded queues or buffers (e.g., events sent before `machine.start()` are intentionally dropped rather than queued on the heap).
+   - **Bounded Heap Memory & Zero Pre-Start Buffering**: Never introduce unbounded queues or buffers, and **never** buffer events sent before `machine.start()` (even in a bounded ring buffer/queue)—unstarted machines strictly drop events by design.
 
 ### Level 2 — XState 5 Statechart Semantics (Portable Core)
 All statechart execution semantics—state hierarchy resolution, LCCA transition domain calculation, SCXML exit/transition/entry action ordering, eventless (`always`) loops, `assign` context updates, `raise` internal events, `after` delayed transitions, `SimulatedClock` chronological stepping, history states, `.matches()`, `.can()`, `.hasTag()`, and snapshot persistence—live in `portable-xstate-rust` and **must** behave identically across Rust, WASM, C, and C++.
@@ -31,10 +31,10 @@ All statechart execution semantics—state hierarchy resolution, LCCA transition
 - **C (`portable_xstate.h`)**: Uses opaque pointers (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`), integer status codes (`0` on success, negative on error), zero-copy `const char*` JSON input, and named C function pointers (`fsm_register_action`, `fsm_register_guard`, `fsm_register_clock_with_data`) with `void* user_data`.
 - **C++ (`portable_xstate.hpp`)**: Provides header-only C++11 RAII wrappers (`xstate::PortableXState`, `xstate::SimulatedClock`, `xstate::Value`) with move-only semantics (`rebind_this_pointers()` on move), zero-copy `const char*` JSON storage before `start()`, and overloads for both zero-allocation C function pointers and `std::function` lambdas.
 
-### Level 4 — Host-Language Boundary Escalation Protocol
-If an upstream XState 5 test relies on a pure JavaScript runtime artifact that cannot be bridged in `portable-xstate-wasm` and has no idiomatic compiled equivalent (e.g., JS garbage-collector `FinalizationRegistry` hooks, internal XState JS private fields, or runtime evaluation of arbitrary JS code strings):
-1. Do **not** alter the test body or build an interpreter in Rust/C.
-2. Document the exact constraint in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) and register the specific test title in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) with `"category": "non-js-constraint"`, keeping the test body inside `it.skip(...)` 100% unmodified.
+### Level 4 — Host-Language & Memory Boundary Escalation Protocol
+If an upstream XState 5 test relies on a pure JavaScript runtime artifact that cannot be bridged in `portable-xstate-wasm` and has no idiomatic compiled equivalent (e.g., JS garbage-collector `FinalizationRegistry` hooks, internal XState JS private fields, or runtime evaluation of arbitrary JS code strings), **or** conflicts with an intentional microcontroller memory invariant (such as dropping pre-start events instead of mailbox buffering):
+1. Do **not** alter the test body, do **not** weaken the microcontroller memory invariant, and do **not** build an interpreter in Rust/C.
+2. Document the exact constraint in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) (and [`README.md`](./README.md) if architectural) and register the specific test title in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) with `"category": "non-js-constraint"` or `"memory-constraint"`, keeping the test body inside `it.skip(...)` 100% unmodified.
 
 ---
 
@@ -88,11 +88,11 @@ PlatformIO support lives directly in this repository (`library.json`, `build_rus
 
 | Excuse / Rationalization | Reality |
 | :--- | :--- |
-| *"I've spent 2 hours on this edge case and 35/36 tests pass—I'll just tweak or `.skip` this one test line."* | **Forbidden.** Modifying or skipping a failing conformance test hides a runtime bug and fails `npm run test:conformance-check`. Fix the runtime or escalate to the user. |
+| *"I've spent 2 hours on this edge case and 35/36 tests pass—I'll just tweak or `.skip` this one test line (or register it in `conformance-manifest.json`)."* | **Forbidden.** Modifying, skipping, or registering an in-scope failing conformance test in `conformance-manifest.json` hides a runtime bug. Fix the runtime or escalate to the user. |
 | *"I'll adjust `tests/utils.ts` or inject `actor.tick()` into the test body like `after.test.ts` did."* | **Forbidden.** `after.test.ts` and `utils.ts` are logged in `TECH_DEBT.md` (`TD-1`, `TD-4`) as legacy violations. Never copy them or alter test bodies. |
 | *"The stakeholder asked for dynamic delay/action expressions in JSON for C and Rust, so I'll write a small expression parser."* | **Forbidden (Greenspun's Tenth Rule).** Never build expression evaluators or script interpreters in Rust/C/C++. Use named callbacks (`registerAction`, `registerGuard`, `registerDelay` / function pointers) in C/C++/Rust and JS function bridging in WASM. |
 | *"Recursion is simpler here and `StateValue::collect_paths` already uses recursion."* | **Forbidden.** `collect_paths` is legacy debt (`TD-5`). Recursion overflows the 8 KB ESP32 FreeRTOS stack. Always use an explicit `Vec` work-stack on the heap. |
-| *"I'll buffer these pre-start or deferred events in an unbounded `Vec` just in case."* | **Forbidden.** Unbounded queues crash microcontrollers under hardware interrupt floods. Keep memory bounded. |
+| *"I'll buffer these pre-start events in an unbounded `Vec` (or a small capped ring buffer) so the pre-start test passes."* | **Forbidden.** Unstarted machines must drop events immediately (zero pre-start buffering, even bounded). Use the Level 4 Memory Boundary protocol. |
 | *"While I'm here, I'll refactor the legacy code in adjacent files too."* | **Forbidden during feature work.** Unscoped refactoring causes merge conflicts for parallel swarm agents. Log it in `TECH_DEBT.md` and stay in scope. |
 
 ### Red Flags — If You Think Any of These, STOP:

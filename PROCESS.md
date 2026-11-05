@@ -31,7 +31,9 @@ This document defines the autonomous workflow for implementing features and pass
   npm run test:conformance-check
   npx vitest run tests/<filename>.test.ts
   ```
-  Once `npm run test:conformance-check` passes, **do not edit `tests/<filename>.test.ts` again** except to remove `it.skip` as tests pass.
+  Once `npm run test:conformance-check` passes, **do not edit `tests/<filename>.test.ts` again** except to remove `it.skip` as tests pass (never add or register new `it.skip` entries for in-scope tests during implementation).
+- **Working on Suites Currently Marked `"legacy-baseline"` (`TD-1`..`TD-3`)**:
+  If your assigned feature lives inside a test file still marked `"status": "legacy-baseline"` in `tests/conformance-manifest.json` (such as `tests/after.test.ts` or `tests/actions.test.ts`), its `legacy_baseline_sha256` lock will reject any ad-hoc edits. You must either complete that file's graduation task (`TD-1`, `TD-2`, or `TD-3` in [`TECH_DEBT.md`](./TECH_DEBT.md)) first so it matches `tests/upstream/<filename>.test.ts` under `"status": "strict"`, or add your feature coverage in a new strict test / native Rust + C/C++ suite while keeping the frozen legacy file untouched.
 
 ## 3. Cross-Target Implementation (Rust $\rightarrow$ WASM $\rightarrow$ C/C++)
 Every statechart feature must be implemented across all three layers in the same task:

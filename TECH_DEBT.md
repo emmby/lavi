@@ -11,7 +11,7 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 
 ## Open Cleanup Items
 
-### `TD-1`: Restore Unmodified Upstream `tests/after.test.ts` andFake-Timer / `SimulatedClock` Bridging
+### `TD-1`: Restore Unmodified Upstream `tests/after.test.ts` and Fake-Timer / `SimulatedClock` Bridging
 - **Files**: [`tests/after.test.ts`](./tests/after.test.ts), [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
 - **Problem**: `tests/after.test.ts` was historically truncated (218 lines vs. upstream's full suite), manually injects `actorRef.tick()` into test bodies, and guts the bodies of `it.skip(...)` blocks.
 - **Resolution**: Replace `tests/after.test.ts` with `tests/upstream/after.test.ts` (using only whitelisted import and `: any` adaptations), bridge `SimulatedClock` / Vitest fake timers in `portable-xstate-wasm` so manual `.tick()` calls are unnecessary in JS tests, keep full bodies inside any registered `it.skip` entries, and switch `after.test.ts` from `"legacy-baseline"` to `"strict"` in `tests/conformance-manifest.json`.

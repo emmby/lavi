@@ -7,7 +7,7 @@
     "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:unit",
     "test:conformance-check": "node scripts/check-conformance-tests.mjs",
     "test:native": "cargo test",
-    "test:wasm": "cd portable-xstate-wasm && wasm-pack test --headless --chrome",
+    "test:wasm": "cd portable-xstate-wasm && CHROMEDRIVER_ARGS=--disable-build-check wasm-pack test --headless --chrome",
     "test:e2e": "playwright test",
     "build:c-cpp": "cargo build --package portable-xstate-c-cpp",
     "test:c-cpp": "npm run build:c-cpp && npm run test:c-cpp:c && npm run test:c-cpp:cpp && npm run test:c-cpp:pio",
