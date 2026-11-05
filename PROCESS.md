@@ -1,48 +1,69 @@
 # Testing & Implementation Process
 
-This document outlines the standard operating procedure for enabling and passing the next set of tests in the `portable-xstate` project.
+This document defines the autonomous workflow for implementing features and passing conformance tests in `portable-xstate`—whether working as a single agent or as part of a parallel agent swarm.
 
-## 1. Select Target
-- Verify all tests pass.
-- Identify the next feature set from `XSTATE_5_FEATURES.md`.
-- **Copy Tests**: Copy the test content from the linked XState repository URL.
-- **STOP HERE**. Do not proceed until the user has confirmed the test content has been copied correctly. The user will check it in.
+**Required Reading First**: Always read [`AGENTS.md`](./AGENTS.md) for the 4-Level Decision Hierarchy, Microcontroller Resource Envelope, and Canonical vs. Legacy Anti-Patterns table.
 
-## 2. Setup Test
-- **Minimal Compilation Fixes**: Create a new test file in `tests/` and make **minimal changes** to enable compilation (e.g. imports), but do NOT change logic.
-- **Verify Failure**: Run the test to ensure it fails as expected.
-- **STOP HERE**. Do not proceed until the user has confirmed the test compiles and fails as expected. The user will check it in.
-  *This ensures we can later verify that no test logic was altered.*
+---
 
-## 3. Run Tests
-- Run the specific test file using Vitest:
-  ```bash
-  npx vitest tests/<filename>.test.ts
-  ```
-- **Constraint**: Do NOT modify the test files to make them pass. The tests are the source of truth.
-
-## 4. Analyze & Implement
-- Read the failure output carefully.
-- Modify the implementation code to satisfy the test requirements.
-  - **Core Logic**: Modify `portable-xstate-rust` (Rust).
-  - **JSON Parsing**: Modify `portable-xstate-rust` (`src/json.rs` / `src/parser.rs`) for deserialization.
-  - **Wasm / C-C++ Adapters**: Modify `portable-xstate-wasm` / `portable-xstate-c-cpp` for the API surface.
-- Re-run the specific test frequently.
-
-## 5. Specific Issues & Fixes
-- **Implicit Any**: Fix TypeScript errors in the test files if they are just type annotations (like `ctx: any`), but do not change the logic.
-- **NotImplemented**: Implement missing features in Rust.
-
-## 6. Clean Up
-- Once functionality works:
-  - Run `cargo clippy` in the Rust crates and fix warnings.
-  - Remove debug `println!` or `console.log` statements.
-  - Check for console errors in the browser tests (if applicable).
-
-## 7. Verify & Document
-- Run the full test suite to ensure no regressions:
+## 1. Select Target & Isolate Workspace
+- When swarming in parallel with other agents, run in an isolated git worktree (`Workspace: "branch"`) scoped to a single feature from [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) or a single cleanup item from [`TECH_DEBT.md`](./TECH_DEBT.md).
+- Verify the baseline suite is green before touching code:
   ```bash
   npm test
   ```
-- Update `XSTATE_5_FEATURES.md` to check off newly supported features.
-- Update `README.md` if significant new capabilities are added.
+  *(Note: `npm test` automatically runs `npm run test:conformance-check` first).*
+
+## 2. Automated Conformance Test Setup (Replaces Manual Stop Gates)
+- **Fetch & Pin Upstream Test (if adding a new suite)**:
+  ```bash
+  node scripts/fetch-upstream-test.mjs <filename>.test.ts
+  ```
+  This saves the unmodified upstream `statelyai/xstate@5.25.0` file to `tests/upstream/<filename>.test.ts` and records its SHA-256 hash in `tests/upstream/UPSTREAM_VERSION.json`.
+- **Copy & Apply Whitelisted Adaptations Only**:
+  Copy `tests/upstream/<filename>.test.ts` to `tests/<filename>.test.ts` and register `<filename>.test.ts` in `tests/conformance-manifest.json` with `"status": "strict"`.
+  You may make **only** these three mechanical adaptations in `tests/<filename>.test.ts`:
+  1. Rewrite module imports from `'../src/...'` to `'../portable-xstate-wasm/pkg-npm/portable_xstate'` (and `'./stubs.ts'` / `'./utils.ts'`).
+  2. Add explicit `: any` TypeScript parameter annotations where required for compilation without XState's full TS generic inference.
+  3. Change `it(` / `describe(` to `it.skip(` / `describe.skip(` for sub-features outside your current task scope, **keeping the inner test body 100% unmodified** and registering each skipped title in `tests/conformance-manifest.json` under `allowed_skips`.
+- **Verify Provenance & Watch the Target Test Fail (RED)**:
+  ```bash
+  npm run test:conformance-check
+  npx vitest run tests/<filename>.test.ts
+  ```
+  Once `npm run test:conformance-check` passes, **do not edit `tests/<filename>.test.ts` again** except to remove `it.skip` as tests pass.
+
+## 3. Cross-Target Implementation (Rust $\rightarrow$ WASM $\rightarrow$ C/C++)
+Every statechart feature must be implemented across all three layers in the same task:
+
+1. **Core Portable Engine (`portable-xstate-rust`)**:
+   - Implement the statechart semantics in `portable-xstate-rust/src/lib.rs` and deserialization in `src/json.rs` / `src/parser.rs`.
+   - Enforce embedded invariants: `#![no_std]` + `alloc` only, `indexmap` as the sole crate dependency, iterative heap `Vec` work-stacks (zero CPU call-stack recursion), and move semantics.
+   - Add native Rust unit tests (`cargo test`).
+2. **WASM / JS Adapter (`portable-xstate-wasm`)**:
+   - Bridge JS APIs and inline JS functions (`js_sys::Function` $\rightarrow$ synthetic named callbacks) in `portable-xstate-wasm/src/lib.rs`.
+   - Rebuild WASM (`npm run build:npm`) and run `npx vitest run tests/<filename>.test.ts` until the target conformance tests pass unmodified.
+3. **C & C++ Embedded Adapter (`portable-xstate-c-cpp`)**:
+   - Expose any new runtime capabilities idiomatically in C (`portable-xstate-c-cpp/include/portable_xstate.h` and `src/lib.rs`) using opaque handles and function pointers with `void* user_data`, and in C++11 (`portable-xstate-c-cpp/include/portable_xstate.hpp`) using RAII and move-safe methods.
+   - Add unit tests in `portable-xstate-c-cpp/tests/c_test.c` and `portable-xstate-c-cpp/tests/cpp_test.cpp` and run `npm run test:c-cpp`.
+
+## 4. Handling Legacy Anti-Patterns & Host-Language Boundaries
+- **Spotted Legacy Debt**: If you see existing code using recursion, XState 4 naming (`cond`, `type_`), manual `actorRef.tick()` in tests, or debug hacks in `tests/utils.ts`, **do not copy it** and **do not refactor unrelated files mid-feature**. Append a scoped entry to [`TECH_DEBT.md`](./TECH_DEBT.md).
+- **Host-Language Boundaries**: Never build dynamic expression parsers or JS interpreters in Rust, C, or C++. If an upstream test requires pure interpreted JS dynamism that cannot be bridged via WASM callbacks, document the constraint in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) and register the skip in `tests/conformance-manifest.json`.
+
+## 5. Clean Up, Verify & Document
+Before committing or claiming completion, run the full verification checklist:
+1. **Lint Rust Workspace**:
+   ```bash
+   cargo clippy --workspace --all-targets -- -D warnings
+   ```
+2. **Remove Debug Artifacts**: Ensure zero temporary `println!`, `console.log`, or file writes remain.
+3. **Rebuild & Run Full Test Suite**:
+   ```bash
+   npm run build
+   npm test
+   ```
+   Verify that all 6 stages (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, and `test:unit`) pass.
+4. **Update Documentation**:
+   - Check off completed items in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) (or [`TECH_DEBT.md`](./TECH_DEBT.md)).
+   - Update [`README.md`](./README.md) if public APIs or capabilities changed.

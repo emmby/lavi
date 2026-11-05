@@ -146,3 +146,38 @@ describe('m', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe('agent documentation & tech-debt consistency', () => {
+  const rootDir = path.resolve(__dirname, '..');
+
+  it('links every legacy-baseline conformance file in conformance-manifest.json to TECH_DEBT.md', () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(rootDir, 'tests', 'conformance-manifest.json'), 'utf8')
+    );
+    const techDebt = fs.readFileSync(path.join(rootDir, 'TECH_DEBT.md'), 'utf8');
+    for (const [fileName, entry] of Object.entries<any>(manifest.files)) {
+      if (entry.status === 'legacy-baseline') {
+        expect(entry.tech_debt_id).toMatch(/^TD-\d+$/);
+        expect(techDebt).toContain(entry.tech_debt_id);
+        expect(techDebt).toContain(fileName);
+      }
+    }
+  });
+
+  it('replaces manual STOP GATEs with automated conformance provenance checks in AGENTS.md and PROCESS.md', () => {
+    const agentsMd = fs.readFileSync(path.join(rootDir, 'AGENTS.md'), 'utf8');
+    const processMd = fs.readFileSync(path.join(rootDir, 'PROCESS.md'), 'utf8');
+
+    expect(agentsMd).not.toContain('STOP GATE 1');
+    expect(agentsMd).not.toContain('STOP GATE 2');
+    expect(processMd).not.toContain('STOP HERE');
+
+    expect(agentsMd).toContain('npm run test:conformance-check');
+    expect(agentsMd).toContain('TECH_DEBT.md');
+    expect(agentsMd).toContain('#![no_std]');
+    expect(agentsMd).toContain('Do Not Copy');
+    expect(processMd).toContain('npm run test:conformance-check');
+    expect(processMd).toContain('TECH_DEBT.md');
+  });
+});
+

@@ -1,126 +1,109 @@
 # Portable XState
 
-A high-performance, dynamic Finite State Machine (FSM) runtime for the web, powered by Rust and WebAssembly.
+A portable, low-memory statechart runtime compatible with **XState 5**, written in `#![no_std]` Rust (`portable-xstate-rust`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`portable-xstate-wasm`) and **C / C++ on embedded microcontrollers** (`portable-xstate-c-cpp` / PlatformIO).
 
-Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON definitions** at runtime and execute them within a compiled WebAssembly module.
+## Core Principles
 
-## Features
-
-*   **Dynamic Loading**: Load state machine definitions (JSON) on the fly without recompiling the Wasm.
-*   **High Performance**: Core logic runs in native Rust/Wasm.
-*   **XState Compatibility**: Accepts a subset of the XState JSON format (States, Transitions, Context).
-*   **Web Ready**: bindings for direct use in JavaScript/TypeScript.
+1. **Strict XState 5 Behavioral Conformance**: Validated directly against upstream `statelyai/xstate` (`v5.25.0`) conformance tests with automated provenance verification (`npm run test:conformance-check`).
+2. **Microcontroller-Ready Resource Envelope**:
+   - `#![no_std]` + `alloc` core (`indexmap` is the sole dependency in `portable-xstate-rust`; zero `serde` overhead).
+   - Bounded $O(1)$ CPU call-stack parsing and traversal via explicit heap work-stacks (`Vec`), fitting comfortably inside an 8 KB ESP32 FreeRTOS `loopTask` stack.
+   - Zero-copy `const char*` JSON configuration in C/C++ and bounded runtime memory (pre-start events are safely dropped rather than queued on the heap).
+3. **Idiomatic Target-Language APIs**:
+   - **JS / TS (WASM)**: `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock`.
+   - **C (`portable_xstate.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers with `void* user_data`.
+   - **C++11 (`portable_xstate.hpp`)**: Move-safe RAII classes (`xstate::PortableXState`, `xstate::SimulatedClock`, `xstate::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
+   - **Rust (`portable-xstate-rust`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
 
 ## Project Structure
 
-*   **`portable-xstate-rust`**: The pure Rust library containing the `RuntimeMachine` logic and state storage.
-*   **`portable-xstate-wasm`**: The WebAssembly adapter that exposes the runtime to JavaScript/TypeScript.
-*   **`portable-xstate-c-cpp`**: The C/C++ static library and headers for embedded (PlatformIO / ESP32) and native platforms.
-*   **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/portable-xstate.git`).
-*   **`index.html`**: A demo web page visualizing a Traffic Light state machine.
+* **`portable-xstate-rust`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
+* **`portable-xstate-wasm`**: WebAssembly adapter exposing XState 5's JavaScript/TypeScript API and bridging inline JS callbacks to named runtime handlers.
+* **`portable-xstate-c-cpp`**: C/C++ static library and headers (`include/portable_xstate.h`, `include/portable_xstate.hpp`) for embedded (`espressif32`) and host (`native`) targets.
+* **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/portable-xstate.git`).
+* **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
+* **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
 
-## Getting Started
+## Building & Testing
 
-### Prerequisites
-
-*   **VS Code** with **Dev Containers** extension (Recommended).
-*   Or manually: Rust, Cargo, and `wasm-pack`.
-
-### Building
-
-1.  Open the project in the Dev Container.
-2.  Build the Wasm module:
-    ```bash
-    wasm-pack build portable-xstate-wasm --target web --out-name portable_xstate
-    ```
-
-### Running the Demo
-
-1.  Build the project (see above).
-2.  Start a local HTTP server in the root directory:
-    ```bash
-    python3 -m http.server 8080
-    ```
-3.  Open [http://localhost:8080](http://localhost:8080) in your browser.
-4.  Open the browser console to see state transitions logs, or interact with the UI.
-
-## Testing
-
-This project includes both native core tests and browser-based verification tests.
-
-### 1. Run Native Tests (portable-xstate-rust)
-These run on your machine and verify the core Rust logic.
-
+### Build All Targets
 ```bash
-cargo test
-```
-
-### 2. Run Browser Tests (portable-xstate-wasm)
-These run in a headless Chrome browser to verify the WASM integration against XState.
-
-```bash
-cd portable-xstate-wasm
-wasm-pack test --headless --chrome
+npm run build
 ```
 
 ### Run All Tests
-To run all test suites (native, WASM, E2E, C/C++, and unit) in sequence:
-
+Runs the conformance provenance check, native Rust unit tests, headless Chrome WASM tests, Playwright E2E tests, C/C++ static library + PlatformIO build script tests, and Vitest XState 5 conformance tests:
 ```bash
 npm test
 ```
 
-Or run them individually:
-- `npm run test:native` (Rust)
-- `npm run test:wasm` (WASM/XState)
-- `npm run test:e2e` (HTML Examples via Playwright)
-- `npm run test:c-cpp` (C/C++ Static Library)
-- `npm run test:unit` (XState v5 Conformance via Vitest)
+Or run individual suites:
+- `npm run test:conformance-check` (Upstream XState 5 test provenance check)
+- `npm run test:native` (Rust `#![no_std]` core tests)
+- `npm run test:wasm` (WASM browser tests)
+- `npm run test:e2e` (HTML examples via Playwright)
+- `npm run test:c-cpp` (C, C++, and PlatformIO `build_rust.py` tests)
+- `npm run test:unit` (XState 5 conformance suite via Vitest)
 
-### Running tests via Devcontainer CLI
+## Usage Examples
 
-If you are not using VS Code but still want an isolated, reproducible environment to run tests, you can use the `@devcontainers/cli`:
-
-```bash
-# Start the devcontainer
-npx -y @devcontainers/cli up --workspace-folder .
-
-# Run the test suite headlessly inside the container
-npx -y @devcontainers/cli exec --workspace-folder . npm run build
-npx -y @devcontainers/cli exec --workspace-folder . npm test
-```
-
-## Usage in JavaScript
-
+### JavaScript / TypeScript (WASM)
 ```javascript
-import init, { Actor } from './path/to/pkg/portable_xstate.js';
+import { createMachine, createActor, assign } from './portable-xstate-wasm/pkg-npm/portable_xstate.js';
 
-async function main() {
-    await init();
-
-    const machineDef = JSON.stringify({
-        initial: "idle",
-        states: {
-            idle: { on: { START: "running" } },
-            running: { on: { STOP: "idle" } }
+const machine = createMachine({
+  initial: 'idle',
+  context: { count: 0 },
+  states: {
+    idle: {
+      on: {
+        START: {
+          target: 'running',
+          actions: assign({ count: ({ context }) => context.count + 1 })
         }
-    });
+      }
+    },
+    running: {
+      on: { STOP: 'idle' }
+    }
+  }
+});
 
-    // Create and start the machine
-    const machine = new Actor(machineDef).start();
-    console.log(machine.getSnapshot().value); // "idle"
-    
-    // Send an event
-    machine.send("START");
-    console.log(machine.getSnapshot().value); // "running"
-}
-main();
+const actor = createActor(machine).start();
+console.log(actor.getSnapshot().value); // "idle"
+
+actor.send({ type: 'START' });
+console.log(actor.getSnapshot().value); // "running"
+console.log(actor.getSnapshot().context.count); // 1
 ```
 
-## Known Discrepancy: XState 5 Parity vs Memory Environments
+### C++11 (ESP32 / PlatformIO / Native)
+```cpp
+#include "portable_xstate.hpp"
 
-To safely cater to severely memory-constrained embedded environments (e.g., Arduinos, ESP32s), `portable-xstate` consciously deviates from XState 5 regarding pre-initialization event queues.
+const char* MACHINE_JSON = R"({
+  "initial": "idle",
+  "states": {
+    "idle": { "on": { "START": { "target": "running", "actions": ["onStart"] } } },
+    "running": { "after": { "1000": "idle" } }
+  }
+})";
 
-In **XState 5**, an unstarted Actor implements a **Mailbox Buffer**: any events sent via `actor.send()` before `actor.start()` is called are pushed to a dynamic array allocated on the heap, which is later flushed when the machine starts.
+xstate::PortableXState fsm(MACHINE_JSON);
+fsm.registerAction("onStart", [](const xstate::Value& ctx, const xstate::Value& evt) {
+  // Handle action
+});
+fsm.registerClock(millis); // Or bind an xstate::SimulatedClock for deterministic tests
+fsm.start();
 
-In **portable-xstate**, an unstarted machine explicitly **Drops** events. If `machine.send()` is called before `machine.start()`, the event is safely discarded. This guarantees that unbound hardware interrupts or rapid polling sensors cannot flood the heap with a massive queue of deferred events and crash the microcontroller before it boots.
+fsm.send("START");
+bool is_running = fsm.matches("running"); // true
+fsm.tick();
+```
+
+## Known Discrepancy: XState 5 Parity vs. Microcontroller Memory Safety
+
+To safely target severely memory-constrained embedded environments (such as ESP32 and Arduino microcontrollers), `portable-xstate` intentionally deviates from XState 5 on pre-initialization event buffering:
+
+- **In XState 5 (JS)**: Calling `actor.send()` before `actor.start()` appends events to a dynamically growing heap array (mailbox buffer) flushed on `start()`.
+- **In `portable-xstate`**: Calling `send()` before `start()` safely **drops** the event, preventing unbound hardware interrupts or rapid sensor polling before boot from exhausting heap memory.

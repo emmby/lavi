@@ -1,43 +1,102 @@
 # Portable XState Agent Guidelines
 
-## 1. Core Goal & XState 5 Compatibility Invariant
+**Violating the letter of these rules is violating the spirit of these rules.**
 
-- **Strict XState 5 Compatibility**: The primary goal of `portable-xstate` is strict compatibility with XState 5 state machine definitions and full compliance with the upstream XState 5 conformance test suite (`statelyai/xstate`), except where fundamentally constrained by the absence of a JavaScript runtime (e.g., pure JSON/Rust/FFI boundaries where arbitrary JS callbacks cannot execute).
-- **Tests as Source of Truth**: Upstream XState 5 conformance tests are the source of truth. **NEVER** modify test logic, assertions, or state machine definitions to make a test pass.
-- **Documenting Non-JS Constraints**: If a test or sub-feature is genuinely constrained by the lack of a JavaScript runtime, do not silently alter or delete it—explicitly confirm with the user and document the constraint in `XSTATE_5_FEATURES.md` (and `README.md` if architectural).
+`portable-xstate` reproduces XState 5 state machine behavior and API semantics across `#![no_std]` Rust (`portable-xstate-rust`), WebAssembly/JS (`portable-xstate-wasm`), and C/C++ for embedded microcontrollers (`portable-xstate-c-cpp` / PlatformIO).
 
-## 2. Mandatory Feature & Test Implementation Process (`PROCESS.md`)
+---
 
-Whenever adding functionality or enabling conformance tests in `portable-xstate`, you **MUST** strictly follow [PROCESS.md](./PROCESS.md):
+## 1. The 4-Level Decision Hierarchy (Resolving Competing Goals)
 
-1. **Select Target**:
-   - Verify all existing tests pass (`npm test`).
-   - Identify the next feature set from [XSTATE_5_FEATURES.md](./XSTATE_5_FEATURES.md).
-   - Copy the unmodified upstream test content from the linked `statelyai/xstate` repository URL into `tests/`.
-   - **STOP GATE 1**: Stop immediately and wait for the user to confirm the copied test content and check it into Git before making any edits.
+When XState 5 parity, target-language idioms, and microcontroller constraints pull against each other, resolve them in this exact priority order:
 
-2. **Setup Test**:
-   - Make **minimal compilation fixes only** in `tests/<filename>.test.ts` (e.g., updating imports or adding explicit TypeScript type annotations like `ctx: any`). Do **NOT** change test logic.
-   - Run the test (`npx vitest tests/<filename>.test.ts`) to verify it compiles and fails as expected.
-   - **STOP GATE 2**: Stop immediately and wait for the user to confirm the test compiles and fails as expected, and check it into Git.
+### Level 1 — Hard Invariants (Never Negotiable, Zero Exceptions)
+1. **Conformance Test Integrity (`tests/*.test.ts` & `tests/upstream/`)**:
+   - Upstream `statelyai/xstate` conformance tests are the immutable source of truth, verified mechanically by `npm run test:conformance-check`.
+   - **NEVER** modify test assertions, machine definitions, or test bodies (e.g., never inject `actor.tick()` into tests, never delete/gut code inside `it.skip(...)`, and never edit files in `tests/upstream/`).
+   - **NEVER** add an unregistered `it.skip`, `describe.skip`, or `.only` to make a test suite pass.
+2. **Microcontroller Safety & Resource Envelope (`portable-xstate-rust` & `portable-xstate-c-cpp`)**:
+   - **`#![no_std]` + `alloc` only**: Never depend on `std` in `portable-xstate-rust` or `portable-xstate-c-cpp`.
+   - **Dependency Freeze**: `portable-xstate-rust` may depend **only** on `indexmap` (never add `serde`, `serde_json`, regex engines, or expression parsers).
+   - **Bounded $O(1)$ CPU Call-Stack**: Microcontrollers (such as ESP32 FreeRTOS `loopTask` with an 8 KB stack) overflow on recursive functions. All JSON parsing, state tree traversal, value inspection, and `Drop` implementations **must** use iterative heap work-stacks (`Vec`), never CPU call-stack recursion.
+   - **Bounded Heap Memory**: Never introduce unbounded queues or buffers (e.g., events sent before `machine.start()` are intentionally dropped rather than queued on the heap).
 
-3. **Analyze & Implement**:
-   - Run the targeted test via `npx vitest tests/<filename>.test.ts`.
-   - Implement the required functionality in Rust without modifying the test logic:
-     - `portable-xstate-rust`: Core statechart semantics, runtime logic, and JSON deserialization (`src/json.rs`, `src/parser.rs`).
-     - `portable-xstate-wasm` / `portable-xstate-c-cpp`: WASM and C/C++ adapter surfaces.
+### Level 2 — XState 5 Statechart Semantics (Portable Core)
+All statechart execution semantics—state hierarchy resolution, LCCA transition domain calculation, SCXML exit/transition/entry action ordering, eventless (`always`) loops, `assign` context updates, `raise` internal events, `after` delayed transitions, `SimulatedClock` chronological stepping, history states, `.matches()`, `.can()`, `.hasTag()`, and snapshot persistence—live in `portable-xstate-rust` and **must** behave identically across Rust, WASM, C, and C++.
 
+### Level 3 — Idiomatic Target-Language Mechanics (No Greenspun's Tenth Rule)
+**NEVER** invent dynamic execution, string-based expression evaluators, math parsers, or untyped runtime reflection in Rust, C, or C++ to mimic JavaScript's interpreted runtime. Instead, map XState concepts to each target language's native idiom:
+- **WASM / JS (`portable-xstate-wasm`)**: Exposes XState 5's JS API (`createMachine`, `createActor`, `setup`, `assign`, `SimulatedClock`). When a JS test passes inline JS functions (`entry: () => ...`, `guard: ({ context }) => ...`), the WASM adapter intercepts the `js_sys::Function`, assigns a synthetic name (e.g., `__inline_action_N`), stores the JS closure in the WASM instance's callback map, and passes pure declarative configuration to `portable-xstate-rust`.
+- **Rust (`portable-xstate-rust`)**: Uses strongly-typed enums (`StateValue`, `StateType`, `Action`, `TransitionGuard`, `Value`), move semantics (`from_definition`, `swap_remove`), and registered `ActionFunction` / `GuardFunction` / `Clock` callbacks.
+- **C (`portable_xstate.h`)**: Uses opaque pointers (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`), integer status codes (`0` on success, negative on error), zero-copy `const char*` JSON input, and named C function pointers (`fsm_register_action`, `fsm_register_guard`, `fsm_register_clock_with_data`) with `void* user_data`.
+- **C++ (`portable_xstate.hpp`)**: Provides header-only C++11 RAII wrappers (`xstate::PortableXState`, `xstate::SimulatedClock`, `xstate::Value`) with move-only semantics (`rebind_this_pointers()` on move), zero-copy `const char*` JSON storage before `start()`, and overloads for both zero-allocation C function pointers and `std::function` lambdas.
+
+### Level 4 — Host-Language Boundary Escalation Protocol
+If an upstream XState 5 test relies on a pure JavaScript runtime artifact that cannot be bridged in `portable-xstate-wasm` and has no idiomatic compiled equivalent (e.g., JS garbage-collector `FinalizationRegistry` hooks, internal XState JS private fields, or runtime evaluation of arbitrary JS code strings):
+1. Do **not** alter the test body or build an interpreter in Rust/C.
+2. Document the exact constraint in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) and register the specific test title in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) with `"category": "non-js-constraint"`, keeping the test body inside `it.skip(...)` 100% unmodified.
+
+---
+
+## 2. Canonical Patterns vs. Legacy Anti-Patterns (Do Not Copy)
+
+**Written rules in this document always override existing code in the repository.** Some older files contain legacy patterns from early prototypes; never copy them. When you spot a legacy anti-pattern outside your task scope, **do not refactor it mid-feature** (which causes swarm merge conflicts)—log it in [`TECH_DEBT.md`](./TECH_DEBT.md) instead.
+
+| Area | Canonical Pattern (DO THIS) | Legacy Anti-Pattern in Repo (DO NOT COPY) |
+| :--- | :--- | :--- |
+| **Conformance Tests (`tests/*.test.ts`)** | Keep upstream test bodies 100% intact; bridge timers/callbacks inside `portable-xstate-wasm`. | Injecting manual `actorRef.tick()` calls into test bodies or deleting code inside `it.skip(...)` (legacy debt in `tests/after.test.ts`, tracked as `TD-1`). |
+| **Test Helpers (`tests/utils.ts`)** | Pure in-memory inspection via XState 5 public APIs (`getSnapshot()`, `provide()`, `setup()`). | Writing debug files (`fs.appendFileSync('trace.log')`), `console.log` spam, or monkey-patching `machine.createActor` (tracked as `TD-4`). |
+| **JS / WASM Public API** | XState 5 `createMachine(...)` + `createActor(machine, options).start()`. | Legacy `new Actor(jsonString).start()` constructor. |
+| **Rust Tree & Value Traversal (`portable-xstate-rust`)** | Iterative traversal using an explicit heap `Vec` work-stack (see `parser.rs`, `json.rs`, `Value::drop`, `StateDefinition::drop`). | Recursive functions on nested states or values (such as legacy `StateValue::collect_paths` or `StateNode::events`, tracked as `TD-5`). |
+| **Rust Struct Fields (`portable-xstate-rust`)** | Strongly-typed enums (`StateType`, `HistoryType`) and XState 5 terminology (`guard`). | Legacy stringly-typed `type_: Option<String>` or XState 4 `cond` naming (tracked as `TD-6`). |
+| **C/C++ Embedded Callbacks** | Pass `void* user_data` in C (`fsm_register_*`) and support zero-allocation function pointers alongside `std::function` in C++. | Global/static mutable state in C/C++ or forcing heap-allocated closures when a bare function pointer suffices. |
+
+---
+
+## 3. Mandatory Feature & Swarm Workflow (`PROCESS.md`)
+
+Every statechart feature applies across **all three targets** (`portable-xstate-rust`, `portable-xstate-wasm`, and `portable-xstate-c-cpp`) and must follow [`PROCESS.md`](./PROCESS.md):
+
+1. **Pre-Flight & Isolation**:
+   - Work in an isolated branch/worktree when swarming in parallel.
+   - Verify `npm test` (which runs `npm run test:conformance-check` first) passes before making changes.
+2. **Automated Conformance Test Setup**:
+   - Fetch unmodified upstream tests via `node scripts/fetch-upstream-test.mjs <name>.test.ts` and register the file in `tests/conformance-manifest.json`.
+   - Apply **only** whitelisted compilation adaptations in `tests/<name>.test.ts`: rewriting module imports to `../portable-xstate-wasm/pkg-npm/portable_xstate` (and `./stubs.ts` / `./utils.ts`), adding `: any` parameter type annotations, and marking out-of-scope tests `it.skip` (with full test bodies intact and registered in `tests/conformance-manifest.json`).
+   - Run `npm run test:conformance-check` (must pass) and `npx vitest run tests/<name>.test.ts` (must fail on the target feature before implementation).
+3. **Cross-Target Implementation (Rust $\rightarrow$ WASM $\rightarrow$ C/C++)**:
+   - Implement core statechart semantics in `portable-xstate-rust` (`#![no_std]`, iterative work-stacks, native Rust unit tests).
+   - Update `portable-xstate-wasm` bindings so the target tests in `tests/<name>.test.ts` pass **without editing `tests/<name>.test.ts`**.
+   - Update `portable-xstate-c-cpp` (`portable_xstate.h`, `portable_xstate.hpp`, `src/lib.rs`) and add C and C++ tests in `portable-xstate-c-cpp/tests/c_test.c` and `cpp_test.cpp`.
 4. **Clean Up, Verify & Document**:
-   - Run `cargo clippy` across the Rust workspace and fix all warnings.
-   - Remove temporary debug statements (`println!`, `console.log`).
-   - Check for console errors in browser/WASM tests where applicable.
-   - Run the full test suite (`npm test`) to verify zero regressions across native, WASM, and E2E suites.
-   - Update [XSTATE_5_FEATURES.md](./XSTATE_5_FEATURES.md) (and [README.md](./README.md) if significant capabilities were added).
+   - Run `cargo clippy --workspace --all-targets -- -D warnings` and fix all warnings.
+   - Run the full suite (`npm test`) and confirm `test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, and `test:unit` all pass.
+   - Log any out-of-scope legacy issues encountered into [`TECH_DEBT.md`](./TECH_DEBT.md) and update [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md).
 
-## 3. PlatformIO Integration Maintenance (`library.json` & `build_rust.py`)
+---
+
+## 4. PlatformIO Integration Maintenance (`library.json` & `build_rust.py`)
 
 PlatformIO support lives directly in this repository (`library.json`, `build_rust.py`, `portable-xstate-c-cpp/tests/test_build_rust.py`, and `examples/stoplight-esp32`):
-
 - **Build Script & Manifest**: If crate names, directory paths, Cargo flags, or static library names in `portable-xstate-c-cpp` change, update `library.json`, `build_rust.py`, and `portable-xstate-c-cpp/tests/test_build_rust.py` in lockstep.
 - **Headers & Examples**: Keep `portable-xstate-c-cpp/include/portable_xstate.h`, `portable_xstate.hpp`, and `examples/stoplight-esp32` aligned with any C/C++ API changes.
 - **Verification**: Always run `npm run test:c-cpp` (which executes C, C++, and `test_build_rust.py` unit tests) before claiming completion.
+
+---
+
+## 5. Common Rationalizations & Red Flags (STOP Immediately)
+
+| Excuse / Rationalization | Reality |
+| :--- | :--- |
+| *"I've spent 2 hours on this edge case and 35/36 tests pass—I'll just tweak or `.skip` this one test line."* | **Forbidden.** Modifying or skipping a failing conformance test hides a runtime bug and fails `npm run test:conformance-check`. Fix the runtime or escalate to the user. |
+| *"I'll adjust `tests/utils.ts` or inject `actor.tick()` into the test body like `after.test.ts` did."* | **Forbidden.** `after.test.ts` and `utils.ts` are logged in `TECH_DEBT.md` (`TD-1`, `TD-4`) as legacy violations. Never copy them or alter test bodies. |
+| *"The stakeholder asked for dynamic delay/action expressions in JSON for C and Rust, so I'll write a small expression parser."* | **Forbidden (Greenspun's Tenth Rule).** Never build expression evaluators or script interpreters in Rust/C/C++. Use named callbacks (`registerAction`, `registerGuard`, `registerDelay` / function pointers) in C/C++/Rust and JS function bridging in WASM. |
+| *"Recursion is simpler here and `StateValue::collect_paths` already uses recursion."* | **Forbidden.** `collect_paths` is legacy debt (`TD-5`). Recursion overflows the 8 KB ESP32 FreeRTOS stack. Always use an explicit `Vec` work-stack on the heap. |
+| *"I'll buffer these pre-start or deferred events in an unbounded `Vec` just in case."* | **Forbidden.** Unbounded queues crash microcontrollers under hardware interrupt floods. Keep memory bounded. |
+| *"While I'm here, I'll refactor the legacy code in adjacent files too."* | **Forbidden during feature work.** Unscoped refactoring causes merge conflicts for parallel swarm agents. Log it in `TECH_DEBT.md` and stay in scope. |
+
+### Red Flags — If You Think Any of These, STOP:
+- "Just a tiny change to the test file to match our runtime..."
+- "I'll parse/evaluate the expression string in Rust so C gets dynamic expressions..."
+- "The state tree won't be deep enough to overflow the stack..."
+- "Another test in this file called `.tick()` manually, so I will too..."

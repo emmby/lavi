@@ -1,95 +1,90 @@
 # XState 5 Supported Operations Checklist
 
-This document tracks the feature set of `portable-xstate` against the XState 5 specification. Features are grouped by type and ordered from most important to least important.
+This document tracks the feature set of `portable-xstate` against the XState 5 (`statelyai/xstate@5.25.0`) specification across all three targets: `#![no_std]` Rust (`portable-xstate-rust`), WebAssembly/JS (`portable-xstate-wasm`), and C/C++ for embedded microcontrollers (`portable-xstate-c-cpp`).
 
-Test links point to the `statelyai/xstate` reference implementation for verification.
-
-**Test Coverage**: 109 passing tests across `machine.test.ts`, `state.test.ts`, `history.test.ts`, and `actions.test.ts`
+Upstream conformance test integrity is enforced mechanically via `npm run test:conformance-check` against pinned reference files in [`tests/upstream/`](./tests/upstream/) and [`tests/conformance-manifest.json`](./tests/conformance-manifest.json). Pre-existing test divergences and legacy cleanup tasks are tracked in [`TECH_DEBT.md`](./TECH_DEBT.md).
 
 ## 1. Core Structure (Essential)
 High usage, required for almost every state machine.
 
-- [x] **Machine Definition** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/machine.test.ts))
+- [x] **Machine Definition** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/machine.test.ts))
   - [x] `id` (Root machine identifier)
   - [x] `initial` (Initial state key)
   - [x] `context` (Initial extended state)
   - [x] `states` (State nodes definition)
   - [x] `version` (Machine versioning)
   - [x] `types` (TypeScript type schemas - pass-through)
-- [x] **State Nodes** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/state.test.ts))
+- [x] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts))
   - [x] Atomic States (Leaf nodes)
   - [x] Compound States (Nested states with initial)
-  - [x] Parallel States (Orthogonal regions) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/parallel.test.ts))
-  - [x] Final States (`type: 'final'`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/final.test.ts))
-  - [x] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/history.test.ts))
+  - [x] Parallel States (Orthogonal regions) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/parallel.test.ts))
+  - [x] Final States (`type: 'final'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts))
+  - [x] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts))
     - [x] Shallow history (default)
     - [x] Deep history (explicit)
     - [x] History with default target
     - [x] History in parallel states
     - [x] Multistage history
     - [x] History state persistence/revival
-- [ ] **Transitions** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/transition.test.ts))
+- [ ] **Transitions** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/transition.test.ts))
   - [x] Event Transitions (`on: { EVENT: ... }`)
   - [x] Eventless Transitions (`always: [...]`)
   - [x] Targetless Transitions (internal transitions with actions only)
   - [ ] Self-transitions with reentry (Partial - deep reentry skipped)
   - [x] Guarded Transitions
   - [x] Root-level transitions (combinatorial machines)
-  - [x] Delayed Transitions (`after: { delay: target }`) (Partial) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/after.test.ts))
+  - [x] Delayed Transitions (`after: { delay: target }`) (Partial) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/after.test.ts))
     - [x] Deterministic virtual time advancement (`SimulatedClock` with `set(ms)` / `increment(ms)` and cascading `tick()` across Rust, C, C++, and WASM)
     - [x] Deep-sleep deadline introspection (`next_timer_deadline` / `fsm_get_next_deadline` / `getNextDeadline`)
-    - **Note**: Expressions computing timeouts dynamically via JS callbacks are not yet implemented (`delay expressions`).
-    - **Note**: Internal memory clearing hooks (`clearTimeout`) and legacy string formatting validation are natively skipped by design.
+    - **Documented Target-Language Constraints**:
+      - Dynamic delay expressions in C/C++/Rust must use registered named delay callbacks rather than runtime string/expression evaluation (WASM can bridge inline JS delay functions to synthetic named callbacks; see `TD-1` in [`TECH_DEBT.md`](./TECH_DEBT.md)).
+      - Host JS `setTimeout`/`clearTimeout` handle inspection (`should not try to clear an undefined timeout when exiting source state of a delayed transition`) and internal JS `TransitionNode` string formatting (`should format transitions properly`) are skipped by design because `portable-xstate` evaluates timers against an external clock deadline rather than spawning host JS timers.
   - [ ] Wildcard Transitions (`*`)
   - [ ] Partial Wildcard Transitions (`models.*`)
 
 ## 2. Logic & Control Flow (High Priority)
 Essential for defining machine behavior and data flow.
 
-- [x] **Guards** (`guard`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/guards.test.ts))
-  - [x] Named Guards (String reference)
-  - [x] Inline Guards (Function definition)
+- [x] **Guards** (`guard`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/guards.test.ts))
+  - [x] Named Guards (String reference; registered via function pointer / callback in Rust/C/C++ and `setup`/`provide` in WASM)
+  - [x] Inline Guards (Function definition in WASM/JS bridged to synthetic named guards)
   - [x] Guard override via `machine.provide()`
   - [ ] Higher-Order Guards (`and`, `or`, `not`)
-- [ ] **Actions** (`entry`, `exit`, `actions`) (Partial - deep hierarchy & SCXML order skipped) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/actions.test.ts))
-  - [x] Named Actions
-  - [x] Inline Actions (Function definition)
+- [ ] **Actions** (`entry`, `exit`, `actions`) (Partial - see `TD-2` in [`TECH_DEBT.md`](./TECH_DEBT.md)) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts))
+  - [x] Named Actions (Registered via function pointer / callback in Rust/C/C++ and `setup`/`provide` in WASM)
+  - [x] Inline Actions (Function definition in WASM/JS bridged to synthetic named actions)
   - [x] Action override via `machine.provide()`
   - [ ] Dynamic Action Parameters (skipped)
-  - [ ] Entry actions (state entry)
-  - [ ] Exit actions (state exit)
-  - [ ] Transition actions
-  - [ ] Initial transition actions
+  - [x] Entry actions (state entry, including root initial `always` transition batching)
+  - [x] Exit actions (state exit)
+  - [x] Transition actions
+  - [x] Initial transition actions
   - [ ] **Built-in Actions:**
-    - [ ] `assign` (Update context) (Partial - assignment order skipped) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
+    - [ ] `assign` (Update context) (Partial - assignment order skipped) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts))
       - [x] Object-based assignment
-      - [x] Function-based assignment
-      - [x] Inline assignment functions
+      - [x] Function-based assignment (WASM/JS bridge)
+      - [x] Inline assignment functions (WASM/JS bridge)
       - [x] Assignment in entry/exit/transition actions
-    - [ ] `raise` (Self-send event)
+    - [x] `raise` (Self-send internal event)
     - [ ] `log` (Console log)
-    - [ ] `sendTo` (Send to specific actor) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/actor.test.ts))
+    - [ ] `sendTo` (Send to specific actor) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actor.test.ts))
     - [ ] `stop` (Stop child actor)
 - [x] **Context & Input**
-  - [x] Immutable Context Updates ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/assign.test.ts))
-  - [x] Function-based context initialization
-  - [x] Lazy context evaluation
+  - [x] Immutable Context Updates ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts))
+  - [x] Function-based context initialization (WASM/JS)
+  - [x] Lazy context evaluation (WASM/JS)
   - [x] Context override via `machine.provide()`
-  - [ ] `input` (Factory-pattern context initialization) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/input.test.ts))
+  - [ ] `input` (Factory-pattern context initialization) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/input.test.ts))
 
 ## 3. State Inspection & Queries (High Priority)
 Essential for runtime state inspection and decision-making.
 
-- [x] **State API** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/state.test.ts))
+- [x] **State API** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts))
   - [x] `state.value` (Current state value)
-  - [x] `state.matches(stateValue)` (Query active state by path or partial object)
+  - [x] `state.matches(stateValue)` (Query active state by dot-delimited path or partial object across Rust, C, C++, and WASM)
   - [x] `state.context` (Current context)
-  - [x] `state.status` (Machine status: 'active', 'done', 'stopped')
-  - [x] `state.can(event)` (Check if event is accepted)
-    - [x] Simple event checks
-    - [x] Event object checks
-    - [x] Guard evaluation in `.can()`
-    - [x] No side effects (no actor spawning, no assignments)
+  - [x] `state.status` (Machine status: `'active'`, `'done'`, `'stopped'`)
+  - [x] `state.can(event)` (Check if event is accepted without side effects)
   - [x] `state.hasTag(tag)` (Check if state has tag)
   - [x] State persistence and revival
 - [x] **Machine API**
@@ -102,20 +97,20 @@ Essential for runtime state inspection and decision-making.
 ## 4. Actor Model (Medium Priority)
 For communicating with external entities or running side-effects.
 
-- [ ] **Invoking Actors** (`invoke`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/invoke.test.ts))
+- [ ] **Invoking Actors** (`invoke`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/invoke.test.ts))
   - [ ] Invoke Promise (`fromPromise`)
   - [ ] Invoke Callback (`fromCallback`)
   - [ ] Invoke Observable (`fromObservable`)
   - [ ] Invoke Machine (`fromTransition` / machine)
   - [ ] `onDone` / `onError` (Transition on completion/failure)
-  - [x] Invoke function (inline function support)
-- [ ] **Spawning Actors** (`spawn`) ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/spawn.test.ts))
+  - [x] Invoke function (inline function support in WASM)
+- [ ] **Spawning Actors** (`spawn`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/spawn.test.ts))
   - [ ] Dynamic actor creation via `assign`
 
 ## 5. Advanced & Niche (Low Priority)
 Features for complex use-cases or debugging.
 
-- [x] **Deep Persistence** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/json.test.ts))
+- [x] **Deep Persistence** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/json.test.ts))
   - [x] Persisting/Restoring state snapshots
   - [x] History value persistence
   - [x] StateNode reference revival
@@ -127,30 +122,3 @@ Features for complex use-cases or debugging.
   - [x] Tag persistence across state restoration
 - [ ] **Metadata** (`meta: { ... }`)
 - [x] **Custom Delays/Timers** (`SimulatedClock` & custom clock providers across Rust, C, C++, and WASM)
-
-## Implementation Notes
-
-### Combinatorial Machines
-- ✅ Full support for machines without states (root-level transitions only)
-- ✅ Root-level `on`, `entry`, `exit`, and `always` transitions
-- ✅ Context updates via `assign` in combinatorial machines
-
-### History States
-- ✅ Comprehensive history state support including:
-  - Shallow and deep history
-  - Default targets
-  - Parallel state history
-  - History persistence and revival from snapshots
-  - Proper action execution during history restoration
-
-### WASM Integration
-- ✅ Full JavaScript/TypeScript interop via `wasm-bindgen`
-- ✅ Inline function support for guards and actions
-- ✅ `assign()` helper function compatible with XState 5 API
-- ✅ Snapshot serialization/deserialization
-
-### Test Coverage
-- **machine.test.ts**: 20 tests covering machine definition, transitions, guards, actions, and combinatorial machines
-- **state.test.ts**: 20 tests covering state API, `.can()`, `.hasTag()`, status checks, and persistence
-- **history.test.ts**: 33 tests covering shallow/deep history, parallel history, and history revival
-- **actions.test.ts**: 36 tests covering transition actions, entry/exit actions, assign actions, and action overrides
