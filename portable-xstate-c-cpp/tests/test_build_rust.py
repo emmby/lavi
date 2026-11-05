@@ -156,6 +156,41 @@ class TestBuildRust(unittest.TestCase):
         )
         dummy_env.Exit.assert_called_once_with(1)
 
+    @patch("os.path.exists", return_value=True)
+    @patch("subprocess.check_call")
+    def test_build_rust_lib_falls_back_to_os_environ_path(
+        self, mock_check_call, _mock_exists
+    ):
+        dummy_env = MagicMock()
+        # PlatformIO GUI env with missing PATH key in ENV dict
+        dummy_env.__getitem__.side_effect = lambda k: {} if k == "ENV" else None
+
+        def fake_which(cmd, path=None):
+            if path is None:
+                # Python's shutil.which(cmd, path=None) defaults to os.environ["PATH"]
+                return "/custom/cargo/bin/cargo"
+            if path and "/custom/cargo/bin" in path:
+                return "/custom/cargo/bin/cargo"
+            return None
+
+        with patch("shutil.which", side_effect=fake_which), patch.dict(
+            os.environ, {"PATH": "/custom/cargo/bin"}, clear=False
+        ):
+            build_rust.build_rust_lib(
+                "native", "aarch64-apple-darwin", active_env=dummy_env, is_native=True
+            )
+        dummy_env.Exit.assert_not_called()
+        mock_check_call.assert_called_once()
+        passed_env = mock_check_call.call_args[1]["env"]
+        self.assertEqual(passed_env.get("PATH"), "/custom/cargo/bin")
+
+    @patch("os.path.exists", return_value=True)
+    @patch("subprocess.run", side_effect=FileNotFoundError(2, "No such file or directory: 'bash'"))
+    def test_source_esp_env_handles_missing_bash_oserror(self, _mock_run, _mock_exists):
+        build_env = {"PATH": "/usr/bin"}
+        build_rust._source_esp_env(build_env)
+        self.assertEqual(build_env, {"PATH": "/usr/bin"})
+
     @patch("shutil.which", return_value="/usr/local/bin/cargo")
     @patch("subprocess.check_call", side_effect=subprocess.CalledProcessError(101, ["cargo"]))
     def test_build_rust_lib_exits_on_cargo_failure_or_missing_archive(

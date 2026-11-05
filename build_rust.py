@@ -89,7 +89,7 @@ def _source_esp_env(build_env):
             key, sep, value = line.partition("=")
             if sep:
                 build_env[key] = value
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         print(f"Warning: Failed to source {export_script}: {e}")
 
 
@@ -115,7 +115,7 @@ def build_rust_lib(mcu, rust_target, active_env=None, *args, **kwargs):
 
     build_env = dict(active_env["ENV"]) if active_env is not None else dict(os.environ)
 
-    if not shutil.which(cargo_to_use, path=build_env.get("PATH")):
+    if not shutil.which(cargo_to_use, path=build_env.get("PATH", "")):
         path_from_env = os.environ.get("PATH")
         if path_from_env:
             build_env["PATH"] = path_from_env
@@ -124,7 +124,7 @@ def build_rust_lib(mcu, rust_target, active_env=None, *args, **kwargs):
         _source_esp_env(build_env)
         _ensure_esp_toolchain_path(build_env)
 
-    cargo_path = shutil.which(cargo_to_use, path=build_env.get("PATH"))
+    cargo_path = shutil.which(cargo_to_use, path=build_env.get("PATH", ""))
     if not cargo_path:
         print("Error: 'cargo' not found in PATH. "
               "Please ensure Rust and the ESP toolchain (espup) are installed.")
