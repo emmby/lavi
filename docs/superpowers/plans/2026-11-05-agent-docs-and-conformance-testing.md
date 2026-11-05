@@ -74,7 +74,7 @@
     ```
   - `npm run test:conformance-check` script in `package.json`
 
-- [ ] **Step 1: Write the failing unit test suite in `tests/conformance-check.test.ts`**
+- [x] **Step 1: Write the failing unit test suite in `tests/conformance-check.test.ts`**
 
 Create `tests/conformance-check.test.ts`:
 
@@ -229,16 +229,16 @@ describe('m', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run tests/conformance-check.test.ts`
 Expected: FAIL with `Cannot find module '../scripts/check-conformance-tests.mjs'`
 
-- [ ] **Step 3: Implement `scripts/fetch-upstream-test.mjs` and populate `tests/upstream/`**
+- [x] **Step 3: Implement `scripts/fetch-upstream-test.mjs` and populate `tests/upstream/`**
 
 Create `scripts/fetch-upstream-test.mjs` to fetch raw upstream test files from `https://raw.githubusercontent.com/statelyai/xstate/xstate%405.25.0/packages/core/test/<name>` into `tests/upstream/<name>`, compute their SHA-256 hashes, and record them in `tests/upstream/UPSTREAM_VERSION.json`. Run it for `machine.test.ts`, `state.test.ts`, `history.test.ts`, `actions.test.ts`, and `after.test.ts`.
 
-- [ ] **Step 4: Implement `scripts/check-conformance-tests.mjs`, `tests/conformance-manifest.json`, `vitest.config.mts`, and `package.json`**
+- [x] **Step 4: Implement `scripts/check-conformance-tests.mjs`, `tests/conformance-manifest.json`, `vitest.config.mts`, and `package.json`**
 
 In `vitest.config.mts`, update `test.exclude` to `['**/node_modules/**', 'tests/e2e/**', 'tests/upstream/**']`.
 In `scripts/check-conformance-tests.mjs`, implement `normalizeTestSource` and `checkConformanceTests` verifying:
@@ -248,12 +248,12 @@ In `scripts/check-conformance-tests.mjs`, implement `normalizeTestSource` and `c
 4. Every `it.skip(` or `describe.skip(` title in a `strict` file is listed in `allowed_skips` (and for `legacy-baseline` files, the file's SHA-256 either matches `legacy_baseline_sha256` or passes full `strict` normalization against `tests/upstream/<file>`).
 In `package.json`, add `"test:conformance-check": "node scripts/check-conformance-tests.mjs"` and prepend `npm run test:conformance-check && ` to `"test"`.
 
-- [ ] **Step 5: Run Vitest and `npm run test:conformance-check` to verify they pass**
+- [x] **Step 5: Run Vitest and `npm run test:conformance-check` to verify they pass**
 
 Run: `npm run test:conformance-check && npx vitest run tests/conformance-check.test.ts`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/ tests/upstream/ tests/conformance-manifest.json tests/conformance-check.test.ts vitest.config.mts package.json
@@ -280,7 +280,7 @@ git commit -m "feat: add upstream xstate test fixtures and conformance provenanc
   - Updated `PROCESS.md` (autonomous workflow using `npm run test:conformance-check`, worktree isolation, cross-target definition of done across Rust, WASM, and C/C++)
   - Updated `XSTATE_5_FEATURES.md` and `README.md`
 
-- [ ] **Step 1: Add documentation-integrity tests to `tests/conformance-check.test.ts`**
+- [~] **Step 1: Add documentation-integrity tests to `tests/conformance-check.test.ts`**
 
 Append a `describe('agent documentation & tech-debt consistency', ...)` block in `tests/conformance-check.test.ts`:
 
