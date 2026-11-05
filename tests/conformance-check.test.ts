@@ -135,6 +135,24 @@ describe('m', () => {
       const res3 = checkConformanceTests({ rootDir: tmpDir });
       expect(res3.ok).toBe(false);
       expect(res3.errors.join('\n')).toMatch(/SHA-256 mismatch/i);
+
+      // 4. Incomplete allowed_skips metadata fails
+      fs.writeFileSync(path.join(tmpDir, 'tests', 'upstream', 'sample.test.ts'), upstreamContent);
+      fs.writeFileSync(
+        path.join(tmpDir, 'tests', 'conformance-manifest.json'),
+        JSON.stringify({
+          upstreamTag: 'xstate@5.25.0',
+          files: {
+            'sample.test.ts': {
+              status: 'strict',
+              allowed_skips: [{ title: 'works' }]
+            }
+          }
+        })
+      );
+      const res4 = checkConformanceTests({ rootDir: tmpDir });
+      expect(res4.ok).toBe(false);
+      expect(res4.errors.join('\n')).toMatch(/Incomplete allowed_skips entry/i);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

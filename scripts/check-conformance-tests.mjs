@@ -147,6 +147,20 @@ export function checkConformanceTests(options = {}) {
       errors.push(`Missing upstream reference file: tests/upstream/${fileName}`);
       continue;
     }
+    if (!versionData.files || !versionData.files[fileName]) {
+      errors.push(
+        `Missing SHA-256 entry in tests/upstream/UPSTREAM_VERSION.json for ${fileName}. Always fetch upstream files via scripts/fetch-upstream-test.mjs.`
+      );
+      continue;
+    }
+
+    for (const skipEntry of config.allowed_skips || []) {
+      if (!skipEntry.title || !skipEntry.category || !skipEntry.reason || !skipEntry.ref) {
+        errors.push(
+          `Incomplete allowed_skips entry in tests/conformance-manifest.json for ${fileName}: each skip must specify non-empty title, category, reason, and ref.`
+        );
+      }
+    }
 
     const localContent = fs.readFileSync(localPath, 'utf8');
     const upstreamContent = fs.readFileSync(upstreamPath, 'utf8');
