@@ -25,8 +25,8 @@ This document outlines the standard operating procedure for enabling and passing
 - Read the failure output carefully.
 - Modify the implementation code to satisfy the test requirements.
   - **Core Logic**: Modify `portable-xstate-core` (Rust).
-  - **JSON/DTO**: Modify `portable-xstate-json` (Rust) for deserialization.
-  - **Wasm Adapter**: Modify `portable-xstate` (Rust/Wasm) for the API surface.
+  - **JSON Parsing**: Modify `portable-xstate-core` (`src/json.rs` / `src/parser.rs`) for deserialization.
+  - **Wasm / FFI Adapters**: Modify `portable-xstate-wasm` / `portable-xstate-ffi` for the API surface.
 - Re-run the specific test frequently.
 
 ## 5. Specific Issues & Fixes
