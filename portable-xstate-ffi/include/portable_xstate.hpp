@@ -52,6 +52,71 @@ public:
 
 using ActionCallback = std::function<void(const Value& context, const Value& event)>;
 using GuardCallback = std::function<bool(const Value& context, const Value& event)>;
+using ClockCallback = std::function<uint64_t()>;
+
+/**
+ * @brief Virtual clock modeled on XState 5's SimulatedClock.
+ *
+ * Owns a virtual millisecond timestamp and advances registered state machines
+ * chronologically through intermediate `after` timer deadlines via `set()` and `increment()`.
+ */
+class SimulatedClock {
+private:
+    ::SimulatedClock* m_ptr;
+
+public:
+    explicit SimulatedClock(uint64_t initial_ms = 0)
+        : m_ptr(fsm_simulated_clock_create(initial_ms)) {
+        if (!m_ptr) {
+            throw std::runtime_error("Failed to create SimulatedClock.");
+        }
+    }
+
+    ~SimulatedClock() {
+        if (m_ptr) {
+            fsm_simulated_clock_free(m_ptr);
+            m_ptr = nullptr;
+        }
+    }
+
+    SimulatedClock(const SimulatedClock&) = delete;
+    SimulatedClock& operator=(const SimulatedClock&) = delete;
+
+    SimulatedClock(SimulatedClock&& other) noexcept : m_ptr(other.m_ptr) {
+        other.m_ptr = nullptr;
+    }
+
+    SimulatedClock& operator=(SimulatedClock&& other) noexcept {
+        if (this != &other) {
+            if (m_ptr) {
+                fsm_simulated_clock_free(m_ptr);
+            }
+            m_ptr = other.m_ptr;
+            other.m_ptr = nullptr;
+        }
+        return *this;
+    }
+
+    uint64_t now() const noexcept {
+        return m_ptr ? fsm_simulated_clock_now(m_ptr) : 0;
+    }
+
+    void set(uint64_t target_ms) {
+        if (m_ptr) {
+            fsm_simulated_clock_set(m_ptr, target_ms);
+        }
+    }
+
+    void increment(uint64_t dt_ms) {
+        if (m_ptr) {
+            fsm_simulated_clock_increment(m_ptr, dt_ms);
+        }
+    }
+
+    ::SimulatedClock* raw() const noexcept {
+        return m_ptr;
+    }
+};
 
 /**
  * @brief C++ Wrapper for the Portable XState machine.
@@ -65,6 +130,8 @@ private:
     std::map<std::string, ActionCallback> m_callbacks;
     std::map<std::string, GuardCallback> m_guards;
     fsm_clock_callback_t m_clockCallback = nullptr;
+    ClockCallback m_clockFn;
+    ::SimulatedClock* m_simClock = nullptr;
     
     static void c_callback_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
         if (!user_data) return;
@@ -85,6 +152,32 @@ private:
         return false;
     }
 
+    static uint64_t c_clock_thunk(void* user_data) {
+        if (!user_data) return 0;
+        auto* instance = static_cast<PortableXState*>(user_data);
+        if (instance->m_clockFn) {
+            return instance->m_clockFn();
+        }
+        return 0;
+    }
+
+    void bind_registered_handlers() {
+        if (!machine) return;
+        for (const auto& pair : m_callbacks) {
+            fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
+        }
+        for (const auto& pair : m_guards) {
+            fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
+        }
+        if (m_simClock) {
+            fsm_register_simulated_clock(machine, m_simClock);
+        } else if (m_clockFn) {
+            fsm_register_clock_with_data(machine, c_clock_thunk, this);
+        } else if (m_clockCallback) {
+            fsm_register_clock(machine, m_clockCallback);
+        }
+    }
+
 public:
     /**
      * @brief Construct a new Portable X State object
@@ -96,6 +189,10 @@ public:
      * @throws std::runtime_error If the machine fails to initialize.
      */
     PortableXState(const char* json_config) : machine(nullptr), m_json(json_config) {
+    }
+
+    PortableXState(const char* json_config, SimulatedClock& clock)
+        : machine(nullptr), m_json(json_config), m_simClock(clock.raw()) {
     }
 
     /**
@@ -115,9 +212,18 @@ public:
     PortableXState& operator=(const PortableXState&) = delete;
 
     // Allow moving
-    PortableXState(PortableXState&& other) noexcept : machine(other.machine), m_json(other.m_json), m_callbacks(std::move(other.m_callbacks)), m_guards(std::move(other.m_guards)), m_clockCallback(other.m_clockCallback) {
+    PortableXState(PortableXState&& other) noexcept
+        : machine(other.machine),
+          m_json(other.m_json),
+          m_callbacks(std::move(other.m_callbacks)),
+          m_guards(std::move(other.m_guards)),
+          m_clockCallback(other.m_clockCallback),
+          m_clockFn(std::move(other.m_clockFn)),
+          m_simClock(other.m_simClock) {
         other.machine = nullptr;
         other.m_clockCallback = nullptr;
+        other.m_simClock = nullptr;
+        bind_registered_handlers();
     }
     PortableXState& operator=(PortableXState&& other) noexcept {
         if (this != &other) {
@@ -129,18 +235,10 @@ public:
             m_guards = std::move(other.m_guards);
             m_clockCallback = other.m_clockCallback;
             other.m_clockCallback = nullptr;
-            // Re-register callbacks with this instance as user_data
-            if (machine) {
-                for (const auto& pair : m_callbacks) {
-                    fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
-                }
-                for (const auto& pair : m_guards) {
-                    fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
-                }
-                if (m_clockCallback) {
-                    fsm_register_clock(machine, m_clockCallback);
-                }
-            }
+            m_clockFn = std::move(other.m_clockFn);
+            m_simClock = other.m_simClock;
+            other.m_simClock = nullptr;
+            bind_registered_handlers();
         }
         return *this;
     }
@@ -154,15 +252,7 @@ public:
         if (!machine) {
             throw std::runtime_error("Failed to create FSM machine from provided JSON.");
         }
-        for (const auto& pair : m_callbacks) {
-            fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
-        }
-        for (const auto& pair : m_guards) {
-            fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
-        }
-        if (m_clockCallback) {
-            fsm_register_clock(machine, m_clockCallback);
-        }
+        bind_registered_handlers();
         if (fsm_start(machine) != 0) {
             throw std::runtime_error("Failed to start FSM machine.");
         }
@@ -226,9 +316,46 @@ public:
      */
     void registerClock(fsm_clock_callback_t callback) {
         m_clockCallback = callback;
+        m_clockFn = nullptr;
+        m_simClock = nullptr;
         if (machine) {
             fsm_register_clock(machine, callback);
         }
+    }
+
+    /**
+     * @brief Register a C++ callable (lambda/std::function) as the external clock.
+     */
+    void registerClock(ClockCallback callback) {
+        m_clockFn = std::move(callback);
+        m_clockCallback = nullptr;
+        m_simClock = nullptr;
+        if (machine) {
+            fsm_register_clock_with_data(machine, c_clock_thunk, this);
+        }
+    }
+
+    /**
+     * @brief Bind a SimulatedClock to this state machine.
+     */
+    void registerClock(SimulatedClock& clock) {
+        m_simClock = clock.raw();
+        m_clockCallback = nullptr;
+        m_clockFn = nullptr;
+        if (machine && m_simClock) {
+            fsm_register_simulated_clock(machine, m_simClock);
+        }
+    }
+
+    /**
+     * @brief Query the earliest active `after` timer deadline in milliseconds.
+     *
+     * @param out_deadline Populated with the earliest deadline if an active timer exists.
+     * @return true if an active timer deadline exists, false otherwise.
+     */
+    bool getNextDeadline(uint64_t& out_deadline) const {
+        if (!machine) return false;
+        return fsm_get_next_deadline(machine, &out_deadline);
     }
 
     /**

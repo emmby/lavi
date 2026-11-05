@@ -47,6 +47,9 @@ typedef bool (*fsm_guard_callback_t)(
 );
 
 typedef uint64_t (*fsm_clock_callback_t)(void);
+typedef uint64_t (*fsm_clock_with_data_callback_t)(void* user_data);
+
+typedef struct SimulatedClock SimulatedClock;
 
 // Registration
 int fsm_register_action(
@@ -67,6 +70,24 @@ int fsm_register_clock(
     MachineContext* ctx,
     fsm_clock_callback_t callback
 );
+
+int fsm_register_clock_with_data(
+    MachineContext* ctx,
+    fsm_clock_with_data_callback_t callback,
+    void* user_data
+);
+
+bool fsm_get_next_deadline(
+    const MachineContext* ptr,
+    uint64_t* out_deadline
+);
+
+SimulatedClock* fsm_simulated_clock_create(uint64_t initial_ms);
+void fsm_simulated_clock_free(SimulatedClock* clock);
+int fsm_register_simulated_clock(MachineContext* ctx, SimulatedClock* clock);
+uint64_t fsm_simulated_clock_now(const SimulatedClock* clock);
+int fsm_simulated_clock_set(SimulatedClock* clock, uint64_t target_ms);
+int fsm_simulated_clock_increment(SimulatedClock* clock, uint64_t dt_ms);
 
 /**
  * @brief Process pending explicit timers (delayed after transitions).
