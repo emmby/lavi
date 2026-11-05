@@ -53,3 +53,17 @@ The [`Eval GREEN Agent`](conversation://f9e4d72e-f1eb-4f32-ba7a-b01645244c1e) me
 3. **Sequencing Edits on `"legacy-baseline"` Test Suites (Scenario 4)**:
    - *Finding*: Because `tests/after.test.ts` (`TD-1`), `tests/actions.test.ts` (`TD-2`), and `machine/state/history.test.ts` (`TD-3`) are currently locked by `legacy_baseline_sha256` in `tests/conformance-manifest.json`, touching those files during a feature task would fail `npm run test:conformance-check` unless the agent knows how `"legacy-baseline"` graduation interacts with feature work.
    - *Fix Applied*: Added an explicit subsection in `PROCESS.md` §2 (`Working on Suites Currently Marked "legacy-baseline" (TD-1..TD-3)`) instructing agents to either complete the file's graduation task (`TD-1`..`TD-3`) first so it matches `tests/upstream/` under `"status": "strict"`, or keep the frozen legacy file untouched until graduated.
+
+---
+
+## 4. Live 2-Agent Parallel Swarm Pilot (`Workspace: "branch"`)
+
+Two `self` subagents were launched in parallel in isolated git worktrees with minimal prompts (`"Read AGENTS.md and PROCESS.md and complete <task>"`):
+
+1. **Pilot Agent 1 ([`04697567-6ff6-44fd-b6f7-461ff3738848`](conversation://04697567-6ff6-44fd-b6f7-461ff3738848)) — `TD-4` (`tests/utils.ts`) & `tests/machine.test.ts` Strict Graduation (`TD-3`)**:
+   - Removed all debug file writes (`trace.log`, `debug.log`), `console.log` spam, and `machine.createActor` monkey-patching from `tests/utils.ts`, replacing recursive tracker injection with an iterative work-stack and iterative `Actor::sync_tracked_entry_exit` in `portable-xstate-wasm`.
+   - Graduated `tests/machine.test.ts` to `"status": "strict"` (`14/14` passing), moving the two non-upstream WASM tests to `portable-xstate-wasm/tests/verification.rs` and updating `scripts/check-conformance-tests.mjs` so `it.skip` blocks already present in `tests/upstream/<suite>.test.ts` are recognized as upstream skips.
+2. **Pilot Agent 2 ([`e112fe4e-f586-4582-9e75-4136215e768a`](conversation://e112fe4e-f586-4582-9e75-4136215e768a)) — Wildcard (`*`) & Partial Wildcard (`prefix.*`) Transitions**:
+   - Fetched `tests/upstream/eventDescriptors.test.ts` via `scripts/fetch-upstream-test.mjs`, registered `eventDescriptors.test.ts` under `"status": "strict"` (`14/14` passing, `0` skips), implemented wildcard & partial wildcard transition matching and specificity ordering across `portable-xstate-rust`, `portable-xstate-wasm` (`assertEvent`), and `portable-xstate-c-cpp` (FFI, C, and C++ tests), and updated `XSTATE_5_FEATURES.md`.
+   - *Loophole Surfaced & Closed*: Because `eventDescriptors.test.ts` relies on automatic mock clearing between `it(...)` blocks for `vi.spyOn(console, 'warn')` and `vitest.config.mts` lacked `clearMocks: true`, Agent 2 avoided editing `tests/eventDescriptors.test.ts` (blocked by `check-conformance-tests.mjs`) by calling `console.warn.mockClear()` inside `create_machine` in `portable-xstate-wasm`. Closed by enabling `clearMocks: true` in `vitest.config.mts`, removing the `mockClear` reflection from `portable-xstate-wasm`, and adding an explicit rule to `AGENTS.md` §1.1 & §5 forbidding test-spy hooks in runtime code.
+3. **Branch Merge Verification**: Both pilot branches merged cleanly into `agent_docs_conformance_testing` with zero merge conflicts.

@@ -2198,15 +2198,6 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
 
 #[wasm_bindgen(js_name = createMachine)]
 pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<StateNode, JsValue> {
-    if let Ok(console_val) = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("console")) {
-        if let Ok(warn_val) = js_sys::Reflect::get(&console_val, &JsValue::from_str("warn")) {
-            if let Ok(mock_clear) = js_sys::Reflect::get(&warn_val, &JsValue::from_str("mockClear")) {
-                if let Ok(clear_fn) = mock_clear.dyn_into::<js_sys::Function>() {
-                    let _ = clear_fn.call0(&warn_val);
-                }
-            }
-        }
-    }
     let options_val = options.unwrap_or(JsValue::UNDEFINED);
     let config_processed = config.clone();
     let mut inline_guards = IndexMap::new();

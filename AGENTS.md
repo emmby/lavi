@@ -14,7 +14,7 @@ When XState 5 parity, target-language idioms, and microcontroller constraints pu
 1. **Conformance Test Integrity (`tests/*.test.ts` & `tests/upstream/`)**:
    - Upstream `statelyai/xstate` conformance tests are the immutable source of truth, verified mechanically by `npm run test:conformance-check`.
    - **NEVER** modify test assertions, machine definitions, or test bodies (e.g., never inject `actor.tick()` into tests, never delete/gut code inside `it.skip(...)`, and never edit files in `tests/upstream/`).
-   - **NEVER** add an unregistered `it.skip`, `describe.skip`, or `.only`, and **NEVER** register a new `it.skip` in `tests/conformance-manifest.json` for an in-scope failing test just to make a test suite pass.
+   - **NEVER** add an unregistered `it.skip`, `describe.skip`, or `.only`, **NEVER** register a new `it.skip` in `tests/conformance-manifest.json` for an in-scope failing test just to make a test suite pass, and **NEVER** embed test-runner or mock/spy hooks (e.g., calling `mockClear` on `console.warn` inside `createMachine`) inside `portable-xstate-rust` or `portable-xstate-wasm` runtime code.
    - **When a conformance test uses dynamic JS features**:
      - *Inline JS callbacks in machine config* (`entry: ({ context }) => ...`, `guard: ...`, `assign(...)`, dynamic `delays`): **Do not skip the test.** Bridge the `js_sys::Function` to a synthetic callback ID in `portable-xstate-wasm` so the JS test passes 100% unmodified, and expose named callback registration (`register_action` / `register_guard` / `register_delay`) in Rust, C, and C++ (see **Level 3**).
      - *Unbridgeable JS runtime artifacts* (e.g., `Symbol.observable`, JS `Proxy` / `FinalizationRegistry` internals, or XState internal private fields with no compiled-language equivalent): Follow the **Level 4** escalation protocol (`it.skip(...)` with 100% unmodified test body + `conformance-manifest.json` entry with `"category": "non-js-constraint"`).
@@ -99,6 +99,7 @@ PlatformIO support lives directly in this repository (`library.json`, `build_rus
 | *"Recursion is simpler here and `StateValue::collect_paths` already uses recursion."* | **Forbidden.** `collect_paths` is legacy debt (`TD-5`). Recursion overflows the 8 KB ESP32 FreeRTOS stack. Always use an explicit `Vec` work-stack on the heap. |
 | *"I'll buffer these pre-start events in an unbounded `Vec` (or a small capped ring buffer) so the pre-start test passes."* | **Forbidden.** Unstarted machines must drop events immediately (zero pre-start buffering, even bounded). Use the Level 4 Memory Boundary protocol. |
 | *"While I'm here, I'll refactor the legacy code in adjacent files too."* | **Forbidden during feature work.** Unscoped refactoring causes merge conflicts for parallel swarm agents. Log it in `TECH_DEBT.md` and stay in scope. |
+| *"A test spy isn't cleared between `it(...)` blocks and I can't edit the test file, so I'll call `mockClear()` inside `portable-xstate-wasm`."* | **Forbidden.** Never pollute runtime/WASM code with test-runner spy hooks; standard runner settings like `clearMocks: true` belong in `vitest.config.mts`. |
 
 ### Red Flags — If You Think Any of These, STOP:
 - "Just a tiny change to the test file to match our runtime..."
