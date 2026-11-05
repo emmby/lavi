@@ -20,6 +20,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 | :--- | :--- | :---: | :--- |
 | `actions.test.ts` | `legacy-baseline` (`TD-2`) | 99 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
 | `after.test.ts` | `legacy-baseline` (`TD-1`) | 5 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
+| `eventDescriptors.test.ts` | `strict` | 0 | [`tests/upstream/eventDescriptors.test.ts`](./tests/upstream/eventDescriptors.test.ts) |
 | `history.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
 | `machine.test.ts` | `strict` | 1 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
 | `state.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
@@ -65,8 +66,8 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
     - **Documented Target-Language Constraints**:
       - Dynamic delay expressions in C/C++/Rust must use registered named delay callbacks rather than runtime string/expression evaluation (WASM can bridge inline JS delay functions to synthetic named callbacks; see `TD-1` in [`TECH_DEBT.md`](./TECH_DEBT.md)).
       - Host JS `setTimeout`/`clearTimeout` handle inspection (`should not try to clear an undefined timeout when exiting source state of a delayed transition`) and internal JS `TransitionNode` string formatting (`should format transitions properly`) are skipped by design because `portable-xstate` evaluates timers against an external clock deadline rather than spawning host JS timers.
-  - [ ] Wildcard Transitions (`*`)
-  - [ ] Partial Wildcard Transitions (`models.*`)
+  - [x] Wildcard Transitions (`*`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/eventDescriptors.test.ts) — 14/14 passing in `tests/eventDescriptors.test.ts`)
+  - [x] Partial Wildcard Transitions (`models.*`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/eventDescriptors.test.ts) — 14/14 passing in `tests/eventDescriptors.test.ts`, including `assertEvent` partial descriptor validation in WASM)
 
 ---
 

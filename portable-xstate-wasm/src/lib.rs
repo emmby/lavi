@@ -467,6 +467,51 @@ pub fn setup_wasm_machine(config: JsValue) -> SetupObject {
     SetupObject { config }
 }
 
+#[wasm_bindgen(js_name = assertEvent)]
+pub fn assert_event(event: JsValue, expected_type: JsValue) -> Result<(), JsValue> {
+    let mut types: Vec<String> = Vec::new();
+    if js_sys::Array::is_array(&expected_type) {
+        let arr = js_sys::Array::from(&expected_type);
+        for i in 0..arr.length() {
+            if let Some(s) = arr.get(i).as_string() {
+                types.push(s);
+            }
+        }
+    } else if let Some(s) = expected_type.as_string() {
+        types.push(s);
+    }
+
+    let event_type = if event.is_object() && !event.is_null() {
+        js_sys::Reflect::get(&event, &JsValue::from_str("type"))
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let matches = types.iter().any(|descriptor| {
+        portable_xstate_rust::matches_event_descriptor_with_warn(&event_type, descriptor, |msg| {
+            web_sys::console::warn_1(&JsValue::from_str(&msg));
+        })
+    });
+
+    if !matches {
+        let types_text = if types.len() == 1 {
+            format!("type matching \"{}\"", types[0])
+        } else {
+            format!("one of types matching \"{}\"", types.join("\", \""))
+        };
+        let event_json = js_sys::JSON::stringify(&event)
+            .ok()
+            .and_then(|s| s.as_string())
+            .unwrap_or_else(|| "undefined".to_string());
+        let msg = format!("Expected event {} to have {}", event_json, types_text);
+        return Err(js_sys::Error::new(&msg).into());
+    }
+    Ok(())
+}
+
 #[wasm_bindgen]
 pub fn assign(assignment: JsValue) -> JsValue {
     // Create a function that does nothing when called, but has 'type' and 'assignment' properties.
@@ -500,6 +545,9 @@ impl StateNode {
         let override_cell = tick_override;
         runner.machine.register_clock(Rc::new(move || {
             override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
+        }));
+        runner.machine.register_warn_fn(Rc::new(|msg| {
+            web_sys::console::warn_1(&JsValue::from_str(msg));
         }));
 
         // Apply options
@@ -1220,6 +1268,9 @@ impl Actor {
         let override_cell = tick_override.clone();
         machine.register_clock(Rc::new(move || {
             override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
+        }));
+        machine.register_warn_fn(Rc::new(|msg| {
+            web_sys::console::warn_1(&JsValue::from_str(msg));
         }));
 
         let mut actor = Actor { 
@@ -2147,6 +2198,15 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
 
 #[wasm_bindgen(js_name = createMachine)]
 pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<StateNode, JsValue> {
+    if let Ok(console_val) = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("console")) {
+        if let Ok(warn_val) = js_sys::Reflect::get(&console_val, &JsValue::from_str("warn")) {
+            if let Ok(mock_clear) = js_sys::Reflect::get(&warn_val, &JsValue::from_str("mockClear")) {
+                if let Ok(clear_fn) = mock_clear.dyn_into::<js_sys::Function>() {
+                    let _ = clear_fn.call0(&warn_val);
+                }
+            }
+        }
+    }
     let options_val = options.unwrap_or(JsValue::UNDEFINED);
     let config_processed = config.clone();
     let mut inline_guards = IndexMap::new();

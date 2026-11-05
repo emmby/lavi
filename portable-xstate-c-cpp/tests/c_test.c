@@ -118,6 +118,44 @@ int main() {
     fsm_simulated_clock_free(sim_clock);
     fsm_free(april_fsm);
 
+    // Wildcard and partial wildcard transition test
+    const char* WILDCARD_JSON = "{"
+      "\"initial\": \"A\","
+      "\"states\": {"
+        "\"A\": {"
+          "\"on\": {"
+            "\"*\": \"wild\","
+            "\"models.*\": \"modelWild\","
+            "\"models.user\": \"exactUser\""
+          "}"
+        "},"
+        "\"wild\": {},"
+        "\"modelWild\": {},"
+        "\"exactUser\": {}"
+      "}"
+    "}";
+
+    MachineContext* w1 = fsm_create(WILDCARD_JSON);
+    assert(w1 != NULL);
+    fsm_start(w1);
+    fsm_send_event(w1, "models.user");
+    assert(fsm_matches(w1, "exactUser"));
+    fsm_free(w1);
+
+    MachineContext* w2 = fsm_create(WILDCARD_JSON);
+    assert(w2 != NULL);
+    fsm_start(w2);
+    fsm_send_event(w2, "models.post.deleted");
+    assert(fsm_matches(w2, "modelWild"));
+    fsm_free(w2);
+
+    MachineContext* w3 = fsm_create(WILDCARD_JSON);
+    assert(w3 != NULL);
+    fsm_start(w3);
+    fsm_send_event(w3, "OTHER_EVENT");
+    assert(fsm_matches(w3, "wild"));
+    fsm_free(w3);
+
     printf("C Test Passed!\n");
     return 0;
 }

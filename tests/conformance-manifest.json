@@ -41,6 +41,10 @@
           "ref": "XSTATE_5_FEATURES.md"
         }
       ]
+    },
+    "eventDescriptors.test.ts": {
+      "status": "strict",
+      "allowed_skips": []
     }
   }
 }

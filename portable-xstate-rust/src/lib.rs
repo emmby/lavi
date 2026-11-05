@@ -106,6 +106,56 @@ impl StateValue {
 
 pub type ActionFunction = Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>;
 pub type GuardFunction = Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>;
+pub type WarnFunction = Rc<dyn Fn(&str)>;
+
+/// Checks if an event type matches an event descriptor, supporting wildcards (`"*"`)
+/// and partial wildcards (`"prefix.*"`).
+pub fn matches_event_descriptor(event_type: &str, descriptor: &str) -> bool {
+    matches_event_descriptor_with_warn(event_type, descriptor, |_| {})
+}
+
+/// Checks if an event type matches an event descriptor, invoking `warn` with
+/// XState 5 diagnostic messages if invalid wildcard placement is encountered.
+pub fn matches_event_descriptor_with_warn<F: FnMut(String)>(
+    event_type: &str,
+    descriptor: &str,
+    mut warn: F,
+) -> bool {
+    if descriptor == event_type {
+        return true;
+    }
+    if descriptor == "*" {
+        return true;
+    }
+    if !descriptor.ends_with(".*") {
+        return false;
+    }
+    if descriptor[..descriptor.len() - 1].contains('*') {
+        warn(format!(
+            "Wildcards can only be the last token of an event descriptor (e.g., \"event.*\") or the entire event descriptor (\"*\"). Check the \"{}\" event.",
+            descriptor
+        ));
+    }
+    let partial_event_tokens: Vec<&str> = descriptor.split('.').collect();
+    let event_tokens: Vec<&str> = event_type.split('.').collect();
+    for (token_index, partial_event_token) in partial_event_tokens.iter().enumerate() {
+        if *partial_event_token == "*" {
+            let is_last_token = token_index == partial_event_tokens.len() - 1;
+            if !is_last_token {
+                warn(format!(
+                    "Infix wildcards in transition events are not allowed. Check the \"{}\" transition.",
+                    descriptor
+                ));
+            }
+            return is_last_token;
+        }
+        let event_token = event_tokens.get(token_index).copied();
+        if Some(*partial_event_token) != event_token {
+            return false;
+        }
+    }
+    true
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -374,6 +424,7 @@ pub struct RuntimeMachine {
     pub is_started: bool,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
+    pub warn_fn: Option<WarnFunction>,
     pub is_processing: bool,
     pub external_queue: alloc::collections::VecDeque<(String, Value)>,
     pub internal_queue: alloc::collections::VecDeque<Value>,
@@ -412,6 +463,7 @@ impl RuntimeMachine {
             is_started: false,
             active_timers: Vec::new(),
             clock_millis_fn: None,
+            warn_fn: None,
             is_processing: false,
             external_queue: alloc::collections::VecDeque::new(),
             internal_queue: alloc::collections::VecDeque::new(),
@@ -429,6 +481,42 @@ impl RuntimeMachine {
 
     pub fn register_clock<C: IntoClockFn>(&mut self, clock: C) {
         self.clock_millis_fn = Some(clock.into_clock_fn());
+    }
+
+    pub fn register_warn_fn(&mut self, warn_fn: WarnFunction) {
+        self.warn_fn = Some(warn_fn);
+    }
+
+    fn get_candidates<'a>(
+        on_map: &'a IndexMap<String, Vec<TransitionDefinition>>,
+        event_type: &str,
+        warn_fn: &Option<WarnFunction>,
+    ) -> Vec<&'a TransitionDefinition> {
+        if let Some(exact) = on_map.get(event_type) {
+            return exact.iter().collect();
+        }
+        if event_type.is_empty() {
+            return Vec::new();
+        }
+        let mut matching_keys: Vec<&String> = on_map
+            .keys()
+            .filter(|descriptor| {
+                !descriptor.is_empty()
+                    && matches_event_descriptor_with_warn(event_type, descriptor, |msg| {
+                        if let Some(w) = warn_fn {
+                            w(&msg);
+                        }
+                    })
+            })
+            .collect();
+        matching_keys.sort_by_key(|b| core::cmp::Reverse(b.len()));
+        let mut candidates = Vec::new();
+        for key in matching_keys {
+            if let Some(transitions) = on_map.get(key) {
+                candidates.extend(transitions.iter());
+            }
+        }
+        candidates
     }
 
     pub fn next_timer_deadline(&self) -> Option<u64> {
@@ -1061,24 +1149,28 @@ impl RuntimeMachine {
         let mut conflict_regions: Vec<String> = Vec::new();
 
         for current_path in all_search_paths {
-            let transitions_opt = if let Some((f_path, f_t)) = force_transition {
-                 if *f_path == current_path { Some(f_t) } else { None }
+            let candidates: Vec<&TransitionDefinition> = if let Some((f_path, f_t)) = force_transition {
+                if *f_path == current_path {
+                    f_t.iter().collect()
+                } else {
+                    Vec::new()
+                }
             } else {
-                let def_opt = if current_path.is_empty() {
-                     None 
+                let on_map_opt = if current_path.is_empty() {
+                    Some(&self.definition.on)
                 } else {
-                     Self::get_state_def_recursive(&self.definition.states, &current_path)
+                    Self::get_state_def_recursive(&self.definition.states, &current_path)
+                        .map(|d| &d.on)
                 };
-                
-                if current_path.is_empty() {
-                     self.definition.on.get(event_type).map(|v| v.as_slice())
+                if let Some(on_map) = on_map_opt {
+                    Self::get_candidates(on_map, event_type, &self.warn_fn)
                 } else {
-                     def_opt.and_then(|d| d.on.get(event_type)).map(|v| v.as_slice())
+                    Vec::new()
                 }
             };
-            
-            if let Some(transitions) = transitions_opt {
-                 for t in transitions {
+
+            if !candidates.is_empty() {
+                 for t in candidates {
                        if let Some(cond) = &t.cond {
                            let is_allowed = match cond {
                                TransitionGuard::Name(n) => guards.get(n).map(|f| f(&self.context, event_payload, &None)).unwrap_or(true),

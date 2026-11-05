@@ -157,6 +157,46 @@ int main() {
         assert(parallelMachine.matches("Display.Power.On"));
         assert(!parallelMachine.matches("Display.Power.Off"));
 
+        // Wildcard and partial wildcard transition test with guarded fallback
+        const char* WILDCARD_CPP_JSON = R"({
+          "initial": "A",
+          "states": {
+            "A": {
+              "on": {
+                "*": "catchAll",
+                "foo.*": "shortPartial",
+                "foo.bar.*": {
+                  "target": "longPartial",
+                  "guard": "allowLong"
+                },
+                "foo.bar": "exact"
+              }
+            },
+            "catchAll": {},
+            "shortPartial": {},
+            "longPartial": {},
+            "exact": {}
+          }
+        })";
+
+        xstate::PortableXState w_exact(WILDCARD_CPP_JSON);
+        w_exact.start();
+        w_exact.send("foo.bar");
+        assert(w_exact.matches("exact"));
+
+        xstate::PortableXState w_fallback(WILDCARD_CPP_JSON);
+        w_fallback.registerGuard("allowLong", [](const xstate::Value&, const xstate::Value&) {
+            return false;
+        });
+        w_fallback.start();
+        w_fallback.send("foo.bar.baz");
+        assert(w_fallback.matches("shortPartial"));
+
+        xstate::PortableXState w_catchall(WILDCARD_CPP_JSON);
+        w_catchall.start();
+        w_catchall.send("UNRECOGNIZED");
+        assert(w_catchall.matches("catchAll"));
+
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
         return 1;

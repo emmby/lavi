@@ -6,6 +6,7 @@
     "state.test.ts": "5f4ac5873dbf43ead9f95274cd79f5377f98e086489ee7ff5f75cffa6ab49ae2",
     "history.test.ts": "0bc1d23c41e0027dcacf45958a1d1d1b7570c16dce1dbbf9588b292f6646ce8e",
     "actions.test.ts": "d6235d78996417c63a3c74d2082adf52d4b2e8e703eebb5a11a48542e6a46368",
-    "after.test.ts": "0801e4069d0dcc3d6dba614406884a3fb664c0701ec9ac4041d4b42266dd5716"
+    "after.test.ts": "0801e4069d0dcc3d6dba614406884a3fb664c0701ec9ac4041d4b42266dd5716",
+    "eventDescriptors.test.ts": "357534b057f050713b9860d00b2f24cb6ca0e1071aa94b851f24cbddc64b0652"
   }
 }
