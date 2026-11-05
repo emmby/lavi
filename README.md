@@ -45,30 +45,6 @@ Or run individual suites:
 - `npm run test:c-cpp` (C, C++, and PlatformIO `build_rust.py` tests)
 - `npm run test:unit` (XState 5 conformance suite via Vitest)
 
-## Agentic Development & Parallel Swarming
-
-In any new conversation on this repository, [`AGENTS.md`](./AGENTS.md) is automatically loaded into the agent's system prompt, enforcing the [`PROCESS.md`](./PROCESS.md) cross-target workflow (`Rust` $\rightarrow$ `WASM` $\rightarrow$ `C/C++`) and automated conformance provenance checks (`npm run test:conformance-check`).
-
-You can launch agents in three ways:
-
-### 1. Use `/teamwork` (or ask for a parallel subagent swarm in one conversation)
-Start a new conversation and either type **`/teamwork`** or prompt:
-> *"Pick 3 orthogonal tasks from `XSTATE_5_FEATURES.md` / `TECH_DEBT.md` and spawn 3 parallel subagents in isolated branches (`Workspace: "branch"`) following `PROCESS.md`, then audit and merge their branches."*
-
-The main agent acts as the coordinator, spawns `self` subagents with `Workspace: "branch"` (each in its own git worktree), waits for them to finish, audits their diffs against `AGENTS.md`, and merges them cleanly.
-
-### 2. Ask for a specific set of features or tech-debt items
-If you already know which conformance suites or `TD-N` cleanup items you want implemented:
-> *"Spawn 2 parallel branch subagents following `PROCESS.md`:*
-> *1. Resolve `TD-1` (`after.test.ts` full upstream restoration) from `TECH_DEBT.md`.*
-> *2. Onboard `guards.test.ts` across Rust, WASM, and C/C++ under strict provenance."*
-
-### 3. Separate top-level conversations in Antigravity (Worktree mode)
-If you prefer separate top-level chat threads instead of subagents:
-- Open a new conversation in the Agent Manager with **Worktree isolation** enabled.
-- Give it a single one-liner:
-  > *"Follow `PROCESS.md` to onboard `final.test.ts` across Rust, WASM, and C/C++."* or *"Resolve `TD-6` from `TECH_DEBT.md`."*
-
 ## Usage Examples
 
 ### JavaScript / TypeScript (WASM)
@@ -131,3 +107,27 @@ To safely target severely memory-constrained embedded environments (such as ESP3
 
 - **In XState 5 (JS)**: Calling `actor.send()` before `actor.start()` appends events to a dynamically growing heap array (mailbox buffer) flushed on `start()`.
 - **In `portable-xstate`**: Calling `send()` before `start()` safely **drops** the event, preventing unbound hardware interrupts or rapid sensor polling before boot from exhausting heap memory.
+
+## For Contributors: Agentic Development & Parallel Swarming
+
+In any new conversation on this repository, [`AGENTS.md`](./AGENTS.md) is automatically loaded into the agent's system prompt, enforcing the [`PROCESS.md`](./PROCESS.md) cross-target workflow (`Rust` $\rightarrow$ `WASM` $\rightarrow$ `C/C++`) and automated conformance provenance checks (`npm run test:conformance-check`).
+
+You can launch agents in three ways:
+
+### 1. Use `/teamwork` (or ask for a parallel subagent swarm in one conversation)
+Start a new conversation and either type **`/teamwork`** or prompt:
+> *"Pick 3 orthogonal tasks from `XSTATE_5_FEATURES.md` / `TECH_DEBT.md` and spawn 3 parallel subagents in isolated branches (`Workspace: "branch"`) following `PROCESS.md`, then audit and merge their branches."*
+
+The main agent acts as the coordinator, spawns `self` subagents with `Workspace: "branch"` (each in its own git worktree), waits for them to finish, audits their diffs against `AGENTS.md`, and merges them cleanly.
+
+### 2. Ask for a specific set of features or tech-debt items
+If you already know which conformance suites or `TD-N` cleanup items you want implemented:
+> *"Spawn 2 parallel branch subagents following `PROCESS.md`:*
+> *1. Resolve `TD-1` (`after.test.ts` full upstream restoration) from `TECH_DEBT.md`.*
+> *2. Onboard `guards.test.ts` across Rust, WASM, and C/C++ under strict provenance."*
+
+### 3. Separate top-level conversations in Antigravity (Worktree mode)
+If you prefer separate top-level chat threads instead of subagents:
+- Open a new conversation in the Agent Manager with **Worktree isolation** enabled.
+- Give it a single one-liner:
+  > *"Follow `PROCESS.md` to onboard `final.test.ts` across Rust, WASM, and C/C++."* or *"Resolve `TD-6` from `TECH_DEBT.md`."*
