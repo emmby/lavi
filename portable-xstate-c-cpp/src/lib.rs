@@ -929,4 +929,80 @@ mod tests {
 
         fsm_free(machine_ptr);
     }
+
+    extern "C" fn guard_always_false(
+        _guard_name: *const c_char,
+        _context: *const fsm_value_t,
+        _event: *const fsm_value_t,
+        _user_data: *mut core::ffi::c_void,
+    ) -> bool {
+        false
+    }
+
+    #[test]
+    fn test_wildcard_and_partial_wildcard_ffi() {
+        let json = CString::new(r#"{
+          "id": "wildcardFfi",
+          "initial": "idle",
+          "states": {
+            "idle": {
+              "on": {
+                "*": "catchAll",
+                "models.*": "anyModel",
+                "models.user.*": {
+                  "target": "userModelBlocked",
+                  "guard": "never"
+                },
+                "models.user.created": "exactUserCreated"
+              }
+            },
+            "catchAll": {},
+            "anyModel": {},
+            "userModelBlocked": {},
+            "exactUserCreated": {}
+          }
+        }"#).unwrap();
+
+        let exact_ev = CString::new("models.user.created").unwrap();
+        let fallback_ev = CString::new("models.user.updated").unwrap();
+        let prefix_zero_ev = CString::new("models").unwrap();
+        let wild_ev = CString::new("UNHANDLED").unwrap();
+        let grd_never = CString::new("never").unwrap();
+
+        let exact_state = CString::new("exactUserCreated").unwrap();
+        let any_model_state = CString::new("anyModel").unwrap();
+        let catch_all_state = CString::new("catchAll").unwrap();
+
+        // 1. Exact descriptor beats partial and full wildcard
+        let m1 = fsm_create(json.as_ptr());
+        fsm_register_guard(m1, grd_never.as_ptr(), Some(guard_always_false), ptr::null_mut());
+        fsm_start(m1);
+        fsm_send_event(m1, exact_ev.as_ptr());
+        assert!(fsm_matches(m1, exact_state.as_ptr()));
+        fsm_free(m1);
+
+        // 2. Guarded longer partial descriptor falls back to shorter partial descriptor
+        let m2 = fsm_create(json.as_ptr());
+        fsm_register_guard(m2, grd_never.as_ptr(), Some(guard_always_false), ptr::null_mut());
+        fsm_start(m2);
+        fsm_send_event(m2, fallback_ev.as_ptr());
+        assert!(fsm_matches(m2, any_model_state.as_ptr()));
+        fsm_free(m2);
+
+        // 3. Prefix matching (+0) matches "models.*" on "models"
+        let m3 = fsm_create(json.as_ptr());
+        fsm_register_guard(m3, grd_never.as_ptr(), Some(guard_always_false), ptr::null_mut());
+        fsm_start(m3);
+        fsm_send_event(m3, prefix_zero_ev.as_ptr());
+        assert!(fsm_matches(m3, any_model_state.as_ptr()));
+        fsm_free(m3);
+
+        // 4. Unmatched event falls back to "*"
+        let m4 = fsm_create(json.as_ptr());
+        fsm_register_guard(m4, grd_never.as_ptr(), Some(guard_always_false), ptr::null_mut());
+        fsm_start(m4);
+        fsm_send_event(m4, wild_ev.as_ptr());
+        assert!(fsm_matches(m4, catch_all_state.as_ptr()));
+        fsm_free(m4);
+    }
 }

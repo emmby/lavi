@@ -983,4 +983,92 @@ entry: vec![],
         assert!(machine.matches("Done"));
         assert_eq!(clock.now(), 5000);
     }
+
+    #[test]
+    fn test_wildcard_and_partial_wildcard_transitions() {
+        use alloc::rc::Rc;
+
+        // 1. Wildcard fallback and explicit priority over wildcard
+        let json = r#"{
+            "initial": "A",
+            "states": {
+                "A": {
+                    "on": {
+                        "*": "Wild",
+                        "NEXT": "Explicit"
+                    }
+                },
+                "Wild": {},
+                "Explicit": {}
+            }
+        }"#;
+
+        let mut m1 = RuntimeMachine::from_json(json).unwrap();
+        m1.start(&IndexMap::new(), &IndexMap::new());
+        m1.transition("BAR", &Value::Null, &IndexMap::new(), &IndexMap::new());
+        assert!(m1.matches("Wild"));
+
+        let mut m2 = RuntimeMachine::from_json(json).unwrap();
+        m2.start(&IndexMap::new(), &IndexMap::new());
+        m2.transition("NEXT", &Value::Null, &IndexMap::new(), &IndexMap::new());
+        assert!(m2.matches("Explicit"));
+
+        // 2. Specificity ordering: explicit > longer partial > shorter partial, with guarded fallback
+        let json_partial = r#"{
+            "initial": "A",
+            "states": {
+                "A": {
+                    "on": {
+                        "foo.*": "ShortPartial",
+                        "foo.bar.*": {
+                            "target": "LongPartial",
+                            "guard": "allowLong"
+                        },
+                        "foo.bar": "Exact"
+                    }
+                },
+                "ShortPartial": {},
+                "LongPartial": {},
+                "Exact": {}
+            }
+        }"#;
+
+        // Exact wins over foo.* even for foo.bar
+        let mut m_exact = RuntimeMachine::from_json(json_partial).unwrap();
+        m_exact.start(&IndexMap::new(), &IndexMap::new());
+        m_exact.transition("foo.bar", &Value::Null, &IndexMap::new(), &IndexMap::new());
+        assert!(m_exact.matches("Exact"));
+
+        // Longer partial wins over shorter partial when guard passes
+        let guards_true: IndexMap<String, GuardFunction> = indexmap::indexmap! {
+            "allowLong".to_string() => Rc::new(|_ctx: &Value, _evt: &Value, _params: &Option<Value>| true) as GuardFunction,
+        };
+        let mut m_long = RuntimeMachine::from_json(json_partial).unwrap();
+        m_long.start(&guards_true, &IndexMap::new());
+        m_long.transition("foo.bar.baz", &Value::Null, &guards_true, &IndexMap::new());
+        assert!(m_long.matches("LongPartial"));
+
+        // Guarded fallback from longer partial to shorter partial when guard returns false
+        let guards_false: IndexMap<String, GuardFunction> = indexmap::indexmap! {
+            "allowLong".to_string() => Rc::new(|_ctx: &Value, _evt: &Value, _params: &Option<Value>| false) as GuardFunction,
+        };
+        let mut m_fallback = RuntimeMachine::from_json(json_partial).unwrap();
+        m_fallback.start(&guards_false, &IndexMap::new());
+        m_fallback.transition("foo.bar.baz", &Value::Null, &guards_false, &IndexMap::new());
+        assert!(m_fallback.matches("ShortPartial"));
+
+        // 3. Prefix matching (+0, +1, +n) and rejection of non-tokenized / infix wildcards
+        assert!(crate::matches_event_descriptor("event", "event.*"));
+        assert!(crate::matches_event_descriptor("event.whatever", "event.*"));
+        assert!(crate::matches_event_descriptor("event.first.second", "event.*"));
+        assert!(crate::matches_event_descriptor("event.foo.bar.first.second", "event.foo.bar.*"));
+        assert!(!crate::matches_event_descriptor("eventually", "event.*"));
+        assert!(!crate::matches_event_descriptor("eventually.event", "event.*"));
+        assert!(!crate::matches_event_descriptor("event", "event*"));
+        assert!(!crate::matches_event_descriptor("eventually", "event*"));
+        assert!(!crate::matches_event_descriptor("event.foo.bar.first.second", "event.*.bar.*"));
+        assert!(!crate::matches_event_descriptor("whatever.event", "*.event.*"));
+        assert!(!crate::matches_event_descriptor("eventually.bar.baz", "event*.bar.*"));
+        assert!(!crate::matches_event_descriptor("prevent.whatever", "*event.*"));
+    }
 }
