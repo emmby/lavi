@@ -36,11 +36,74 @@ impl StateValue {
                 child.collect_paths(&current, paths);
             }
             StateValue::Parallel(regions) => {
-                for (_region_name, region_value) in regions {
-                     region_value.collect_paths(parent, paths);
+                for (region_name, region_value) in regions {
+                    match region_value {
+                        StateValue::Compound(name, _) if name == region_name => {
+                            region_value.collect_paths(parent, paths);
+                        }
+                        _ => {
+                            let current = if parent.is_empty() {
+                                region_name.clone()
+                            } else {
+                                format!("{}.{}", parent, region_name)
+                            };
+                            region_value.collect_paths(&current, paths);
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// Returns true if the given dot-delimited state path (e.g. `"green"`, `"Display"`,
+    /// `"Display.Theme"`, or `"Display.Power.On"`) is currently active.
+    pub fn matches(&self, path: &str) -> bool {
+        if path.is_empty() {
+            return false;
+        }
+        match self {
+            StateValue::Atomic(name) => !name.is_empty() && path == name,
+            StateValue::Compound(name, child) => {
+                if path == name {
+                    true
+                } else if path.starts_with(name.as_str())
+                    && path.as_bytes().get(name.len()) == Some(&b'.')
+                {
+                    child.matches(&path[name.len() + 1..])
+                } else {
+                    false
+                }
+            }
+            StateValue::Parallel(regions) => {
+                for (region_name, region_value) in regions {
+                    match region_value {
+                        StateValue::Compound(name, _) if name == region_name => {
+                            if region_value.matches(path) {
+                                return true;
+                            }
+                        }
+                        _ => {
+                            if path == region_name {
+                                return true;
+                            }
+                            if path.starts_with(region_name.as_str())
+                                && path.as_bytes().get(region_name.len()) == Some(&b'.')
+                                && region_value.matches(&path[region_name.len() + 1..])
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    /// Returns true if all active paths in `partial` are active in `self`.
+    pub fn matches_state_value(&self, partial: &StateValue) -> bool {
+        let paths = partial.get_active_paths();
+        !paths.is_empty() && paths.iter().all(|p| self.matches(p))
     }
 }
 
@@ -402,8 +465,8 @@ impl RuntimeMachine {
         }
     }
 
-    pub fn state(&self) -> String {
-        self.current_state.get_active_paths().first().cloned().unwrap_or_default()
+    pub fn matches(&self, path: &str) -> bool {
+        self.current_state.matches(path)
     }
 
     pub fn get_state_definition(&self, path: &str) -> Option<&StateDefinition> {

@@ -52,10 +52,11 @@ Link against the generated `.a` file in `target/xtensa-esp32-espidf/release/libp
 
 void setup() {
     // PortableXState handles memory automatically (RAII)
-    PortableXState machine(JSON_CONFIG);
+    xstate::PortableXState machine(JSON_CONFIG);
+    machine.start();
     
-    // Get State
-    std::string state = machine.getState();
+    // Check active state
+    bool isGreen = machine.matches("green");
     
     // Send Event
     machine.send("TIMER");

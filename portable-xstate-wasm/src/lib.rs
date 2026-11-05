@@ -1238,7 +1238,7 @@ impl Actor {
 
     fn get_history_value_obj(&self) -> JsValue {
          let history_obj = js_sys::Object::new();
-         let current_state_str = self.machine.state();
+         let active_paths = self.machine.current_state.get_active_paths();
          for (id, path) in &self.machine.definition.id_map {
              if let Some(def) = self.machine.get_state_definition(path) {
                  if def.type_ == Some("history".to_string()) {
@@ -1248,15 +1248,17 @@ impl Actor {
                          "" 
                      };
                      let mut target_to_serialize: Option<String> = None;
-                     let is_active = if parent_path.is_empty() {
-                         !current_state_str.is_empty()
-                     } else {
-                         current_state_str == parent_path || current_state_str.starts_with(&format!("{}.", parent_path))
-                     };
-                     if is_active {
+                     let matching_active_path = active_paths.iter().find(|p| {
+                         if parent_path.is_empty() {
+                             !p.is_empty()
+                         } else {
+                             *p == parent_path || p.starts_with(&format!("{}.", parent_path))
+                         }
+                     });
+                     if let Some(active_path) = matching_active_path {
                           let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
-                          if current_state_str.len() > prefix_len {
-                               let rest = &current_state_str[prefix_len..];
+                          if active_path.len() > prefix_len {
+                               let rest = &active_path[prefix_len..];
                                if let Some(end) = rest.find('.') {
                                    let child = &rest[0..end];
                                    target_to_serialize = Some(if parent_path.is_empty() { child.to_string() } else { format!("{}.{}", parent_path, child) });
@@ -1317,8 +1319,8 @@ impl Actor {
         } else {
             // Parallel states: build and merge multiple paths
             let root_obj = js_sys::Object::new();
-            for path in active_paths {
-                self.merge_path_into_obj(&root_obj, &path);
+            for path in &active_paths {
+                self.merge_path_into_obj(&root_obj, path);
             }
             root_obj.into()
         };
@@ -1327,10 +1329,13 @@ impl Actor {
         let ctx_str_clean = if ctx_str == "null" { "{}" } else { &ctx_str };
         let ctx_val = js_sys::JSON::parse(ctx_str_clean).unwrap_or(js_sys::Object::new().into());
         let history_obj = self.get_history_value_obj();
-        let is_done = machine_ref
-            .get_state_definition(&machine_ref.state())
-            .map(|def| def.type_.as_deref() == Some("final"))
-            .unwrap_or(false);
+        let is_done = !active_paths.is_empty()
+            && active_paths.iter().all(|p| {
+                machine_ref
+                    .get_state_definition(p)
+                    .map(|def| def.type_.as_deref() == Some("final"))
+                    .unwrap_or(false)
+            });
         let status = if self.is_stopped {
             "stopped".to_string()
         } else if is_done {
@@ -1539,6 +1544,20 @@ impl Snapshot {
     #[wasm_bindgen(getter, js_name = historyValue)]
     pub fn history_value(&self) -> JsValue {
         self.history_value.clone()
+    }
+
+    #[wasm_bindgen]
+    pub fn matches(&self, test_value: JsValue) -> bool {
+        if let Some(path) = test_value.as_string() {
+            self.machine_ref.current_state.matches(&path)
+        } else if test_value.is_object() && !test_value.is_null() {
+            let v_json: serde_json::Value =
+                serde_wasm_bindgen::from_value(test_value).unwrap_or(serde_json::Value::Null);
+            let partial = portable_xstate_json::map_value_to_state_value(v_json);
+            self.machine_ref.current_state.matches_state_value(&partial)
+        } else {
+            false
+        }
     }
 
     #[wasm_bindgen]

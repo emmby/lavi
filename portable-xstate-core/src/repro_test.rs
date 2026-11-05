@@ -433,7 +433,8 @@ entry: vec![],
         let mut machine = RuntimeMachine::new(&definition).unwrap();
         machine.start(&guards, &IndexMap::new());
 
-        assert_eq!(machine.state(), "final_state");
+        assert!(machine.matches("final_state"));
+        assert!(!machine.matches("boot"));
     }
 
     #[test]
@@ -500,16 +501,90 @@ entry: vec![],
         let mut machine = RuntimeMachine::new(&definition).unwrap();
         machine.register_clock(Rc::new(move || clock_cell.get()));
         machine.start(&IndexMap::new(), &IndexMap::new());
-        assert_eq!(machine.state(), "active");
+        assert!(machine.matches("active"));
 
         // At t=160ms, transient's 50ms timer would have expired if not cancelled
         now_ms.set(160);
         machine.tick(&IndexMap::new(), &IndexMap::new());
-        assert_eq!(machine.state(), "active");
+        assert!(machine.matches("active"));
 
         // At t=200ms, active's 100ms timer expires
         now_ms.set(200);
         machine.tick(&IndexMap::new(), &IndexMap::new());
-        assert_eq!(machine.state(), "timed_out");
+        assert!(machine.matches("timed_out"));
+    }
+
+    #[test]
+    fn test_matches_atomic_compound_and_parallel() {
+        let atomic = StateValue::Atomic("green".to_string());
+        assert!(atomic.matches("green"));
+        assert!(!atomic.matches("yellow"));
+        assert!(!atomic.matches("gree"));
+        assert!(!atomic.matches("green.sub"));
+        assert!(!atomic.matches(""));
+
+        let compound = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Compound(
+                "Theme".to_string(),
+                Box::new(StateValue::Atomic("Light".to_string())),
+            )),
+        );
+        assert!(compound.matches("Display"));
+        assert!(compound.matches("Display.Theme"));
+        assert!(compound.matches("Display.Theme.Light"));
+        assert!(!compound.matches("Display.Theme.Dark"));
+        assert!(!compound.matches("Display.Theme.Light.Extra"));
+        assert!(!compound.matches("Display.Them"));
+        assert!(!compound.matches("Disp"));
+
+        let parallel = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("On".to_string())),
+                ),
+            })),
+        );
+        assert!(parallel.matches("Display"));
+        assert!(parallel.matches("Display.Theme"));
+        assert!(parallel.matches("Display.Theme.Light"));
+        assert!(parallel.matches("Display.Power"));
+        assert!(parallel.matches("Display.Power.On"));
+        assert!(!parallel.matches("Display.Power.Off"));
+        assert!(!parallel.matches("Display.Theme.Dark"));
+
+        // Partial StateValue matching
+        let partial_one_region = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Compound(
+                "Power".to_string(),
+                Box::new(StateValue::Atomic("On".to_string())),
+            )),
+        );
+        assert!(parallel.matches_state_value(&partial_one_region));
+
+        let partial_both_regions = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Atomic("Light".to_string()),
+                "Power".to_string() => StateValue::Atomic("On".to_string()),
+            })),
+        );
+        assert!(parallel.matches_state_value(&partial_both_regions));
+
+        let partial_mismatch = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Atomic("Light".to_string()),
+                "Power".to_string() => StateValue::Atomic("Off".to_string()),
+            })),
+        );
+        assert!(!parallel.matches_state_value(&partial_mismatch));
     }
 }

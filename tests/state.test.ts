@@ -507,4 +507,46 @@ describe('State', () => {
       expect(snapshot.status).toBe('stopped');
     });
   });
+
+  describe('.matches', () => {
+    it('should match atomic state values', () => {
+      const snapshot = createActor(exampleMachine).getSnapshot();
+      expect(snapshot.matches('one')).toBe(true);
+      expect(snapshot.matches('two')).toBe(false);
+    });
+
+    it('should match compound state values by dot-delimited path and partial object', () => {
+      const actor = createActor(exampleMachine).start();
+      actor.send({ type: 'TO_TWO', foo: 'test' });
+      const snapshot = actor.getSnapshot();
+
+      expect(snapshot.matches('two')).toBe(true);
+      expect(snapshot.matches('two.deep')).toBe(true);
+      expect(snapshot.matches('two.deep.foo')).toBe(true);
+      expect(snapshot.matches('two.deep.bar')).toBe(false);
+      expect(snapshot.matches({ two: 'deep' })).toBe(true);
+      expect(snapshot.matches({ two: { deep: 'foo' } })).toBe(true);
+      expect(snapshot.matches({ two: { deep: 'bar' } })).toBe(false);
+    });
+
+    it('should match parallel state values across all active regions', () => {
+      const actor = createActor(exampleMachine).start();
+      actor.send({ type: 'TO_THREE' });
+      const snapshot = actor.getSnapshot();
+
+      expect(snapshot.matches('three')).toBe(true);
+      expect(snapshot.matches('three.first')).toBe(true);
+      expect(snapshot.matches('three.first.p31')).toBe(true);
+      expect(snapshot.matches('three.guarded')).toBe(true);
+      expect(snapshot.matches('three.guarded.p32')).toBe(true);
+      expect(snapshot.matches({ three: { first: 'p31' } })).toBe(true);
+      expect(snapshot.matches({ three: { guarded: 'p32' } })).toBe(true);
+      expect(
+        snapshot.matches({ three: { first: 'p31', guarded: 'p32' } })
+      ).toBe(true);
+      expect(
+        snapshot.matches({ three: { first: 'p31', guarded: 'wrong' } })
+      ).toBe(false);
+    });
+  });
 });

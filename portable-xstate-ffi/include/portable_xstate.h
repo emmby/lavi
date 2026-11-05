@@ -14,7 +14,7 @@ typedef struct MachineContext MachineContext;
 MachineContext* fsm_create(const char* json_config);
 int fsm_start(MachineContext* ptr);
 void fsm_free(MachineContext* ptr);
-int fsm_get_state(MachineContext* ptr, char* buf, int len);
+bool fsm_matches(const MachineContext* ptr, const char* state_path);
 int fsm_send_event(MachineContext* ptr, const char* event_name);
 
 typedef struct fsm_value_t fsm_value_t;

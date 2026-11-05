@@ -38,17 +38,46 @@ int main() {
             cpp_action_called = true;
         });
 
+        // Unstarted machine matches nothing
+        assert(!machine.matches("green"));
+
         machine.start();
 
-        std::string state = machine.getState();
-        std::cout << "Initial State: " << state << std::endl;
-        assert(state == "green");
+        assert(machine.matches("green"));
+        assert(machine.matches(std::string("green")));
+        assert(!machine.matches("yellow"));
 
         machine.send("TIMER");
-        state = machine.getState();
-        std::cout << "New State: " << state << std::endl;
-        assert(state == "yellow");
+        assert(machine.matches("yellow"));
+        assert(!machine.matches("green"));
         assert(cpp_action_called == true);
+
+        const char* PARALLEL_JSON = R"({
+          "id": "displayMachine",
+          "initial": "Display",
+          "states": {
+            "Display": {
+              "type": "parallel",
+              "states": {
+                "Theme": {
+                  "initial": "Light",
+                  "states": { "Light": {}, "Dark": {} }
+                },
+                "Power": {
+                  "initial": "On",
+                  "states": { "On": {}, "Off": {} }
+                }
+              }
+            }
+          }
+        })";
+        xstate::PortableXState parallelMachine(PARALLEL_JSON);
+        parallelMachine.start();
+        assert(parallelMachine.matches("Display"));
+        assert(parallelMachine.matches("Display.Theme"));
+        assert(parallelMachine.matches("Display.Theme.Light"));
+        assert(parallelMachine.matches("Display.Power.On"));
+        assert(!parallelMachine.matches("Display.Power.Off"));
 
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;

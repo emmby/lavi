@@ -2,7 +2,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::ffi::CString;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
 use alloc::collections::BTreeMap;
@@ -100,34 +99,17 @@ pub extern "C" fn fsm_free(ptr: *mut MachineContext) {
 }
 
 #[no_mangle]
-pub extern "C" fn fsm_get_state(ptr: *mut MachineContext, buf: *mut c_char, len: usize) -> c_int {
-    let ctx = unsafe {
-        if ptr.is_null() { return -1; }
-        &mut *ptr
-    };
-    let state_value = &ctx.machine.current_state;
-    // Extract first active path from StateValue
-    let active_paths = state_value.get_active_paths();
-    let state_str = if !active_paths.is_empty() {
-        &active_paths[0]
-    } else {
-        ""
-    };
-    
-    let c_str_state = match CString::new(state_str) {
+pub extern "C" fn fsm_matches(ptr: *const MachineContext, state_path: *const c_char) -> bool {
+    if ptr.is_null() || state_path.is_null() {
+        return false;
+    }
+    let ctx = unsafe { &*ptr };
+    let path_c_str = unsafe { CStr::from_ptr(state_path) };
+    let path = match path_c_str.to_str() {
         Ok(s) => s,
-        Err(_) => return -2,
+        Err(_) => return false,
     };
-    let bytes = c_str_state.as_bytes_with_nul();
-    
-    if bytes.len() > len {
-        return -3;
-    }
-    
-    unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
-    }
-    0
+    ctx.machine.matches(path)
 }
 
 #[no_mangle]
@@ -388,21 +370,20 @@ mod tests {
 
         fsm_start(machine_ptr);
 
-        let mut buf = vec![0u8; 64];
-        
+        let green = CString::new("green").unwrap();
+        let yellow = CString::new("yellow").unwrap();
+
         // Check initial state
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "green");
+        assert!(fsm_matches(machine_ptr, green.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, yellow.as_ptr()));
 
         // Transition
         let event = CString::new("TIMER").unwrap();
         fsm_send_event(machine_ptr, event.as_ptr());
 
         // Check new state
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "yellow");
+        assert!(fsm_matches(machine_ptr, yellow.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, green.as_ptr()));
 
         fsm_free(machine_ptr);
     }
@@ -450,13 +431,10 @@ mod tests {
         let event = CString::new("START").unwrap();
         fsm_send_event(machine_ptr, event.as_ptr());
 
-        let mut buf = vec![0u8; 64];
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        
         // Due to the external queue deferral, the "NEXT" event generated in the "step2" entry action
         // will be processed sequentially immediately after "START" completes.
-        assert_eq!(state, "step3");
+        let step3 = CString::new("step3").unwrap();
+        assert!(fsm_matches(machine_ptr, step3.as_ptr()));
 
         fsm_free(machine_ptr);
     }
@@ -570,12 +548,61 @@ mod tests {
 
         fsm_start(machine_ptr);
 
-        let mut buf = vec![0u8; 64];
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "running");
+        let running = CString::new("running").unwrap();
+        assert!(fsm_matches(machine_ptr, running.as_ptr()));
         assert_eq!(test_state.boot_entry_calls, 1);
         assert_eq!(test_state.last_event_type, "EXTERNAL_FROM_BOOT");
+
+        fsm_free(machine_ptr);
+    }
+
+    #[test]
+    fn test_matches_parallel_and_compound_ffi() {
+        let json = CString::new(r#"{
+          "id": "displayMachine",
+          "initial": "Display",
+          "states": {
+            "Display": {
+              "type": "parallel",
+              "states": {
+                "Theme": {
+                  "initial": "Light",
+                  "states": {
+                    "Light": { "on": { "TOGGLE_THEME": "Dark" } },
+                    "Dark": {}
+                  }
+                },
+                "Power": {
+                  "initial": "On",
+                  "states": {
+                    "On": { "on": { "SLEEP": "Off" } },
+                    "Off": {}
+                  }
+                }
+              }
+            }
+          }
+        }"#).unwrap();
+
+        let machine_ptr = fsm_create(json.as_ptr());
+        assert!(!machine_ptr.is_null());
+        fsm_start(machine_ptr);
+
+        let display = CString::new("Display").unwrap();
+        let theme = CString::new("Display.Theme").unwrap();
+        let light = CString::new("Display.Theme.Light").unwrap();
+        let dark = CString::new("Display.Theme.Dark").unwrap();
+        let power_on = CString::new("Display.Power.On").unwrap();
+        let power_off = CString::new("Display.Power.Off").unwrap();
+
+        assert!(fsm_matches(machine_ptr, display.as_ptr()));
+        assert!(fsm_matches(machine_ptr, theme.as_ptr()));
+        assert!(fsm_matches(machine_ptr, light.as_ptr()));
+        assert!(fsm_matches(machine_ptr, power_on.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, dark.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, power_off.as_ptr()));
+        assert!(!fsm_matches(ptr::null_mut(), display.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, ptr::null()));
 
         fsm_free(machine_ptr);
     }
