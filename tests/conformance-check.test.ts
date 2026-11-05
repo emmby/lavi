@@ -153,6 +153,41 @@ describe('m', () => {
       const res4 = checkConformanceTests({ rootDir: tmpDir });
       expect(res4.ok).toBe(false);
       expect(res4.errors.join('\n')).toMatch(/Incomplete allowed_skips entry/i);
+
+      // 5. XSTATE_5_FEATURES.md drift (stale skip count, premature [x] suite, or unknown fsm_* symbol) fails
+      fs.writeFileSync(path.join(tmpDir, 'tests', 'sample.test.ts'), upstreamContent);
+      fs.writeFileSync(
+        path.join(tmpDir, 'tests', 'conformance-manifest.json'),
+        JSON.stringify({
+          upstreamTag: 'xstate@5.25.0',
+          files: {
+            'sample.test.ts': {
+              status: 'strict',
+              allowed_skips: []
+            }
+          }
+        })
+      );
+      fs.mkdirSync(path.join(tmpDir, 'portable-xstate-c-cpp', 'include'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, 'portable-xstate-c-cpp', 'include', 'portable_xstate.h'),
+        'bool fsm_matches(const MachineContext* ptr, const char* state_path);\n'
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, 'XSTATE_5_FEATURES.md'),
+        [
+          '| Suite | Provenance Status | Skipped Blocks | Upstream Reference |',
+          '| :--- | :--- | :---: | :--- |',
+          '| `sample.test.ts` | `strict` | 3 | `tests/upstream/sample.test.ts` |',
+          '- [x] **Guards** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/guards.test.ts))',
+          '- Uses `fsm_nonexistent_api` in C'
+        ].join('\n')
+      );
+      const res5 = checkConformanceTests({ rootDir: tmpDir });
+      expect(res5.ok).toBe(false);
+      expect(res5.errors.join('\n')).toMatch(/table lists 3 skipped blocks, but tests\/sample\.test\.ts actually has 0/);
+      expect(res5.errors.join('\n')).toMatch(/marks "guards\.test\.ts" as \[x\], but tests\/guards\.test\.ts is not onboarded yet/);
+      expect(res5.errors.join('\n')).toMatch(/fsm_nonexistent_api/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

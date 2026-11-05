@@ -1,124 +1,152 @@
 # XState 5 Supported Operations Checklist
 
-This document tracks the feature set of `portable-xstate` against the XState 5 (`statelyai/xstate@5.25.0`) specification across all three targets: `#![no_std]` Rust (`portable-xstate-rust`), WebAssembly/JS (`portable-xstate-wasm`), and C/C++ for embedded microcontrollers (`portable-xstate-c-cpp`).
+This document tracks the feature set of `portable-xstate` against the XState 5 (`statelyai/xstate@5.25.0`) specification across all three targets:
+- **`Rust`**: `#![no_std]` core engine (`portable-xstate-rust`)
+- **`WASM`**: WebAssembly / JavaScript bindings (`portable-xstate-wasm`)
+- **`C/C++`**: Embedded C99 (`portable_xstate.h`) and C++11 (`portable_xstate.hpp`) bindings (`portable-xstate-c-cpp`)
 
-Upstream conformance test integrity is enforced mechanically via `npm run test:conformance-check` against pinned reference files in [`tests/upstream/`](./tests/upstream/) and [`tests/conformance-manifest.json`](./tests/conformance-manifest.json). Pre-existing test divergences and legacy cleanup tasks are tracked in [`TECH_DEBT.md`](./TECH_DEBT.md).
+**Automated Sync Invariant (`npm run test:conformance-check`)**:
+- The **Conformance Test Suites** table below is verified automatically on every `npm test` run against [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) and the actual `it.skip` / `describe.skip` counts in `tests/*.test.ts`.
+- A top-level feature line linking to an upstream test suite (`packages/core/test/<suite>.test.ts`) may only be checked `- [x]` when `tests/<suite>.test.ts` is onboarded in `tests/conformance-manifest.json` with `"status": "strict"` and `0` skipped blocks.
+- Every `fsm_*` C API symbol referenced in this document is verified against [`portable-xstate-c-cpp/include/portable_xstate.h`](./portable-xstate-c-cpp/include/portable_xstate.h).
+
+---
+
+## Conformance Test Suites
+
+### Onboarded Suites (`tests/*.test.ts`)
+
+| Suite | Provenance Status | Skipped Blocks (`it.skip` / `describe.skip`) | Upstream Reference |
+| :--- | :--- | :---: | :--- |
+| `actions.test.ts` | `legacy-baseline` (`TD-2`) | 99 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
+| `after.test.ts` | `legacy-baseline` (`TD-1`) | 5 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
+| `history.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
+| `machine.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
+| `state.test.ts` | `legacy-baseline` (`TD-3`) | 0 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
+
+### Upstream Suites Not Yet Onboarded
+`transition.test.ts`, `parallel.test.ts`, `final.test.ts`, `guards.test.ts`, `assign.test.ts`, `raise.test.ts`, `input.test.ts`, `invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`, `json.test.ts`, `inspect.test.ts`, `meta.test.ts`, `tags.test.ts`.
+
+---
 
 ## 1. Core Structure (Essential)
-High usage, required for almost every state machine.
 
-- [x] **Machine Definition** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/machine.test.ts))
-  - [x] `id` (Root machine identifier)
-  - [x] `initial` (Initial state key)
-  - [x] `context` (Initial extended state)
-  - [x] `states` (State nodes definition)
-  - [x] `version` (Machine versioning)
-  - [x] `types` (TypeScript type schemas - pass-through)
-- [x] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts))
-  - [x] Atomic States (Leaf nodes)
-  - [x] Compound States (Nested states with initial)
-  - [x] Parallel States (Orthogonal regions) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/parallel.test.ts))
-  - [x] Final States (`type: 'final'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts))
-  - [x] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts))
-    - [x] Shallow history (default)
-    - [x] Deep history (explicit)
-    - [x] History with default target
-    - [x] History in parallel states
-    - [x] Multistage history
-    - [x] History state persistence/revival
-- [ ] **Transitions** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/transition.test.ts))
-  - [x] Event Transitions (`on: { EVENT: ... }`)
-  - [x] Eventless Transitions (`always: [...]`)
-  - [x] Targetless Transitions (internal transitions with actions only)
-  - [ ] Self-transitions with reentry (Partial - deep reentry skipped)
-  - [x] Guarded Transitions
-  - [x] Root-level transitions (combinatorial machines)
-  - [x] Delayed Transitions (`after: { delay: target }`) (Partial) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/after.test.ts))
-    - [x] Deterministic virtual time advancement (`SimulatedClock` with `set(ms)` / `increment(ms)` and cascading `tick()` across Rust, C, C++, and WASM)
-    - [x] Deep-sleep deadline introspection (`next_timer_deadline` / `fsm_get_next_deadline` / `getNextDeadline`)
+- [ ] **Machine Definition** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/machine.test.ts) — 14/14 passing in `tests/machine.test.ts`, pending `TD-3` strict graduation)
+  - [x] `id` (Root machine identifier) `[Rust | WASM | C/C++]`
+  - [x] `initial` (Initial state key & initial transition actions) `[Rust | WASM | C/C++]`
+  - [x] `context` (Initial extended state object) `[Rust | WASM | C/C++]`
+  - [x] `states` (Iterative state node hierarchy parsing) `[Rust | WASM | C/C++]`
+  - [x] `version` (Machine versioning on `StateNode`) `[WASM]`
+  - [x] `types` / `schemas` (TypeScript type schemas pass-through) `[Rust | WASM]`
+- [ ] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts) — 23/23 passing, 1 `todo` in `tests/state.test.ts`, pending `TD-3` strict graduation)
+  - [x] Atomic States (Leaf nodes) `[Rust | WASM | C/C++]`
+  - [x] Compound States (Nested states with `initial`) `[Rust | WASM | C/C++]`
+  - [ ] Parallel States (Orthogonal regions) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/parallel.test.ts) — core support implemented; upstream `parallel.test.ts` not yet onboarded)
+  - [ ] Final States (`type: 'final'`) `[Rust | WASM]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts) — parsed in Rust and sets `status: 'done'` in WASM; `onDone` transitions and upstream `final.test.ts` not yet implemented)
+  - [ ] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts) — 33/33 passing in `tests/history.test.ts`, pending `TD-3` strict graduation)
+    - [x] Shallow history (default) `[Rust | WASM | C/C++]`
+    - [x] Deep history (`history: 'deep'`) `[Rust | WASM | C/C++]`
+    - [x] History with default `target` `[Rust | WASM | C/C++]`
+    - [x] History in parallel states `[Rust | WASM | C/C++]`
+    - [x] Multistage history `[Rust | WASM | C/C++]`
+    - [x] History state persistence/revival (`historyValue`) `[WASM]` (pending `TD-8` for Rust & C/C++)
+- [ ] **Transitions** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/transition.test.ts) — upstream `transition.test.ts` not yet onboarded)
+  - [x] Event Transitions (`on: { EVENT: ... }`) `[Rust | WASM | C/C++]`
+  - [x] Eventless Transitions (`always: [...]`) `[Rust | WASM | C/C++]`
+  - [x] Targetless Transitions (internal transitions with actions only) `[Rust | WASM | C/C++]`
+  - [x] Self-transitions with `reenter: true` `[Rust | WASM | C/C++]` (Partial — deep descendant reentry edge cases in `actions.test.ts` skipped)
+  - [x] Guarded Transitions (`guard`) `[Rust | WASM | C/C++]`
+  - [x] Root-level transitions (combinatorial machines with empty `states`) `[Rust | WASM | C/C++]`
+  - [ ] Delayed Transitions (`after: { delay: target }`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/after.test.ts) — 13/17 passing in `tests/after.test.ts`, pending `TD-1` full upstream restoration)
+    - [x] Numeric millisecond delays (`after: { 1000: 'target' }`) `[Rust | WASM | C/C++]`
+    - [x] Deterministic virtual time advancement (`SimulatedClock` with `set(ms)` / `increment(ms)` and cascading `tick()` / `fsm_tick` / `fsm_simulated_clock_set` / `fsm_simulated_clock_increment`) `[Rust | WASM | C/C++]`
+    - [x] Deep-sleep deadline introspection (`next_timer_deadline` / `getNextDeadline` / `fsm_get_next_deadline`) `[Rust | WASM | C/C++]`
+    - [ ] Named delays (`delays: { myDelay: ... }`) and dynamic delay callbacks `[ ]`
     - **Documented Target-Language Constraints**:
       - Dynamic delay expressions in C/C++/Rust must use registered named delay callbacks rather than runtime string/expression evaluation (WASM can bridge inline JS delay functions to synthetic named callbacks; see `TD-1` in [`TECH_DEBT.md`](./TECH_DEBT.md)).
       - Host JS `setTimeout`/`clearTimeout` handle inspection (`should not try to clear an undefined timeout when exiting source state of a delayed transition`) and internal JS `TransitionNode` string formatting (`should format transitions properly`) are skipped by design because `portable-xstate` evaluates timers against an external clock deadline rather than spawning host JS timers.
   - [ ] Wildcard Transitions (`*`)
   - [ ] Partial Wildcard Transitions (`models.*`)
 
-## 2. Logic & Control Flow (High Priority)
-Essential for defining machine behavior and data flow.
+---
 
-- [x] **Guards** (`guard`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/guards.test.ts))
-  - [x] Named Guards (String reference; registered via function pointer / callback in Rust/C/C++ and `setup`/`provide` in WASM)
-  - [x] Inline Guards (Function definition in WASM/JS bridged to synthetic named guards)
-  - [x] Guard override via `machine.provide()`
-  - [ ] Higher-Order Guards (`and`, `or`, `not`)
-- [ ] **Actions** (`entry`, `exit`, `actions`) (Partial - see `TD-2` in [`TECH_DEBT.md`](./TECH_DEBT.md)) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts))
-  - [x] Named Actions (Registered via function pointer / callback in Rust/C/C++ and `setup`/`provide` in WASM)
-  - [x] Inline Actions (Function definition in WASM/JS bridged to synthetic named actions)
-  - [x] Action override via `machine.provide()`
-  - [ ] Dynamic Action Parameters (skipped)
-  - [x] Entry actions (state entry, including root initial `always` transition batching)
-  - [x] Exit actions (state exit)
-  - [x] Transition actions
-  - [x] Initial transition actions
+## 2. Logic & Control Flow (High Priority)
+
+- [ ] **Guards** (`guard`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/guards.test.ts) — upstream `guards.test.ts` not yet onboarded)
+  - [x] Named Guards (`fsm_register_guard` in C, `registerGuard` in C++, `guards` map in Rust, `setup`/`provide` in WASM) `[Rust | WASM | C/C++]`
+  - [x] Inline Guards (`js_sys::Function` in WASM/JS bridged to synthetic named guards) `[WASM]`
+  - [x] Guard override via `machine.provide()` `[WASM]`
+  - [x] Parameterized Guards (`params` passed to guard callbacks) `[Rust | WASM]` (not yet exposed in `fsm_guard_callback_t` in C/C++)
+  - [ ] Higher-Order Guards (`and`, `or`, `not`, `stateIn`)
+- [ ] **Actions** (`entry`, `exit`, `actions`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts) — 36/136 passing in `tests/actions.test.ts`, pending `TD-2`)
+  - [x] Named Actions (`fsm_register_action` in C, `registerAction` in C++, `actions` map in Rust, `setup`/`provide` in WASM) `[Rust | WASM | C/C++]`
+  - [x] Inline Actions (`js_sys::Function` in WASM/JS bridged to synthetic named actions) `[WASM]`
+  - [x] Action override via `machine.provide()` `[WASM]`
+  - [x] Static Action Parameters (`params` object passed to action callbacks) `[Rust | WASM]` (dynamic parameter resolver functions skipped; `params` not yet exposed in `fsm_action_callback_t` in C/C++)
+  - [x] Entry actions (state entry, including root initial `always` transition batching) `[Rust | WASM | C/C++]`
+  - [x] Exit actions (state exit in reverse document order) `[Rust | WASM | C/C++]`
+  - [x] Transition actions `[Rust | WASM | C/C++]`
+  - [x] Initial transition actions (`initial: { target, actions }`) `[Rust | WASM | C/C++]`
   - [ ] **Built-in Actions:**
-    - [ ] `assign` (Update context) (Partial - assignment order skipped) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts))
-      - [x] Object-based assignment
-      - [x] Function-based assignment (WASM/JS bridge)
-      - [x] Inline assignment functions (WASM/JS bridge)
-      - [x] Assignment in entry/exit/transition actions
-    - [x] `raise` (Self-send internal event)
-    - [ ] `log` (Console log)
-    - [ ] `sendTo` (Send to specific actor) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actor.test.ts))
-    - [ ] `stop` (Stop child actor)
-- [x] **Context & Input**
-  - [x] Immutable Context Updates ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts))
-  - [x] Function-based context initialization (WASM/JS)
-  - [x] Lazy context evaluation (WASM/JS)
-  - [x] Context override via `machine.provide()`
-  - [ ] `input` (Factory-pattern context initialization) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/input.test.ts))
+    - [ ] `assign` (Update context) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts) — upstream `assign.test.ts` not yet onboarded)
+      - [x] Declarative object-based static assignment (`{ type: 'xstate.assign', assignment: { ... } }`) `[Rust | WASM | C/C++]`
+      - [x] Function-based and inline property assignment functions (`assign(({ context, event }) => ...)` bridged via callbacks) `[Rust | WASM]` (C/C++ `fsm_action_callback_t` currently receives `const fsm_value_t* context` read-only)
+      - [x] Assignment in entry/exit/transition actions `[Rust | WASM | C/C++]`
+    - [x] `raise` (Self-send internal event queued in `internal_queue`) `[Rust | WASM | C/C++]`
+    - [ ] `log` (Logging action)
+    - [ ] `sendTo` / `sendParent` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actor.test.ts))
+    - [ ] `stopChild` / `cancel`
+    - [ ] `emit` (Event emitter action)
+- [ ] **Context & Input** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/input.test.ts) — upstream `input.test.ts` not yet onboarded)
+  - [x] Context initialization from JSON object `[Rust | WASM | C/C++]`
+  - [x] Function-based lazy context initialization (`context: () => ({ ... })`) `[WASM]`
+  - [x] Context property inspection in C/C++ callbacks (`fsm_value_is_object`, `fsm_value_is_string`, `fsm_value_is_number`, `fsm_value_is_bool`, `fsm_value_get_string`, `fsm_value_get_number`, `fsm_value_get_bool`, `fsm_value_get_property`) `[C/C++]`
+  - [ ] `input` (Factory-pattern context initialization `context: ({ input }) => ...`)
+
+---
 
 ## 3. State Inspection & Queries (High Priority)
-Essential for runtime state inspection and decision-making.
 
-- [x] **State API** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts))
-  - [x] `state.value` (Current state value)
-  - [x] `state.matches(stateValue)` (Query active state by dot-delimited path or partial object across Rust, C, C++, and WASM)
-  - [x] `state.context` (Current context)
-  - [x] `state.status` (Machine status: `'active'`, `'done'`, `'stopped'`)
-  - [x] `state.can(event)` (Check if event is accepted without side effects)
-  - [x] `state.hasTag(tag)` (Check if state has tag)
-  - [x] State persistence and revival
-- [x] **Machine API**
-  - [x] `machine.states` (State node registry)
-  - [x] `machine.events` (Accepted events set)
-  - [x] `machine.config` (Original machine config reference)
-  - [x] `machine.provide()` (Override implementations)
-  - [x] `machine.resolveStateValue()` (Resolve state value)
+- [ ] **State / Snapshot API** (See `TD-8` in [`TECH_DEBT.md`](./TECH_DEBT.md) for promoting WASM-only queries to Rust & C/C++)
+  - [x] `state.matches(stateValue)` (Dot-delimited path matching across `RuntimeMachine::matches`, `Snapshot::matches`, `fsm_matches`, and `PortableXState::matches`; partial object matching in Rust & WASM) `[Rust | WASM | C/C++]`
+  - [x] `state.value` (`RuntimeMachine::current_state` in Rust, `snapshot.value` in WASM) `[Rust | WASM]`
+  - [x] `state.context` (`RuntimeMachine::context` in Rust, `snapshot.context` in WASM) `[Rust | WASM]`
+  - [x] `state.status` (`'active' | 'done' | 'stopped'`) `[WASM]` (pending `TD-8` for Rust & C/C++)
+  - [x] `state.can(event)` (Pure transition check with guards) `[WASM]` (pending `TD-8` for Rust & C/C++)
+  - [x] `state.hasTag(tag)` (Active state hierarchy tag check) `[WASM]` (pending `TD-8` for Rust & C/C++)
+- [ ] **Machine / StateNode API**
+  - [x] `machine.states` (StateNode tree registry) `[WASM]`
+  - [x] `machine.events` (Accepted events list in definition order) `[WASM]`
+  - [x] `machine.config` (Original machine config reference) `[WASM]`
+  - [x] `machine.provide()` (Override guards/actions/context) `[WASM]`
+  - [x] `machine.resolveState()` (Resolve state value and `done` status) `[WASM]`
+
+---
 
 ## 4. Actor Model (Medium Priority)
-For communicating with external entities or running side-effects.
 
-- [ ] **Invoking Actors** (`invoke`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/invoke.test.ts))
+- [ ] **Invoking Actors** (`invoke`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/invoke.test.ts) — not yet implemented; see `TD-7` in [`TECH_DEBT.md`](./TECH_DEBT.md))
   - [ ] Invoke Promise (`fromPromise`)
   - [ ] Invoke Callback (`fromCallback`)
   - [ ] Invoke Observable (`fromObservable`)
-  - [ ] Invoke Machine (`fromTransition` / machine)
-  - [ ] `onDone` / `onError` (Transition on completion/failure)
-  - [x] Invoke function (inline function support in WASM)
-- [ ] **Spawning Actors** (`spawn`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/spawn.test.ts))
-  - [ ] Dynamic actor creation via `assign`
+  - [ ] Invoke Machine (`fromTransition` / child machine)
+  - [ ] `onDone` / `onError` (Transition on actor completion/failure)
+- [ ] **Spawning Actors** (`spawn`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/spawn.test.ts) — not yet implemented)
+  - [ ] Dynamic child actor creation via `assign` / `spawnChild`
+
+---
 
 ## 5. Advanced & Niche (Low Priority)
-Features for complex use-cases or debugging.
 
-- [x] **Deep Persistence** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/json.test.ts))
-  - [x] Persisting/Restoring state snapshots
-  - [x] History value persistence
-  - [x] StateNode reference revival
+- [ ] **Deep Persistence** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/json.test.ts) — upstream `json.test.ts` not yet onboarded)
+  - [x] Persisting/Restoring state snapshots (`getPersistedSnapshot()`, `createActor(machine, { snapshot })`) `[WASM]` (pending `TD-8` for Rust & C/C++)
+  - [x] History value persistence and `StateNode` reference revival `[WASM]`
 - [ ] **Inspection & Telemetry**
-  - [ ] `inspect` API integration
+  - [x] Basic `inspect` callback (`@xstate.snapshot` and `@xstate.event` emission in `createActor(machine, { inspect })`) `[WASM]`
+  - [ ] Full `@xstate.actor` / `@xstate.microstep` inspection protocol
 - [x] **Tags** (`tags: [...]`)
-  - [x] Tag definition on states
-  - [x] Tag checking via `state.hasTag()`
-  - [x] Tag persistence across state restoration
-- [ ] **Metadata** (`meta: { ... }`)
-- [x] **Custom Delays/Timers** (`SimulatedClock` & custom clock providers across Rust, C, C++, and WASM)
+  - [x] Tag definition on states `[Rust | WASM | C/C++]`
+  - [x] Tag checking via `snapshot.hasTag(tag)` `[WASM]` (pending `TD-8` for Rust & C/C++)
+  - [x] Tag persistence across state restoration `[WASM]`
+- [ ] **Metadata & Descriptions** (`meta: { ... }`, `description`, `output`)
+- [x] **Custom Clocks & Deterministic Virtual Time** (`SimulatedClock`, `register_clock`, `fsm_register_clock`, `fsm_register_clock_with_data`, `fsm_register_simulated_clock`, `fsm_simulated_clock_create`, `fsm_simulated_clock_free`, `fsm_simulated_clock_now`, `fsm_simulated_clock_set`, `fsm_simulated_clock_increment`) `[Rust | WASM | C/C++]`

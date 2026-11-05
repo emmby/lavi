@@ -40,3 +40,13 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-rust/src/parser.rs`](./portable-xstate-rust/src/parser.rs)
 - **Problem**: `StateDefinition` stores both `pub type_: Option<String>` and `pub state_type: StateType`, and `TransitionDefinition` uses XState 4's `cond` field name instead of XState 5's `guard`.
 - **Resolution**: Consolidate on `StateType` and rename `cond` to `guard` across `portable-xstate-rust` and its adapters.
+
+### `TD-7`: Remove `def.invoke` Execution Hack from State Exit Loop in `portable-xstate-rust`
+- **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
+- **Problem**: `RuntimeMachine::transition_internal` (`portable-xstate-rust/src/lib.rs:1257-1261`) executes `def.invoke` entries as synchronous named actions during **state exit**, which was a one-off hack rather than proper XState 5 actor invocation lifecycle on state entry/exit.
+- **Resolution**: Replace with proper `invoke` lifecycle semantics when implementing the Actor Model (`invoke.test.ts`).
+
+### `TD-8`: Promote WASM-Only State Queries (`can`, `has_tag`, `status`) and Snapshot Persistence to `portable-xstate-rust` and `portable-xstate-c-cpp`
+- **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), [`portable-xstate-c-cpp/include/portable_xstate.h`](./portable-xstate-c-cpp/include/portable_xstate.h), [`portable-xstate-c-cpp/include/portable_xstate.hpp`](./portable-xstate-c-cpp/include/portable_xstate.hpp)
+- **Problem**: `Snapshot::can`, `Snapshot::has_tag`, `status` (`active`/`done`/`stopped`), and snapshot restoration are currently implemented inside `portable-xstate-wasm/src/lib.rs` rather than on `RuntimeMachine` in `portable-xstate-rust`, and are not exposed in C/C++.
+- **Resolution**: Move `can()`, `has_tag()`, `status()`, and snapshot serialize/restore into `portable-xstate-rust::RuntimeMachine`, delegate to them from `portable-xstate-wasm`, and expose C/C++ bindings in `portable-xstate-c-cpp`.

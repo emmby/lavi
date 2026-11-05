@@ -63,6 +63,106 @@ function extractSkips(source) {
   return skips;
 }
 
+function checkFeaturesDocSync(rootDir, manifestFiles, errors) {
+  const featuresPath = path.join(rootDir, 'XSTATE_5_FEATURES.md');
+  if (!fs.existsSync(featuresPath)) {
+    return;
+  }
+
+  const featuresContent = fs.readFileSync(featuresPath, 'utf8');
+  const testsDir = path.join(rootDir, 'tests');
+
+  // 4a. Parse Onboarded Suites table rows: | `name.test.ts` | `status` ... | skipCount | ... |
+  const tableRows = new Map();
+  const rowRegex =
+    /^\|\s*`([a-zA-Z0-9_.-]+\.test\.ts)`\s*\|\s*`(strict|legacy-baseline)`[^|]*\|\s*(\d+)\s*\|/gm;
+  let match;
+  while ((match = rowRegex.exec(featuresContent)) !== null) {
+    tableRows.set(match[1], {
+      status: match[2],
+      skippedCount: Number.parseInt(match[3], 10)
+    });
+  }
+
+  for (const [fileName, config] of Object.entries(manifestFiles)) {
+    const row = tableRows.get(fileName);
+    if (!row) {
+      errors.push(
+        `XSTATE_5_FEATURES.md is out of sync: missing Onboarded Suites table row for registered conformance file "${fileName}".`
+      );
+      continue;
+    }
+    if (row.status !== config.status) {
+      errors.push(
+        `XSTATE_5_FEATURES.md is out of sync for "${fileName}": table lists status "${row.status}", but tests/conformance-manifest.json has "${config.status}".`
+      );
+    }
+    const localPath = path.join(testsDir, fileName);
+    if (fs.existsSync(localPath)) {
+      const actualSkipCount = extractSkips(fs.readFileSync(localPath, 'utf8')).length;
+      if (row.skippedCount !== actualSkipCount) {
+        errors.push(
+          `XSTATE_5_FEATURES.md is out of sync for "${fileName}": table lists ${row.skippedCount} skipped blocks, but tests/${fileName} actually has ${actualSkipCount}. Update XSTATE_5_FEATURES.md when enabling or skipping tests.`
+        );
+      }
+    }
+  }
+
+  for (const tableFileName of tableRows.keys()) {
+    if (!manifestFiles[tableFileName]) {
+      errors.push(
+        `XSTATE_5_FEATURES.md is out of sync: Onboarded Suites table lists "${tableFileName}", which is not registered in tests/conformance-manifest.json.`
+      );
+    }
+  }
+
+  // 4b. Verify that no checklist line linking to an upstream test suite is marked [x] unless that suite is strict with 0 skips
+  const lines = featuresContent.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const suiteMatch = line.match(
+      /^\s*-\s*\[([xX])\]\s+.*?packages\/core\/test\/([a-zA-Z0-9_.-]+\.test\.ts)/
+    );
+    if (suiteMatch) {
+      const suiteName = suiteMatch[2];
+      const manifestEntry = manifestFiles[suiteName];
+      const localPath = path.join(testsDir, suiteName);
+      const actualSkips =
+        manifestEntry && fs.existsSync(localPath)
+          ? extractSkips(fs.readFileSync(localPath, 'utf8')).length
+          : -1;
+      if (!manifestEntry || manifestEntry.status !== 'strict' || actualSkips !== 0) {
+        const reason = !manifestEntry
+          ? `tests/${suiteName} is not onboarded yet`
+          : manifestEntry.status !== 'strict'
+            ? `tests/${suiteName} is still "${manifestEntry.status}"`
+            : `tests/${suiteName} still has ${actualSkips} skipped block(s)`;
+        errors.push(
+          `XSTATE_5_FEATURES.md:${i + 1} marks "${suiteName}" as [x], but ${reason}. Keep the suite checkbox as [ ] until tests/${suiteName} is "strict" with 0 skips.`
+        );
+      }
+    }
+  }
+
+  // 4c. Verify all referenced C API symbols (fsm_*) exist in portable_xstate.h
+  const cHeaderPath = path.join(rootDir, 'portable-xstate-c-cpp', 'include', 'portable_xstate.h');
+  if (fs.existsSync(cHeaderPath)) {
+    const cHeader = fs.readFileSync(cHeaderPath, 'utf8');
+    const symbolRegex = /\b(fsm_[a-zA-Z0-9_]+)\b/g;
+    const seenSymbols = new Set();
+    let symMatch;
+    while ((symMatch = symbolRegex.exec(featuresContent)) !== null) {
+      const sym = symMatch[1];
+      if (seenSymbols.has(sym)) continue;
+      seenSymbols.add(sym);
+      if (!new RegExp(`\\b${escapeRegExp(sym)}\\b`).test(cHeader)) {
+        errors.push(
+          `XSTATE_5_FEATURES.md references C symbol "${sym}", which does not exist in portable-xstate-c-cpp/include/portable_xstate.h.`
+        );
+      }
+    }
+  }
+}
 function findFirstDiffLine(a, b) {
   const aLines = a.split('\n');
   const bLines = b.split('\n');
@@ -207,6 +307,9 @@ export function checkConformanceTests(options = {}) {
       );
     }
   }
+
+  // 4. Verify XSTATE_5_FEATURES.md stays in sync with conformance suites, skip counts, and C API headers
+  checkFeaturesDocSync(rootDir, manifestFiles, errors);
 
   return {
     ok: errors.length === 0,

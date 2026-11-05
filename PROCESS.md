@@ -14,7 +14,7 @@ This document defines the autonomous workflow for implementing features and pass
   ```
   *(Note: `npm test` automatically runs `npm run test:conformance-check` first).*
 
-## 2. Automated Conformance Test Setup (Replaces Manual Stop Gates)
+## 2. Automated Conformance Test Setup
 - **Fetch & Pin Upstream Test (if adding a new suite)**:
   ```bash
   node scripts/fetch-upstream-test.mjs <filename>.test.ts
@@ -66,6 +66,6 @@ Before committing or claiming completion, run the full verification checklist:
    npm test
    ```
    Verify that all 6 stages (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, and `test:unit`) pass.
-4. **Update Documentation**:
-   - Check off completed items in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) (or [`TECH_DEBT.md`](./TECH_DEBT.md)).
+4. **Update Documentation (Verified by `npm run test:conformance-check`)**:
+   - Update the Conformance Test Suites table and feature checkboxes in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) (and [`TECH_DEBT.md`](./TECH_DEBT.md)). Note that `npm run test:conformance-check` mechanically verifies that `XSTATE_5_FEATURES.md` stays in sync with `tests/conformance-manifest.json`, active `it.skip`/`describe.skip` counts, and `portable_xstate.h`.
    - Update [`README.md`](./README.md) if public APIs or capabilities changed.
