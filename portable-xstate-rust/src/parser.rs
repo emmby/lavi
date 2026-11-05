@@ -73,11 +73,7 @@ pub fn value_to_state_value(v: Value) -> StateValue {
                         current_key,
                     } => {
                         if let Some(k) = current_key.take() {
-                            let region_val = match &comp {
-                                StateValue::Compound(sub_k, _) if sub_k == &k => comp,
-                                _ => StateValue::Compound(k.clone(), Box::new(comp)),
-                            };
-                            regions.insert(k, region_val);
+                            regions.insert(k.clone(), StateValue::Compound(k, Box::new(comp)));
                         }
                         if let Some((next_key, next_val)) = remaining.next() {
                             *current_key = Some(next_key);
@@ -96,7 +92,18 @@ pub fn value_to_state_value(v: Value) -> StateValue {
         } else if let Some(mut val) = pending_val.take() {
             match &mut val {
                 Value::String(s) => {
-                    completed = Some(StateValue::Atomic(core::mem::take(s)));
+                    let s = core::mem::take(s);
+                    if s.contains('.') {
+                        let mut iter = s.rsplit('.');
+                        let last = iter.next().unwrap_or("").to_string();
+                        let mut acc = StateValue::Atomic(last);
+                        for part in iter {
+                            acc = StateValue::Compound(part.to_string(), Box::new(acc));
+                        }
+                        completed = Some(acc);
+                    } else {
+                        completed = Some(StateValue::Atomic(s));
+                    }
                 }
                 Value::Object(obj) => {
                     let obj = core::mem::take(obj);

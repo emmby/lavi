@@ -1,14 +1,14 @@
 [workspace]
 members = [
-    "portable-xstate-core",
+    "portable-xstate-rust",
     "portable-xstate-wasm",
-    "portable-xstate-ffi",
+    "portable-xstate-c-cpp",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 wasm-bindgen = "0.2"
-portable-xstate-core = { path = "./portable-xstate-core" }
+portable-xstate-rust = { path = "./portable-xstate-rust" }
 
 
 

@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use portable_xstate_core::{from_json_str, RuntimeMachine, Value};
+use portable_xstate_rust::{from_json_str, RuntimeMachine, Value};
 
 #[test]
 fn test_raise_action_internal_queue() {
@@ -44,9 +44,8 @@ fn test_raise_action_internal_queue() {
 
     // After transition("START"), it should go to step2,
     // enqueue "INTERNAL_EV", and then autonomously drain it to reach step3.
-    let current = machine.state();
-    assert_eq!(
-        current, "step3",
+    assert!(
+        machine.matches("step3"),
         "Machine didn't autonomously process the raised internal event"
     );
 }

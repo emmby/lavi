@@ -14,7 +14,15 @@ typedef struct MachineContext MachineContext;
 MachineContext* fsm_create(const char* json_config);
 int fsm_start(MachineContext* ptr);
 void fsm_free(MachineContext* ptr);
-int fsm_get_state(MachineContext* ptr, char* buf, int len);
+
+/**
+ * @brief Check whether the given dot-delimited state path is currently active.
+ *
+ * @param ptr The machine context.
+ * @param state_path Dot-delimited state path (e.g. "green", "Display", "Display.Power.On").
+ * @return true if the state path is active, false otherwise.
+ */
+bool fsm_matches(const MachineContext* ptr, const char* state_path);
 int fsm_send_event(MachineContext* ptr, const char* event_name);
 
 typedef struct fsm_value_t fsm_value_t;

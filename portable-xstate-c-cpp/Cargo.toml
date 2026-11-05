@@ -1,5 +1,5 @@
 [package]
-name = "portable-xstate-ffi"
+name = "portable-xstate-c-cpp"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,5 +8,5 @@ crate-type = ["staticlib"]
 
 [dependencies]
 
-portable-xstate-core = { path = "../portable-xstate-core" }
+portable-xstate-rust = { path = "../portable-xstate-rust" }
 indexmap = { version = "2.7", default-features = false }

@@ -82,6 +82,7 @@ Essential for runtime state inspection and decision-making.
 
 - [x] **State API** ([test](https://github.com/statelyai/xstate/blob/main/packages/core/test/state.test.ts))
   - [x] `state.value` (Current state value)
+  - [x] `state.matches(stateValue)` (Query active state by path or partial object)
   - [x] `state.context` (Current context)
   - [x] `state.status` (Machine status: 'active', 'done', 'stopped')
   - [x] `state.can(event)` (Check if event is accepted)

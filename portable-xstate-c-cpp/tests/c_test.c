@@ -51,21 +51,18 @@ int main() {
     fsm_register_action(machine, "doTimerAction", my_c_callback, (void*)"my_custom_data");
     // Should be dropped because not started
     fsm_send_event(machine, "TIMER");
-    char buf[64];
-    fsm_get_state(machine, buf, sizeof(buf));
-    assert(strcmp(buf, "green") == 0);
+    assert(fsm_matches(machine, "green"));
+    assert(!fsm_matches(machine, "yellow"));
     assert(c_action_called == false);
 
     fsm_start(machine);
 
-    fsm_get_state(machine, buf, sizeof(buf));
-    printf("Initial State: %s\n", buf);
-    assert(strcmp(buf, "green") == 0);
+    assert(fsm_matches(machine, "green"));
+    assert(!fsm_matches(machine, "yellow"));
 
     fsm_send_event(machine, "TIMER");
-    fsm_get_state(machine, buf, sizeof(buf));
-    printf("New State: %s\n", buf);
-    assert(strcmp(buf, "yellow") == 0);
+    assert(fsm_matches(machine, "yellow"));
+    assert(!fsm_matches(machine, "green"));
     assert(c_action_called == true);
 
     fsm_free(machine);
@@ -108,16 +105,14 @@ int main() {
     // Advance 300,000 ms -> parent timeout transitions ConnectToNetwork -> Wait at t = 300,000
     assert(fsm_simulated_clock_increment(sim_clock, 300000) == 0);
     assert(fsm_simulated_clock_now(sim_clock) == 300000);
-    fsm_get_state(april_fsm, buf, sizeof(buf));
-    assert(strcmp(buf, "Wait") == 0);
+    assert(fsm_matches(april_fsm, "Wait"));
     assert(fsm_get_next_deadline(april_fsm, &next_deadline) == true);
     assert(next_deadline == 360000);
 
     // Advance 24 hours (86,400,000 ms) in one call -> Wait -> Sleep at 360,000, Sleep -> Wake at 3,960,000
     assert(fsm_simulated_clock_set(sim_clock, 86700000) == 0);
     assert(fsm_simulated_clock_now(sim_clock) == 86700000);
-    fsm_get_state(april_fsm, buf, sizeof(buf));
-    assert(strcmp(buf, "Wake") == 0);
+    assert(fsm_matches(april_fsm, "Wake"));
     assert(fsm_get_next_deadline(april_fsm, &next_deadline) == false);
 
     fsm_simulated_clock_free(sim_clock);

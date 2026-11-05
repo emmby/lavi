@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use portable_xstate_core::{
+use portable_xstate_rust::{
     assign, create_machine, setup, value_to_state_value, Action, HistoryType,
     RuntimeMachine, StateType, StateValue, TransitionGuard, Value,
 };
@@ -97,7 +97,11 @@ fn test_deep_machine_on_small_stack() {
         .spawn(move || {
             let mut machine = RuntimeMachine::from_json(&json).expect("should build on small stack");
             machine.start(&indexmap::IndexMap::new(), &indexmap::IndexMap::new());
-            assert!(machine.state().ends_with("s31"));
+            let expected_path = (0..depth)
+                .map(|i| format!("s{}", i))
+                .collect::<Vec<_>>()
+                .join(".");
+            assert!(machine.matches(&expected_path));
         })
         .unwrap();
     handle.join().unwrap();
@@ -136,7 +140,7 @@ fn test_xstate_v5_params_event_and_assignment() {
     let mut machine = RuntimeMachine::from_json(json).expect("should parse XState v5 serialized config");
     machine.start(&indexmap::IndexMap::new(), &indexmap::IndexMap::new());
 
-    assert_eq!(machine.state(), "doneState");
+    assert!(machine.matches("doneState"));
     let ctx = machine.context.as_object().expect("context object");
     assert_eq!(ctx.get("count"), Some(&Value::from_json("42").unwrap()));
     assert!(ctx.get("assignment").is_none());

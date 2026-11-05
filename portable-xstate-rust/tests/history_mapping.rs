@@ -1,4 +1,4 @@
-use portable_xstate_core::{create_machine, StateType};
+use portable_xstate_rust::{create_machine, StateType};
 
 #[test]
 fn test_history_mapping() {

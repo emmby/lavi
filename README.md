@@ -13,9 +13,9 @@ Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON 
 
 ## Project Structure
 
-*   **`portable-xstate-core`**: The pure Rust library containing the `RuntimeMachine` logic and state storage.
-*   **`portable-xstate`**: The generic Wasm adapter that exposes the runtime to the browser.
-*   **`fsm-codegen`**: (Experimental) Macros for compile-time state machine generation.
+*   **`portable-xstate-rust`**: The pure Rust library containing the `RuntimeMachine` logic and state storage.
+*   **`portable-xstate-wasm`**: The WebAssembly adapter that exposes the runtime to JavaScript/TypeScript.
+*   **`portable-xstate-c-cpp`**: The C/C++ static library and headers for embedded and native platforms.
 *   **`index.html`**: A demo web page visualizing a Traffic Light state machine.
 
 ## Getting Started
@@ -30,7 +30,7 @@ Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON 
 1.  Open the project in the Dev Container.
 2.  Build the Wasm module:
     ```bash
-    wasm-pack build fsm-wasm --target web --out-name portable_xstate
+    wasm-pack build portable-xstate-wasm --target web --out-name portable_xstate
     ```
 
 ### Running the Demo
@@ -47,32 +47,34 @@ Portable XState (formerly FSM WASM) allows you to load **XState-compatible JSON 
 
 This project includes both native core tests and browser-based verification tests.
 
-### 1. Run Native Tests (fsm-core)
+### 1. Run Native Tests (portable-xstate-rust)
 These run on your machine and verify the core Rust logic.
 
 ```bash
 cargo test
 ```
 
-### 2. Run Browser Tests (portable-xstate)
+### 2. Run Browser Tests (portable-xstate-wasm)
 These run in a headless Chrome browser to verify the WASM integration against XState.
 
 ```bash
-cd fsm-wasm
+cd portable-xstate-wasm
 wasm-pack test --headless --chrome
 ```
 
 ### Run All Tests
-To run all test suites (native, WASM, and E2E) in sequence:
+To run all test suites (native, WASM, E2E, C/C++, and unit) in sequence:
 
 ```bash
 npm test
 ```
 
 Or run them individually:
-- `npm run test:native` (Rust Core)
+- `npm run test:native` (Rust)
 - `npm run test:wasm` (WASM/XState)
 - `npm run test:e2e` (HTML Examples via Playwright)
+- `npm run test:c-cpp` (C/C++ Static Library)
+- `npm run test:unit` (XState v5 Conformance via Vitest)
 
 ### Running tests via Devcontainer CLI
 

@@ -38,16 +38,18 @@ int main() {
             cpp_action_called = true;
         });
 
+        // Unstarted machine matches nothing
+        assert(!machine.matches("green"));
+
         machine.start();
 
-        std::string state = machine.getState();
-        std::cout << "Initial State: " << state << std::endl;
-        assert(state == "green");
+        assert(machine.matches("green"));
+        assert(machine.matches(std::string("green")));
+        assert(!machine.matches("yellow"));
 
         machine.send("TIMER");
-        state = machine.getState();
-        std::cout << "New State: " << state << std::endl;
-        assert(state == "yellow");
+        assert(machine.matches("yellow"));
+        assert(!machine.matches("green"));
         assert(cpp_action_called == true);
 
         // Test xstate::SimulatedClock with hierarchical polling, dynamic guards, cascading timers, and std::move
@@ -101,7 +103,7 @@ int main() {
         });
 
         april_fsm.start();
-        assert(april_fsm.getState() == "ConnectToNetwork.Polling");
+        assert(april_fsm.matches("ConnectToNetwork.Polling"));
         assert(poll_count == 1);
 
         uint64_t next_dl = 0;
@@ -118,15 +120,42 @@ int main() {
         assert(sim_clock.now() == 60000);
         assert(poll_count == 10);
         assert(tenth_poll_timestamp == 4500);
-        assert(moved_fsm.getState() == "Wait");
+        assert(moved_fsm.matches("Wait"));
         assert(moved_fsm.getNextDeadline(next_dl) && next_dl == 65000);
 
         // Move SimulatedClock and advance to 86,460,000 ms -> Wait -> Sleep at 65,000 ms, Sleep -> Wake at 3,665,000 ms
         xstate::SimulatedClock moved_clock = std::move(sim_clock);
         moved_clock.set(86460000);
         assert(moved_clock.now() == 86460000);
-        assert(moved_fsm.getState() == "Wake");
+        assert(moved_fsm.matches("Wake"));
         assert(!moved_fsm.getNextDeadline(next_dl));
+
+        const char* PARALLEL_JSON = R"({
+          "id": "displayMachine",
+          "initial": "Display",
+          "states": {
+            "Display": {
+              "type": "parallel",
+              "states": {
+                "Theme": {
+                  "initial": "Light",
+                  "states": { "Light": {}, "Dark": {} }
+                },
+                "Power": {
+                  "initial": "On",
+                  "states": { "On": {}, "Off": {} }
+                }
+              }
+            }
+          }
+        })";
+        xstate::PortableXState parallelMachine(PARALLEL_JSON);
+        parallelMachine.start();
+        assert(parallelMachine.matches("Display"));
+        assert(parallelMachine.matches("Display.Theme"));
+        assert(parallelMachine.matches("Display.Theme.Light"));
+        assert(parallelMachine.matches("Display.Power.On"));
+        assert(!parallelMachine.matches("Display.Power.Off"));
 
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;

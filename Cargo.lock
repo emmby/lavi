@@ -145,18 +145,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "portable-xstate-core"
+name = "portable-xstate-c-cpp"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "portable-xstate-rust",
 ]
 
 [[package]]
-name = "portable-xstate-ffi"
+name = "portable-xstate-rust"
 version = "0.1.0"
 dependencies = [
  "indexmap",
- "portable-xstate-core",
 ]
 
 [[package]]
@@ -165,7 +165,7 @@ version = "0.1.0"
 dependencies = [
  "indexmap",
  "js-sys",
- "portable-xstate-core",
+ "portable-xstate-rust",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",

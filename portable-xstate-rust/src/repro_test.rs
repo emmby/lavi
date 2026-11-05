@@ -433,7 +433,8 @@ entry: vec![],
         let mut machine = RuntimeMachine::new(&definition).unwrap();
         machine.start(&guards, &IndexMap::new());
 
-        assert_eq!(machine.state(), "final_state");
+        assert!(machine.matches("final_state"));
+        assert!(!machine.matches("boot"));
     }
 
     #[test]
@@ -500,17 +501,165 @@ entry: vec![],
         let mut machine = RuntimeMachine::new(&definition).unwrap();
         machine.register_clock(Rc::new(move || clock_cell.get()));
         machine.start(&IndexMap::new(), &IndexMap::new());
-        assert_eq!(machine.state(), "active");
+        assert!(machine.matches("active"));
 
         // At t=160ms, transient's 50ms timer would have expired if not cancelled
         now_ms.set(160);
         machine.tick(&IndexMap::new(), &IndexMap::new());
-        assert_eq!(machine.state(), "active");
+        assert!(machine.matches("active"));
 
         // At t=200ms, active's 100ms timer expires
         now_ms.set(200);
         machine.tick(&IndexMap::new(), &IndexMap::new());
-        assert_eq!(machine.state(), "timed_out");
+        assert!(machine.matches("timed_out"));
+    }
+
+    #[test]
+    fn test_matches_atomic_compound_and_parallel() {
+        let atomic = StateValue::Atomic("green".to_string());
+        assert!(atomic.matches("green"));
+        assert!(!atomic.matches("yellow"));
+        assert!(!atomic.matches("gree"));
+        assert!(!atomic.matches("green.sub"));
+        assert!(!atomic.matches(""));
+
+        let compound = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Compound(
+                "Theme".to_string(),
+                Box::new(StateValue::Atomic("Light".to_string())),
+            )),
+        );
+        assert!(compound.matches("Display"));
+        assert!(compound.matches("Display.Theme"));
+        assert!(compound.matches("Display.Theme.Light"));
+        assert!(!compound.matches("Display.Theme.Dark"));
+        assert!(!compound.matches("Display.Theme.Light.Extra"));
+        assert!(!compound.matches("Display.Them"));
+        assert!(!compound.matches("Disp"));
+
+        let parallel = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("On".to_string())),
+                ),
+            })),
+        );
+        assert!(parallel.matches("Display"));
+        assert!(parallel.matches("Display.Theme"));
+        assert!(parallel.matches("Display.Theme.Light"));
+        assert!(parallel.matches("Display.Power"));
+        assert!(parallel.matches("Display.Power.On"));
+        assert!(!parallel.matches("Display.Power.Off"));
+        assert!(!parallel.matches("Display.Theme.Dark"));
+
+        // Partial StateValue matching
+        let partial_one_region = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Compound(
+                "Power".to_string(),
+                Box::new(StateValue::Atomic("On".to_string())),
+            )),
+        );
+        assert!(parallel.matches_state_value(&partial_one_region));
+
+        let partial_both_regions = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("On".to_string())),
+                ),
+            })),
+        );
+        assert!(parallel.matches_state_value(&partial_both_regions));
+
+        let partial_mismatch = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("Off".to_string())),
+                ),
+            })),
+        );
+        assert!(!parallel.matches_state_value(&partial_mismatch));
+
+        // Empty sentinel Atomic("") should yield no active paths
+        assert!(StateValue::Atomic("".to_string()).get_active_paths().is_empty());
+
+        // Atomic region inside a parallel state ("a" => Atomic("a"))
+        let parallel_with_atomic_region = StateValue::Compound(
+            "P".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "a".to_string() => StateValue::Atomic("a".to_string()),
+                "b".to_string() => StateValue::Compound(
+                    "b".to_string(),
+                    Box::new(StateValue::Atomic("b1".to_string())),
+                ),
+            })),
+        );
+        assert_eq!(
+            parallel_with_atomic_region.get_active_paths(),
+            vec!["P.a".to_string(), "P.b.b1".to_string()]
+        );
+        assert!(parallel_with_atomic_region.matches("P.a"));
+        assert!(!parallel_with_atomic_region.matches("P.a.a"));
+
+        // Same-named child state inside a parallel region must not false-match shallower state
+        let partial_deeper_same_name = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Compound(
+                        "Theme".to_string(),
+                        Box::new(StateValue::Atomic("Light".to_string())),
+                    )),
+                ),
+                "Power".to_string() => StateValue::Compound(
+                    "Power".to_string(),
+                    Box::new(StateValue::Atomic("On".to_string())),
+                ),
+            })),
+        );
+        assert!(!parallel.matches_state_value(&partial_deeper_same_name));
+
+        // Empty parallel sub-branch ({ Display: {} } vs { Display: { Theme: 'Light', Nonexistent: {} } })
+        let partial_empty_compound = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(IndexMap::new())),
+        );
+        assert!(parallel.matches_state_value(&partial_empty_compound));
+
+        let partial_nonexistent_empty_branch = StateValue::Compound(
+            "Display".to_string(),
+            Box::new(StateValue::Parallel(indexmap::indexmap! {
+                "Theme".to_string() => StateValue::Compound(
+                    "Theme".to_string(),
+                    Box::new(StateValue::Atomic("Light".to_string())),
+                ),
+                "Nonexistent".to_string() => StateValue::Compound(
+                    "Nonexistent".to_string(),
+                    Box::new(StateValue::Parallel(IndexMap::new())),
+                ),
+            })),
+        );
+        assert!(!parallel.matches_state_value(&partial_nonexistent_empty_branch));
     }
 
     #[test]
@@ -558,13 +707,13 @@ entry: vec![],
         };
 
         machine.start(&IndexMap::new(), &actions);
-        assert_eq!(machine.state(), "Wait");
+        assert!(machine.matches("Wait"));
         assert_eq!(machine.next_timer_deadline(), Some(60_000));
 
         // Advance 24 hours (86,400,000 ms) in a single call
         clock.increment(86_400_000, &mut machine, &IndexMap::new(), &actions);
 
-        assert_eq!(machine.state(), "Wake");
+        assert!(machine.matches("Wake"));
         assert_eq!(clock.now(), 86_400_000);
         assert_eq!(machine.next_timer_deadline(), None);
         assert_eq!(
@@ -628,12 +777,12 @@ entry: vec![],
             };
 
             machine.start(&guards, &actions);
-            assert_eq!(machine.state(), "ConnectToNetwork.Polling");
+            assert!(machine.matches("ConnectToNetwork.Polling"));
             assert_eq!(poll_count.get(), 1); // Initial entry at t=0
 
             clock.increment(300_000, &mut machine, &guards, &actions);
 
-            assert_eq!(machine.state(), "Timeout");
+            assert!(machine.matches("Timeout"));
             assert_eq!(clock.now(), 300_000);
             assert_eq!(poll_count.get(), 600);
             assert_eq!(machine.next_timer_deadline(), None);
@@ -669,7 +818,7 @@ entry: vec![],
             machine.start(&guards, &actions);
             clock.increment(300_000, &mut machine, &guards, &actions);
 
-            assert_eq!(machine.state(), "Connected");
+            assert!(machine.matches("Connected"));
             assert_eq!(clock.now(), 300_000);
             assert_eq!(poll_count.get(), 10);
             assert_eq!(machine.next_timer_deadline(), None);
@@ -718,7 +867,7 @@ entry: vec![],
         machine.start(&IndexMap::new(), &actions);
         clock.increment(60_000, &mut machine, &IndexMap::new(), &actions);
 
-        assert_eq!(machine.state(), "SyncTimeout");
+        assert!(machine.matches("SyncTimeout"));
         assert_eq!(clock.now(), 60_000);
         assert_eq!(polls.get(), 60_000);
     }
@@ -756,7 +905,7 @@ entry: vec![],
         machine.start(&IndexMap::new(), &actions);
         clock.increment(1000, &mut machine, &IndexMap::new(), &actions);
 
-        assert_eq!(machine.state(), "Loop");
+        assert!(machine.matches("Loop"));
         assert_eq!(clock.now(), 1000);
         assert!(count.get() > 1 && count.get() <= 10_100);
     }
@@ -831,7 +980,7 @@ entry: vec![],
         // At t=3000: Boot -> Mid, sendReentrant queues REENTRANT, which transitions Mid -> ArmedAtTFire at t=3000,
         // arming ArmedAtTFire's 1000ms timer for t=4000, which then fires at t=4000 -> Done!
         assert_eq!(fired_done_at.get(), 3000);
-        assert_eq!(machine.state(), "Done");
+        assert!(machine.matches("Done"));
         assert_eq!(clock.now(), 5000);
     }
 }

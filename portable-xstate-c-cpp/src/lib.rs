@@ -3,11 +3,10 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::ffi::CString;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
 use alloc::collections::BTreeMap;
-use portable_xstate_core::{from_json_str, RuntimeMachine, Value};
+use portable_xstate_rust::{from_json_str, RuntimeMachine, Value};
 use indexmap::IndexMap;
 
 #[repr(C)]
@@ -50,7 +49,7 @@ pub struct RegisteredGuard {
 type SharedMachineList = alloc::rc::Rc<core::cell::RefCell<alloc::vec::Vec<*mut MachineContext>>>;
 
 pub struct SimulatedClock {
-    clock: portable_xstate_core::SimulatedClock,
+    clock: portable_xstate_rust::SimulatedClock,
     machines: SharedMachineList,
 }
 
@@ -58,8 +57,8 @@ pub struct MachineContext {
     machine: RuntimeMachine,
     callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
     guard_callbacks: BTreeMap<alloc::string::String, RegisteredGuard>,
-    actions: IndexMap<alloc::string::String, portable_xstate_core::ActionFunction>,
-    guards: IndexMap<alloc::string::String, portable_xstate_core::GuardFunction>,
+    actions: IndexMap<alloc::string::String, portable_xstate_rust::ActionFunction>,
+    guards: IndexMap<alloc::string::String, portable_xstate_rust::GuardFunction>,
     bound_clocks: alloc::vec::Vec<SharedMachineList>,
 }
 
@@ -127,34 +126,17 @@ pub extern "C" fn fsm_free(ptr: *mut MachineContext) {
 }
 
 #[no_mangle]
-pub extern "C" fn fsm_get_state(ptr: *mut MachineContext, buf: *mut c_char, len: usize) -> c_int {
-    let ctx = unsafe {
-        if ptr.is_null() { return -1; }
-        &mut *ptr
-    };
-    let state_value = &ctx.machine.current_state;
-    // Extract first active path from StateValue
-    let active_paths = state_value.get_active_paths();
-    let state_str = if !active_paths.is_empty() {
-        &active_paths[0]
-    } else {
-        ""
-    };
-    
-    let c_str_state = match CString::new(state_str) {
+pub extern "C" fn fsm_matches(ptr: *const MachineContext, state_path: *const c_char) -> bool {
+    if ptr.is_null() || state_path.is_null() {
+        return false;
+    }
+    let ctx = unsafe { &*ptr };
+    let path_c_str = unsafe { CStr::from_ptr(state_path) };
+    let path = match path_c_str.to_str() {
         Ok(s) => s,
-        Err(_) => return -2,
+        Err(_) => return false,
     };
-    let bytes = c_str_state.as_bytes_with_nul();
-    
-    if bytes.len() > len {
-        return -3;
-    }
-    
-    unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
-    }
-    0
+    ctx.machine.matches(path)
 }
 
 #[no_mangle]
@@ -245,7 +227,7 @@ pub extern "C" fn fsm_get_next_deadline(
 #[no_mangle]
 pub extern "C" fn fsm_simulated_clock_create(initial_ms: u64) -> *mut SimulatedClock {
     let sim = Box::new(SimulatedClock {
-        clock: portable_xstate_core::SimulatedClock::with_initial(initial_ms),
+        clock: portable_xstate_rust::SimulatedClock::with_initial(initial_ms),
         machines: alloc::rc::Rc::new(core::cell::RefCell::new(alloc::vec::Vec::new())),
     });
     Box::into_raw(sim)
@@ -485,7 +467,7 @@ pub extern "C" fn fsm_register_action(
     
     // Process the ActionFunction immediately
     let action_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
-    let action_fn: portable_xstate_core::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
+    let action_fn: portable_xstate_rust::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
         if let Some(cb) = callback {
             cb(
                 action_name_cstr.as_ptr(),
@@ -528,7 +510,7 @@ pub extern "C" fn fsm_register_guard(
     });
     
     let guard_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
-    let guard_fn: portable_xstate_core::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
+    let guard_fn: portable_xstate_rust::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
         if let Some(cb) = callback {
             cb(
                 guard_name_cstr.as_ptr(),
@@ -576,21 +558,20 @@ mod tests {
 
         fsm_start(machine_ptr);
 
-        let mut buf = vec![0u8; 64];
-        
+        let green = CString::new("green").unwrap();
+        let yellow = CString::new("yellow").unwrap();
+
         // Check initial state
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "green");
+        assert!(fsm_matches(machine_ptr, green.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, yellow.as_ptr()));
 
         // Transition
         let event = CString::new("TIMER").unwrap();
         fsm_send_event(machine_ptr, event.as_ptr());
 
         // Check new state
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "yellow");
+        assert!(fsm_matches(machine_ptr, yellow.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, green.as_ptr()));
 
         fsm_free(machine_ptr);
     }
@@ -638,13 +619,10 @@ mod tests {
         let event = CString::new("START").unwrap();
         fsm_send_event(machine_ptr, event.as_ptr());
 
-        let mut buf = vec![0u8; 64];
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        
         // Due to the external queue deferral, the "NEXT" event generated in the "step2" entry action
         // will be processed sequentially immediately after "START" completes.
-        assert_eq!(state, "step3");
+        let step3 = CString::new("step3").unwrap();
+        assert!(fsm_matches(machine_ptr, step3.as_ptr()));
 
         fsm_free(machine_ptr);
     }
@@ -758,10 +736,8 @@ mod tests {
 
         fsm_start(machine_ptr);
 
-        let mut buf = vec![0u8; 64];
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "running");
+        let running = CString::new("running").unwrap();
+        assert!(fsm_matches(machine_ptr, running.as_ptr()));
         assert_eq!(test_state.boot_entry_calls, 1);
         assert_eq!(test_state.last_event_type, "EXTERNAL_FROM_BOOT");
 
@@ -892,10 +868,8 @@ mod tests {
         assert_eq!(st.polls, 5);
         assert_eq!(st.reentrant_fired_at, 3500);
 
-        let mut buf = vec![0u8; 64];
-        assert_eq!(fsm_get_state(machine_ptr, buf.as_mut_ptr() as *mut c_char, buf.len()), 0);
-        let state = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char).to_str().unwrap() };
-        assert_eq!(state, "Sleep");
+        let sleep_state = CString::new("Sleep").unwrap();
+        assert!(fsm_matches(machine_ptr, sleep_state.as_ptr()));
         assert!(!fsm_get_next_deadline(machine_ptr, &mut next_dl));
 
         // Verify destruction-order safety: freeing machine before clock, then calling set on clock
@@ -903,5 +877,56 @@ mod tests {
         assert_eq!(fsm_simulated_clock_set(clock_ptr, 200_000), 0);
         assert_eq!(fsm_simulated_clock_now(clock_ptr), 200_000);
         fsm_simulated_clock_free(clock_ptr);
+    }
+
+    #[test]
+    fn test_matches_parallel_and_compound_ffi() {
+        let json = CString::new(r#"{
+          "id": "displayMachine",
+          "initial": "Display",
+          "states": {
+            "Display": {
+              "type": "parallel",
+              "states": {
+                "Theme": {
+                  "initial": "Light",
+                  "states": {
+                    "Light": { "on": { "TOGGLE_THEME": "Dark" } },
+                    "Dark": {}
+                  }
+                },
+                "Power": {
+                  "initial": "On",
+                  "states": {
+                    "On": { "on": { "SLEEP": "Off" } },
+                    "Off": {}
+                  }
+                }
+              }
+            }
+          }
+        }"#).unwrap();
+
+        let machine_ptr = fsm_create(json.as_ptr());
+        assert!(!machine_ptr.is_null());
+        fsm_start(machine_ptr);
+
+        let display = CString::new("Display").unwrap();
+        let theme = CString::new("Display.Theme").unwrap();
+        let light = CString::new("Display.Theme.Light").unwrap();
+        let dark = CString::new("Display.Theme.Dark").unwrap();
+        let power_on = CString::new("Display.Power.On").unwrap();
+        let power_off = CString::new("Display.Power.Off").unwrap();
+
+        assert!(fsm_matches(machine_ptr, display.as_ptr()));
+        assert!(fsm_matches(machine_ptr, theme.as_ptr()));
+        assert!(fsm_matches(machine_ptr, light.as_ptr()));
+        assert!(fsm_matches(machine_ptr, power_on.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, dark.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, power_off.as_ptr()));
+        assert!(!fsm_matches(ptr::null_mut(), display.as_ptr()));
+        assert!(!fsm_matches(machine_ptr, ptr::null()));
+
+        fsm_free(machine_ptr);
     }
 }

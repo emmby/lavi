@@ -265,17 +265,24 @@ public:
     }
 
     /**
-     * @brief Get the current state as a string.
+     * @brief Check whether the given dot-delimited state path is currently active.
      * 
-     * @return std::string The current state ID.
+     * @param state_path Dot-delimited state path (e.g. "green", "Display", "Display.Power.On").
+     * @return true if the state path is active, false otherwise.
      */
-    std::string getState() const {
-        if (!machine) return "uninitialized";
-        char buf[64];
-        if (fsm_get_state(machine, buf, sizeof(buf)) == 0) {
-            return std::string(buf);
-        }
-        return "error";
+    bool matches(const char* state_path) const noexcept {
+        if (!machine || !state_path) return false;
+        return fsm_matches(machine, state_path);
+    }
+
+    /**
+     * @brief Check whether the given dot-delimited state path is currently active.
+     * 
+     * @param state_path Dot-delimited state path (e.g. "green", "Display", "Display.Power.On").
+     * @return true if the state path is active, false otherwise.
+     */
+    bool matches(const std::string& state_path) const noexcept {
+        return matches(state_path.c_str());
     }
 
     /**

@@ -34,19 +34,73 @@ impl StateValue {
     fn collect_paths(&self, parent: &str, paths: &mut Vec<String>) {
         match self {
             StateValue::Atomic(name) => {
-                let full = if parent.is_empty() { name.clone() } else { format!("{}.{}", parent, name) };
-                paths.push(full);
+                if name.is_empty() {
+                    if !parent.is_empty() {
+                        paths.push(parent.to_string());
+                    }
+                } else {
+                    let full = if parent.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}.{}", parent, name)
+                    };
+                    paths.push(full);
+                }
             }
             StateValue::Compound(name, child) => {
-                let current = if parent.is_empty() { name.clone() } else { format!("{}.{}", parent, name) };
+                let current = if parent.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}.{}", parent, name)
+                };
                 child.collect_paths(&current, paths);
             }
             StateValue::Parallel(regions) => {
-                for (_region_name, region_value) in regions {
-                     region_value.collect_paths(parent, paths);
+                if regions.is_empty() {
+                    if !parent.is_empty() {
+                        paths.push(parent.to_string());
+                    }
+                } else {
+                    for (_region_name, region_value) in regions {
+                        region_value.collect_paths(parent, paths);
+                    }
                 }
             }
         }
+    }
+
+    /// Returns true if the given dot-delimited state path (e.g. `"green"`, `"Display"`,
+    /// `"Display.Theme"`, or `"Display.Power.On"`) is currently active.
+    pub fn matches(&self, path: &str) -> bool {
+        if path.is_empty() {
+            return false;
+        }
+        match self {
+            StateValue::Atomic(name) => !name.is_empty() && path == name,
+            StateValue::Compound(name, child) => {
+                if path == name {
+                    true
+                } else if path.starts_with(name.as_str())
+                    && path.as_bytes().get(name.len()) == Some(&b'.')
+                {
+                    child.matches(&path[name.len() + 1..])
+                } else {
+                    false
+                }
+            }
+            StateValue::Parallel(regions) => regions
+                .values()
+                .any(|region_value| region_value.matches(path)),
+        }
+    }
+
+    /// Returns true if all active paths in `partial` are active in `self`.
+    pub fn matches_state_value(&self, partial: &StateValue) -> bool {
+        if matches!(partial, StateValue::Parallel(regions) if regions.is_empty()) {
+            return !matches!(self, StateValue::Atomic(_));
+        }
+        let paths = partial.get_active_paths();
+        !paths.is_empty() && paths.iter().all(|p| self.matches(p))
     }
 }
 
@@ -522,8 +576,8 @@ impl RuntimeMachine {
         }
     }
 
-    pub fn state(&self) -> String {
-        self.current_state.get_active_paths().first().cloned().unwrap_or_default()
+    pub fn matches(&self, path: &str) -> bool {
+        self.current_state.matches(path)
     }
 
     pub fn get_state_definition(&self, path: &str) -> Option<&StateDefinition> {
