@@ -44,7 +44,7 @@ fn verify_scenario(scenario: JsValue) {
     }) as Box<dyn FnMut(JsValue)>);
 
     let inspect_opts = js_sys::Object::new();
-    js_sys::Reflect::set(&inspect_opts, &"inspect".into(), &inspector.as_ref().unchecked_ref()).unwrap();
+    js_sys::Reflect::set(&inspect_opts, &"inspect".into(), inspector.as_ref().unchecked_ref()).unwrap();
 
     let mut runner = wasm_machine.create_actor_method(inspect_opts.into()).expect("Failed to spawn runner");
     
@@ -181,4 +181,53 @@ fn test_js_to_value_ignores_undefined_and_functions() {
     let ctx_js = snapshot.context();
     let a_val = js_sys::Reflect::get(&ctx_js, &"a".into()).unwrap();
     assert_eq!(a_val.as_f64(), Some(1.0));
+}
+
+#[wasm_bindgen_test]
+fn test_wasm_simulated_clock_and_get_next_deadline() {
+    let machine_def = r#"{
+        "id": "april_wasm",
+        "initial": "ConnectToNetwork",
+        "states": {
+            "ConnectToNetwork": {
+                "initial": "Polling",
+                "after": { "300000": "Wait" },
+                "states": {
+                    "Polling": {
+                        "after": { "500": { "target": "Polling", "reenter": true } }
+                    }
+                }
+            },
+            "Wait": {
+                "after": { "60000": "Sleep" }
+            },
+            "Sleep": {
+                "after": { "3600000": "Wake" }
+            },
+            "Wake": {}
+        }
+    }"#;
+
+    let mut clock = portable_xstate_wasm::SimulatedClock::new();
+    let opts = js_sys::Object::new();
+    let clock_js: JsValue = clock.clone().into();
+    js_sys::Reflect::set(&opts, &"clock".into(), &clock_js).unwrap();
+
+    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
+    let mut actor = machine.create_actor_method(opts.into()).unwrap().start();
+
+    assert_eq!(actor.get_next_deadline(), Some(500.0));
+
+    // Advance 300,000 ms -> parent timeout transitions ConnectToNetwork -> Wait at t = 300,000
+    clock.increment(300_000.0);
+    assert_eq!(clock.now(), 300_000.0);
+    assert_eq!(actor.get_snapshot().value().as_string().as_deref(), Some("Wait"));
+    assert_eq!(actor.get_next_deadline(), Some(360_000.0));
+
+    // Advance to 86,700,000 ms -> Wait -> Sleep at 360,000, Sleep -> Wake at 3,960,000
+    clock.set(86_700_000.0);
+    assert_eq!(clock.now(), 86_700_000.0);
+    assert_eq!(actor.get_snapshot().value().as_string().as_deref(), Some("Wake"));
+    assert_eq!(actor.get_next_deadline(), None);
+    let _ = actor.stop();
 }
