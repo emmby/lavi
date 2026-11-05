@@ -55,7 +55,7 @@
   - `pub struct JsonError { pub message: alloc::string::String, pub offset: usize }` (implements `core::fmt::Display`, re-exported at `portable_xstate_core::JsonError`)
   - `impl Value { pub fn from_json(input: &str) -> Result<Value, JsonError>; pub fn to_json_string(&self) -> alloc::string::String; }`
 
-- [ ] **Step 1: Write the failing tests in `portable-xstate-core/tests/json_tests.rs`**
+- [x] **Step 1: Write the failing tests in `portable-xstate-core/tests/json_tests.rs`**
 
 ```rust
 use portable_xstate_core::{JsonError, Value};
@@ -128,12 +128,12 @@ fn test_json_deep_nesting_in_small_stack_thread() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --package portable-xstate-core --test json_tests`
 Expected: FAIL with `unresolved import portable_xstate_core::JsonError` and `no function or associated item named from_json found for enum Value`.
 
-- [ ] **Step 3: Implement `JsonError`, `Value::from_json`, and `Value::to_json_string` in `portable-xstate-core/src/json.rs` and export in `portable-xstate-core/src/lib.rs`**
+- [x] **Step 3: Implement `JsonError`, `Value::from_json`, and `Value::to_json_string` in `portable-xstate-core/src/json.rs` and export in `portable-xstate-core/src/lib.rs`**
 
 In `portable-xstate-core/src/lib.rs`, add `pub mod json;` and `pub use json::JsonError;`.
 In `portable-xstate-core/src/json.rs`:
@@ -167,12 +167,12 @@ In `portable-xstate-core/src/json.rs`:
   - Format `Value::Number(n)` as `(n as i64)` when `n.is_finite() && n.fract() == 0.0 && n.abs() < ((1i64 << 53) as f64)`, as `"null"` if `!n.is_finite()`, and via `format!("{}", n)` otherwise.
   - Escape `"`, `\`, `\n`, `\r`, `\t`, `\x08` (`\b`), `\x0c` (`\f`), and other control characters `< 0x20` as `\u00XX`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test --package portable-xstate-core --test json_tests`
 Expected: PASS (5 tests passing)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add portable-xstate-core/src/lib.rs portable-xstate-core/src/json.rs portable-xstate-core/tests/json_tests.rs
@@ -200,7 +200,7 @@ git commit -m "feat(core): add iterative zero-serde Value::from_json and to_json
   - `pub fn value_to_state_value(v: Value) -> StateValue`
   - `impl RuntimeMachine { pub fn from_definition(definition: MachineDefinition) -> Result<Self, String>; pub fn from_json(json: &str) -> Result<Self, String>; }`
 
-- [ ] **Step 1: Write the failing tests in `portable-xstate-core/tests/parser_tests.rs`**
+- [x] **Step 1: Write the failing tests in `portable-xstate-core/tests/parser_tests.rs`**
 
 ```rust
 use portable_xstate_core::{
@@ -308,12 +308,12 @@ fn test_deep_machine_on_small_stack() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --package portable-xstate-core --test parser_tests`
 Expected: FAIL with `unresolved import portable_xstate_core::create_machine`.
 
-- [ ] **Step 3: Implement `portable-xstate-core/src/parser.rs` and `RuntimeMachine::from_definition` / `from_json` in `portable-xstate-core/src/lib.rs`**
+- [x] **Step 3: Implement `portable-xstate-core/src/parser.rs` and `RuntimeMachine::from_definition` / `from_json` in `portable-xstate-core/src/lib.rs`**
 
 In `portable-xstate-core/src/lib.rs`:
 - Update `RuntimeMachine` with:
@@ -347,12 +347,12 @@ In `portable-xstate-core/src/parser.rs`:
     - `invoke`, `tags`, `context`, `types`: moved directly without cloning.
 - Implement `create_machine`, `from_json_str`, `SetupObject`, `setup`, `assign`, and iterative/bounded `value_to_state_value(v: Value) -> StateValue`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test --package portable-xstate-core`
 Expected: PASS (all unit, `json_tests`, and `parser_tests` passing)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add portable-xstate-core/src/lib.rs portable-xstate-core/src/parser.rs portable-xstate-core/tests/parser_tests.rs
@@ -375,7 +375,7 @@ git commit -m "feat(core): add iterative move-based MachineDefinition parser and
 - Consumes: `portable_xstate_core::{create_machine, from_json_str, setup, assign, RuntimeMachine}` from Task 2
 - Produces: `portable-xstate-ffi` compiled with zero `portable-xstate-json` or `cty` dependencies and zero `MachineDefinition` cloning in `fsm_create`.
 
-- [ ] **Step 1: Migrate tests from `portable-xstate-json` to `portable-xstate-core/tests/`**
+- [x] **Step 1: Migrate tests from `portable-xstate-json` to `portable-xstate-core/tests/`**
 
 Create `portable-xstate-core/tests/deserialization.rs`, `history_mapping.rs`, `raise_action_test.rs`, and `repro_error.rs`:
 - In `portable-xstate-core/tests/deserialization.rs`:
@@ -383,12 +383,12 @@ Create `portable-xstate-core/tests/deserialization.rs`, `history_mapping.rs`, `r
   - Replace `StateDefinitionDto` / `MachineDefinitionDto` / `serde_json` usage with `portable_xstate_core::create_machine` inspecting `MachineDefinition` and `StateDefinition` directly (e.g., `s.on.get("")` for `always`).
 - In `history_mapping.rs`, `raise_action_test.rs`, and `repro_error.rs`: replace `use portable_xstate_json::...` with `use portable_xstate_core::...`.
 
-- [ ] **Step 2: Run the migrated `portable-xstate-core` tests**
+- [x] **Step 2: Run the migrated `portable-xstate-core` tests**
 
 Run: `cargo test --package portable-xstate-core`
 Expected: PASS
 
-- [ ] **Step 3: Update `portable-xstate-ffi/Cargo.toml` and `portable-xstate-ffi/src/lib.rs`**
+- [x] **Step 3: Update `portable-xstate-ffi/Cargo.toml` and `portable-xstate-ffi/src/lib.rs`**
 
 In `portable-xstate-ffi/Cargo.toml`:
 - Remove `portable-xstate-json = { path = "../portable-xstate-json" }` and `cty = "0.2"`.
@@ -397,12 +397,12 @@ In `portable-xstate-ffi/src/lib.rs`:
 - Replace `use portable_xstate_json::from_json_str;` with `use portable_xstate_core::{from_json_str, RuntimeMachine, Value};`.
 - In `fsm_create` (lines 64-72), pass owned `def` to `RuntimeMachine::from_definition(def)` instead of `RuntimeMachine::new(&def)`.
 
-- [ ] **Step 4: Run FFI native, C, and C++ tests to verify they pass**
+- [x] **Step 4: Run FFI native, C, and C++ tests to verify they pass**
 
 Run: `cargo test --package portable-xstate-ffi && npm run test:ffi`
 Expected: PASS (`All C FFI tests passed!`, `All C++ FFI tests passed!`)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add portable-xstate-core/tests/ portable-xstate-ffi/Cargo.toml portable-xstate-ffi/src/lib.rs
@@ -427,14 +427,14 @@ git commit -m "refactor(ffi,core): migrate json tests to core and use RuntimeMac
   - `pub fn js_to_value(val: &JsValue) -> Value`
   - `pub fn value_to_js(val: &Value) -> JsValue`
 
-- [ ] **Step 1: Add unit test in `portable-xstate-wasm/src/utils.rs` and update `portable-xstate-wasm/tests/verification.rs` away from `serde_json` / `serde_wasm_bindgen`**
+- [x] **Step 1: Add unit test in `portable-xstate-wasm/src/utils.rs` and update `portable-xstate-wasm/tests/verification.rs` away from `serde_json` / `serde_wasm_bindgen`**
 
 In `portable-xstate-wasm/tests/verification.rs`:
 - Replace `serde_json::from_str` in `verify_scenario` (lines 77-92) with `portable_xstate_core::Value::from_json(w_json).unwrap()` and `portable_xstate_core::Value::from_json(&x_json).unwrap()`, using `as_object().unwrap().clone()` and `swap_remove("type")` / `swap_remove("machine")`.
 - Replace `serde_wasm_bindgen::to_value(&serde_json::json!({ "count": 10 })).unwrap()` in `test_assign_identity` (line 125) with `js_sys::JSON::parse(r#"{"count":10}"#).unwrap()`.
 - Add a `#[wasm_bindgen_test]` `test_js_to_value_ignores_undefined_and_functions` in `portable-xstate-wasm/tests/verification.rs` verifying that an object with `{ a: 1, b: undefined, c: () => {} }` converts via `Actor::new` / `provide` context without error and preserves `a: 1`.
 
-- [ ] **Step 2: Implement `js_to_value` and `value_to_js` in `portable-xstate-wasm/src/utils.rs` and replace all `serde` / `portable_xstate_json` usages in `portable-xstate-wasm/src/lib.rs`**
+- [x] **Step 2: Implement `js_to_value` and `value_to_js` in `portable-xstate-wasm/src/utils.rs` and replace all `serde` / `portable_xstate_json` usages in `portable-xstate-wasm/src/lib.rs`**
 
 In `portable-xstate-wasm/src/utils.rs`:
 - Implement `pub fn js_to_value(val: &JsValue) -> Value`:
@@ -454,18 +454,18 @@ In `portable-xstate-wasm/src/lib.rs`:
 - Replace all `let json_val = value_to_json(v); let json_str = serde_json::to_string(&json_val)...; js_sys::JSON::parse(&json_str)` sequences with `value_to_js(v)` (or `v.to_json_string()` where a JSON string is needed).
 - Replace `portable_xstate_json::create_machine` with `portable_xstate_core::create_machine`, and pass owned `def` to `RuntimeMachine::from_definition(def)`.
 
-- [ ] **Step 3: Remove `serde`, `serde_json`, `serde-wasm-bindgen`, and `portable-xstate-json` from `Cargo.toml` files and delete `portable-xstate-json/`**
+- [x] **Step 3: Remove `serde`, `serde_json`, `serde-wasm-bindgen`, and `portable-xstate-json` from `Cargo.toml` files and delete `portable-xstate-json/`**
 
 - In `portable-xstate-wasm/Cargo.toml`: remove `serde`, `portable-xstate-json`, `serde_json`, `serde-wasm-bindgen`, and remove `features = ["serde"]` from `indexmap`.
 - In root `Cargo.toml`: remove `"portable-xstate-json"` from `members`, and remove `serde`, `serde_json`, `portable-xstate-json`, and `serde-wasm-bindgen` from `[workspace.dependencies]`.
 - Delete `portable-xstate-json/` using `trash portable-xstate-json`.
 
-- [ ] **Step 4: Build and run the full test suite across native, FFI, WASM, Vitest, and Playwright**
+- [x] **Step 4: Build and run the full test suite across native, FFI, WASM, Vitest, and Playwright**
 
 Run: `npm test`
 Expected: PASS (`test:native`, `test:wasm`, `test:e2e`, `test:ffi`, and `test:unit` all pass with zero `serde` dependencies in `Cargo.lock` for workspace crates).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock portable-xstate-wasm/ portable-xstate-json
