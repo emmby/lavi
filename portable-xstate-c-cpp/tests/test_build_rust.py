@@ -112,6 +112,23 @@ class TestBuildRust(unittest.TestCase):
         self.assertFalse(hasattr(build_rust, "DEPENDENCY_URL"))
         self.assertFalse(hasattr(build_rust, "clone_dependency"))
 
+    def test_scons_exec_without_dunder_file(self):
+        """Simulate PlatformIO SCons SConscript execution where __file__ is not in globals()."""
+        script_path = os.path.join(REPO_ROOT, "build_rust.py")
+        with open(script_path, "r", encoding="utf-8") as f:
+            source = f.read()
+
+        scons_globals = {"__name__": "__main__"}
+        with patch("os.getcwd", return_value=REPO_ROOT):
+            exec(compile(source, script_path, "exec"), scons_globals)
+
+        self.assertNotIn("__file__", scons_globals)
+        self.assertEqual(scons_globals["LIB_ROOT"], REPO_ROOT)
+        self.assertEqual(
+            scons_globals["CARGO_TOML"],
+            os.path.join(REPO_ROOT, "portable-xstate-c-cpp", "Cargo.toml"),
+        )
+
     @patch("os.path.exists", return_value=True)
     @patch("subprocess.check_call")
     @patch("shutil.which", return_value="/usr/local/bin/cargo")
