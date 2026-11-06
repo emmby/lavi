@@ -39,6 +39,7 @@ If you use VS Code:
 
 ## Available Examples
 
+-   **Autonomous Robot Vacuum** (`robot_vacuum.html`): Interactive open-floor robot vacuum simulator powered by `portable-xstate-wasm`, featuring nested states, `exit` safety guarantees, `always` low-battery routing, `after` timers, shallow history (`H`), and a live Mermaid SVG / JSON toggle.
 -   **Simple Light Switch** (`simple.html`): Basic state toggling.
 -   **Traffic Light** (`traffic_light.html`): Timed transitions and consolidated configuration.
 -   **Guards** (`guards.html`): Conditional transitions based on context.
