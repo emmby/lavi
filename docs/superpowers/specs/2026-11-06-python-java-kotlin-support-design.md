@@ -44,6 +44,7 @@ The core priorities for these bindings are:
 - **Additional Languages in This Track**: Future languages with built-in C-ABI interop (C#, Swift, Go, Dart/Flutter) are out of scope for this track and will bind directly to `lavi-c-cpp` (`lavi.h`) when added later.
 
 ### Anti-Goals (What Would Make This a Failure Even If It Works)
+- **Leaky Native Installation or Deployment Ergonomics**: Consumers of the Python, Java, Kotlin, or Android packages must never need to know that Lavi uses JNI or Rust under the hood—no installing `cargo`, no manual `.so`/`.dylib`/`.dll` unpacking, no setting `-Djava.library.path` or `LD_LIBRARY_PATH`, and no non-standard build steps. Installing and deploying Lavi must work identically to any pure-Python wheel, standard Maven/Gradle `.jar`, or Android `.aar`.
 - **Exposing Raw C Pointers or Un-Idiomatic Codegen**: Forcing Python users to subclass trait interfaces instead of passing `lambda ctx, evt: ...`, or forcing Java/Kotlin users to manage raw memory addresses without `AutoCloseable` / `@FunctionalInterface`.
 - **Requiring Multi-VM Build Farms for Routine Development**: Local development (`npm test`) must never require Docker containers, multi-OS VMs, or cross-compilers just to run unit tests on the host machine.
 - **Violating Core `lavi` Invariants**: `lavi` itself remains strictly `#![no_std]` + `alloc` with zero `std` dependencies and $O(1)$ bounded CPU call stack. (`lavi-py` and `lavi-jvm` are separate workspace crates that depend on `lavi`, just as `lavi-wasm` does.)
