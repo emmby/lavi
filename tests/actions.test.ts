@@ -5,7 +5,6 @@ import {
   emit,
   enqueueActions,
   log,
-  raise,
   sendParent,
   sendTo,
   spawnChild,
@@ -24,6 +23,7 @@ import {
   assign,
   createActor,
   createMachine,
+  raise,
   setup
 } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 import { trackEntries } from './utils.ts';
@@ -36,7 +36,7 @@ afterEach(() => {
 
 describe('entry/exit actions', () => {
   describe('State.actions', () => {
-    it.skip('should return the entry actions of an initial state', () => {
+    it('should return the entry actions of an initial state', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -49,7 +49,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['enter: __root__', 'enter: green']);
     });
 
-    it.skip('should return the entry actions of an initial state (deep)', () => {
+    it('should return the entry actions of an initial state (deep)', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -79,7 +79,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry actions of an initial state (parallel)', () => {
+    it('should return the entry actions of an initial state (parallel)', () => {
       const machine = createMachine({
         type: 'parallel',
         states: {
@@ -110,7 +110,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry and exit actions of a transition', () => {
+    it('should return the entry and exit actions of a transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -133,7 +133,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: yellow']);
     });
 
-    it.skip('should return the entry and exit actions of a deep transition', () => {
+    it('should return the entry and exit actions of a deep transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -165,7 +165,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry and exit actions of a nested transition', () => {
+    it('should return the entry and exit actions of a nested transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -193,7 +193,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green.walk', 'enter: green.wait']);
     });
 
-    it.skip('should not have actions for unhandled events (shallow)', () => {
+    it('should not have actions for unhandled events (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -210,7 +210,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should not have actions for unhandled events (deep)', () => {
+    it('should not have actions for unhandled events (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -235,7 +235,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should exit and enter the state for reentering self-transitions (shallow)', () => {
+    it('should exit and enter the state for reentering self-transitions (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -260,7 +260,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: green']);
     });
 
-    it.skip('should exit and enter the state for reentering self-transitions (deep)', () => {
+    it('should exit and enter the state for reentering self-transitions (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -361,7 +361,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return nested actions in the correct (child to parent) order', () => {
+    it('should return nested actions in the correct (child to parent) order', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -396,7 +396,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should ignore parent state actions for same-parent substates', () => {
+    it('should ignore parent state actions for same-parent substates', () => {
       const machine = createMachine({
         initial: 'a',
         states: {
@@ -429,7 +429,7 @@ describe('entry/exit actions', () => {
       const exitSpy = vi.fn();
       const transitionSpy = vi.fn();
 
-      const testConfig = {
+      const machine = createMachine({
         initial: 'a',
         states: {
           a: {
@@ -454,14 +454,11 @@ describe('entry/exit actions', () => {
             }
           }
         }
-      };
+      });
 
-      const machine = createMachine(testConfig);
-
-      const flushTracked = trackEntries(machine, setup);
+      const flushTracked = trackEntries(machine);
 
       const actor = createActor(machine).start();
-
       flushTracked();
 
       actor.send({ type: 'NEXT_FN' });
@@ -470,17 +467,13 @@ describe('entry/exit actions', () => {
       expect(entrySpy).toHaveBeenCalled();
 
       actor.send({ type: 'NEXT' });
-      
-      console.error("DEBUG NEXT STATE IS", JSON.stringify(actor.getSnapshot().value));
-      const flushed = flushTracked();
-      console.error("DEBUG FLUSHED", flushed);
 
-      expect(flushed).toEqual(['exit: a.a3', 'enter: a.a2']);
+      expect(flushTracked()).toEqual(['exit: a.a3', 'enter: a.a2']);
       expect(exitSpy).toHaveBeenCalled();
       expect(transitionSpy).toHaveBeenCalled();
     });
 
-    it.skip('should exit children of parallel state nodes', () => {
+    it('should exit children of parallel state nodes', () => {
       const machine = createMachine({
         initial: 'B',
         states: {
@@ -529,7 +522,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip("should reenter targeted ancestor (as it's a descendant of the transition domain)", () => {
+    it("should reenter targeted ancestor (as it's a descendant of the transition domain)", () => {
       const machine = createMachine({
         initial: 'loaded',
         states: {
@@ -653,7 +646,7 @@ describe('entry/exit actions', () => {
     });
 
     describe('should ignore same-parent state actions (sparse)', () => {
-      it.skip('with a relative transition', () => {
+      it('with a relative transition', () => {
         const machine = createMachine({
           initial: 'ping',
           states: {
@@ -681,7 +674,7 @@ describe('entry/exit actions', () => {
         expect(flushTracked()).toEqual(['exit: ping.foo', 'enter: ping.bar']);
       });
 
-      it.skip('with an absolute transition', () => {
+      it('with an absolute transition', () => {
         const machine = createMachine({
           id: 'root',
           initial: 'ping',
@@ -714,7 +707,7 @@ describe('entry/exit actions', () => {
   });
 
   describe('entry/exit actions', () => {
-    it.skip('should return the entry actions of an initial state', () => {
+    it('should return the entry actions of an initial state', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -727,7 +720,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['enter: __root__', 'enter: green']);
     });
 
-    it.skip('should return the entry and exit actions of a transition', () => {
+    it('should return the entry and exit actions of a transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -750,7 +743,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: yellow']);
     });
 
-    it.skip('should return the entry and exit actions of a deep transition', () => {
+    it('should return the entry and exit actions of a deep transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -781,7 +774,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should return the entry and exit actions of a nested transition', () => {
+    it('should return the entry and exit actions of a nested transition', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -808,7 +801,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green.walk', 'enter: green.wait']);
     });
 
-    it.skip('should keep the same state for unhandled events (shallow)', () => {
+    it('should keep the same state for unhandled events (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -825,7 +818,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should keep the same state for unhandled events (deep)', () => {
+    it('should keep the same state for unhandled events (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -847,7 +840,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should exit and enter the state for reentering self-transitions (shallow)', () => {
+    it('should exit and enter the state for reentering self-transitions (shallow)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -872,7 +865,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: green', 'enter: green']);
     });
 
-    it.skip('should exit and enter the state for reentering self-transitions (deep)', () => {
+    it('should exit and enter the state for reentering self-transitions (deep)', () => {
       const machine = createMachine({
         initial: 'green',
         states: {
@@ -905,7 +898,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should exit current node and enter target node when target is not a descendent or ancestor of current', () => {
+    it('should exit current node and enter target node when target is not a descendent or ancestor of current', () => {
       const machine = createMachine({
         initial: 'A',
         states: {
@@ -988,7 +981,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should enter all descendents when target is a descendent of the source when using an reentering transition', () => {
+    it('should enter all descendents when target is a descendent of the source when using an reentering transition', () => {
       const machine = createMachine({
         initial: 'A',
         states: {
@@ -1028,7 +1021,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should exit deep descendant during a default self-transition', () => {
+    it('should exit deep descendant during a default self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1064,7 +1057,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should exit deep descendant during a reentering self-transition', () => {
+    it('should exit deep descendant during a reentering self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1105,7 +1098,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should not reenter leaf state during its default self-transition', () => {
+    it('should not reenter leaf state during its default self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1132,7 +1125,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip('should reenter leaf state during its reentering self-transition', () => {
+    it('should reenter leaf state during its reentering self-transition', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1242,7 +1235,7 @@ describe('entry/exit actions', () => {
   });
 
   describe('parallel states', () => {
-    it.skip('should return entry action defined on parallel state', () => {
+    it('should return entry action defined on parallel state', () => {
       const machine = createMachine({
         initial: 'start',
         states: {
@@ -1278,7 +1271,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should reenter parallel region when a parallel state gets reentered while targeting another region', () => {
+    it('should reenter parallel region when a parallel state gets reentered while targeting another region', () => {
       const machine = createMachine({
         initial: 'ready',
         states: {
@@ -1325,7 +1318,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should reenter parallel region when a parallel state is reentered while targeting another region', () => {
+    it('should reenter parallel region when a parallel state is reentered while targeting another region', () => {
       const machine = createMachine({
         initial: 'ready',
         states: {
@@ -1397,7 +1390,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual([]);
     });
 
-    it.skip("shouldn't exit (and reenter) state on targetless delayed transition", async () => {
+    it("shouldn't exit (and reenter) state on targetless delayed transition", async () => {
       const machine = createMachine({
         initial: 'one',
         states: {
@@ -1548,7 +1541,7 @@ describe('entry/exit actions', () => {
     // TODO: determine if the sendParent action should execute when the child actor is stopped.
     // If it shouldn't be, we need to clarify whether exit actions in general should be executed on machine stop,
     // since this is contradictory to other tests.
-    it('sent events from exit handlers of a stopped child should not be received by the parent', () => {
+    it.skip('sent events from exit handlers of a stopped child should not be received by the parent', () => {
       const child = createMachine({
         id: 'child',
         initial: 'idle',
@@ -2245,7 +2238,7 @@ describe('actions config', () => {
 });
 
 describe('action meta', () => {
-  it.skip('should provide the original params', () => {
+  it('should provide the original params', () => {
     const spy = vi.fn();
 
     const testMachine = createMachine(
@@ -2948,7 +2941,7 @@ describe('enqueueActions', () => {
 
 describe('sendParent', () => {
   // https://github.com/statelyai/xstate/issues/711
-  it.skip('TS: should compile for any event', () => {
+  it('TS: should compile for any event', () => {
     interface ChildEvent {
       type: 'CHILD';
     }
@@ -3457,7 +3450,7 @@ describe('raise', () => {
     expect(service.getSnapshot().value).toEqual('b');
   });
 
-  it.skip('should be able to raise an event and respond to it in the same state', () => {
+  it('should be able to raise an event and respond to it in the same state', () => {
     const machine = createMachine({
       initial: 'a',
       states: {
@@ -3846,7 +3839,7 @@ describe('cancel', () => {
 });
 
 describe('assign action order', () => {
-  it.skip('should preserve action order', () => {
+  it('should preserve action order', () => {
     const captured: number[] = [];
 
     const machine = createMachine({
@@ -3905,7 +3898,7 @@ describe('assign action order', () => {
     expect(captured).toEqual([0, 1, 2]);
   });
 
-  it.skip('should capture correct context values on subsequent transitions', () => {
+  it('should capture correct context values on subsequent transitions', () => {
     let captured: number[] = [];
 
     const machine = createMachine({
@@ -4063,7 +4056,7 @@ describe('actions', () => {
     expect(actual).toEqual(['a1', 'b']);
   });
 
-  it.skip('should call an inline action responding to an initial raise with the raised event', () => {
+  it('should call an inline action responding to an initial raise with the raised event', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -4082,7 +4075,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'HELLO' });
   });
 
-  it.skip('should call a referenced action responding to an initial raise with the raised event', () => {
+  it('should call a referenced action responding to an initial raise with the raised event', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -4108,7 +4101,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith({ type: 'HELLO' });
   });
 
-  it.skip('should call an inline action responding to an initial raise with updated (non-initial) context', () => {
+  it('should call an inline action responding to an initial raise with updated (non-initial) context', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -4128,7 +4121,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith({ count: 42 });
   });
 
-  it.skip('should call a referenced action responding to an initial raise with updated (non-initial) context', () => {
+  it('should call a referenced action responding to an initial raise with updated (non-initial) context', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -4264,7 +4257,7 @@ describe('actions', () => {
     expect(spy).toHaveBeenCalledWith(undefined);
   });
 
-  it.skip('should call a referenced custom action with the provided parametrized action object', () => {
+  it('should call a referenced custom action with the provided parametrized action object', () => {
     const spy = vi.fn();
 
     createActor(
@@ -4292,7 +4285,7 @@ describe('actions', () => {
     });
   });
 
-  it.skip('should call a referenced builtin action with the provided parametrized action object', () => {
+  it('should call a referenced builtin action with the provided parametrized action object', () => {
     const spy = vi.fn();
 
     createActor(

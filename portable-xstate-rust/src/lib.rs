@@ -116,6 +116,114 @@ impl StateValue {
         let paths = partial.get_active_paths();
         !paths.is_empty() && paths.iter().all(|p| self.matches(p))
     }
+
+    /// Iteratively serializes the active state value into a canonical `Value` (string or nested object)
+    /// without CPU call-stack recursion.
+    pub fn to_value(&self) -> Value {
+        let mut stack: Vec<StateValueToValueFrame<'_>> = Vec::new();
+        let mut completed: Option<Value> = None;
+        let mut next_node: Option<&StateValue> = Some(self);
+
+        loop {
+            if let Some(comp) = completed.take() {
+                if let Some(top) = stack.last_mut() {
+                    match top {
+                        StateValueToValueFrame::Compound { key } => {
+                            let key_str = (*key).to_string();
+                            stack.pop();
+                            let mut map = IndexMap::new();
+                            map.insert(key_str, comp);
+                            completed = Some(Value::Object(map));
+                        }
+                        StateValueToValueFrame::Parallel {
+                            iter,
+                            map,
+                            pending_key,
+                        } => {
+                            if let Some(k) = pending_key.take() {
+                                map.insert(k.to_string(), comp);
+                            }
+                            if let Some((next_k, next_node_ref)) = iter.next() {
+                                *pending_key = Some(next_k.as_str());
+                                let node_to_eval = match next_node_ref {
+                                    StateValue::Compound(c_key, child) if c_key == next_k => {
+                                        child.as_ref()
+                                    }
+                                    other => other,
+                                };
+                                next_node = Some(node_to_eval);
+                            } else {
+                                let finished_map = core::mem::take(map);
+                                stack.pop();
+                                completed = Some(Value::Object(finished_map));
+                            }
+                        }
+                    }
+                } else {
+                    return comp;
+                }
+            } else if let Some(node) = next_node.take() {
+                match node {
+                    StateValue::Atomic(name) => {
+                        if name.is_empty() {
+                            completed = Some(Value::Object(IndexMap::new()));
+                        } else if name.contains('.') {
+                            let mut iter = name.rsplit('.');
+                            let last = iter.next().unwrap_or("").to_string();
+                            let mut acc = Value::String(last);
+                            for part in iter {
+                                let mut map = IndexMap::new();
+                                map.insert(part.to_string(), acc);
+                                acc = Value::Object(map);
+                            }
+                            completed = Some(acc);
+                        } else {
+                            completed = Some(Value::String(name.clone()));
+                        }
+                    }
+                    StateValue::Compound(name, child) => {
+                        stack.push(StateValueToValueFrame::Compound {
+                            key: name.as_str(),
+                        });
+                        next_node = Some(child.as_ref());
+                    }
+                    StateValue::Parallel(regions) => {
+                        if regions.is_empty() {
+                            completed = Some(Value::Object(IndexMap::new()));
+                        } else {
+                            let mut iter = regions.iter();
+                            let (first_k, first_node) = iter.next().unwrap();
+                            stack.push(StateValueToValueFrame::Parallel {
+                                iter,
+                                map: IndexMap::new(),
+                                pending_key: Some(first_k.as_str()),
+                            });
+                            let node_to_eval = match first_node {
+                                StateValue::Compound(c_key, child) if c_key == first_k => {
+                                    child.as_ref()
+                                }
+                                other => other,
+                            };
+                            next_node = Some(node_to_eval);
+                        }
+                    }
+                }
+            } else {
+                return completed.unwrap_or_else(|| Value::Object(IndexMap::new()));
+            }
+        }
+    }
+}
+
+enum StateValueToValueFrame<'a> {
+    Compound {
+        key: &'a str,
+    },
+    Parallel {
+        iter: indexmap::map::Iter<'a, String, StateValue>,
+        map: IndexMap<String, Value>,
+        pending_key: Option<&'a str>,
+    },
 }
 
 fn push_state_value_children(val: &mut StateValue, stack: &mut Vec<StateValue>) {
@@ -208,7 +316,7 @@ pub fn matches_event_descriptor_with_warn<F: FnMut(String)>(
     true
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -328,6 +436,235 @@ impl Drop for Value {
     }
 }
 
+enum ValueCloneFrame<'a> {
+    Array {
+        iter: core::slice::Iter<'a, Value>,
+        cloned: Vec<Value>,
+    },
+    Object {
+        iter: indexmap::map::Iter<'a, String, Value>,
+        cloned: IndexMap<String, Value>,
+        pending_key: Option<&'a str>,
+    },
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        match self {
+            Value::Null => return Value::Null,
+            Value::Bool(b) => return Value::Bool(*b),
+            Value::Number(n) => return Value::Number(*n),
+            Value::String(s) => return Value::String(s.clone()),
+            Value::Array(a) if a.is_empty() => return Value::Array(Vec::new()),
+            Value::Object(o) if o.is_empty() => return Value::Object(IndexMap::new()),
+            _ => {}
+        }
+
+        let mut stack: Vec<ValueCloneFrame<'_>> = Vec::with_capacity(16);
+        let mut completed: Option<Value> = None;
+
+        match self {
+            Value::Array(a) => {
+                stack.push(ValueCloneFrame::Array {
+                    iter: a.iter(),
+                    cloned: Vec::with_capacity(a.len()),
+                });
+            }
+            Value::Object(o) => {
+                stack.push(ValueCloneFrame::Object {
+                    iter: o.iter(),
+                    cloned: IndexMap::with_capacity(o.len()),
+                    pending_key: None,
+                });
+            }
+            _ => unreachable!(),
+        }
+
+        loop {
+            if let Some(comp) = completed.take() {
+                if let Some(top) = stack.last_mut() {
+                    match top {
+                        ValueCloneFrame::Array { cloned, .. } => {
+                            cloned.push(comp);
+                        }
+                        ValueCloneFrame::Object {
+                            cloned,
+                            pending_key,
+                            ..
+                        } => {
+                            let key = pending_key
+                                .take()
+                                .expect("pending_key must exist when child container finishes");
+                            cloned.insert(key.to_string(), comp);
+                        }
+                    }
+                } else {
+                    return comp;
+                }
+            } else if let Some(top) = stack.last_mut() {
+                match top {
+                    ValueCloneFrame::Array { iter, cloned } => {
+                        let mut child_frame = None;
+                        for item in iter.by_ref() {
+                            match item {
+                                Value::Null => cloned.push(Value::Null),
+                                Value::Bool(b) => cloned.push(Value::Bool(*b)),
+                                Value::Number(n) => cloned.push(Value::Number(*n)),
+                                Value::String(s) => cloned.push(Value::String(s.clone())),
+                                Value::Array(a) if a.is_empty() => {
+                                    cloned.push(Value::Array(Vec::new()))
+                                }
+                                Value::Object(o) if o.is_empty() => {
+                                    cloned.push(Value::Object(IndexMap::new()))
+                                }
+                                Value::Array(a) => {
+                                    child_frame = Some(ValueCloneFrame::Array {
+                                        iter: a.iter(),
+                                        cloned: Vec::with_capacity(a.len()),
+                                    });
+                                    break;
+                                }
+                                Value::Object(o) => {
+                                    child_frame = Some(ValueCloneFrame::Object {
+                                        iter: o.iter(),
+                                        cloned: IndexMap::with_capacity(o.len()),
+                                        pending_key: None,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Some(frame) = child_frame {
+                            stack.push(frame);
+                        } else {
+                            let frame = stack.pop().unwrap();
+                            if let ValueCloneFrame::Array { cloned, .. } = frame {
+                                completed = Some(Value::Array(cloned));
+                            }
+                        }
+                    }
+                    ValueCloneFrame::Object {
+                        iter,
+                        cloned,
+                        pending_key,
+                    } => {
+                        let mut child_frame = None;
+                        for (k, v) in iter.by_ref() {
+                            match v {
+                                Value::Null => {
+                                    cloned.insert(k.clone(), Value::Null);
+                                }
+                                Value::Bool(b) => {
+                                    cloned.insert(k.clone(), Value::Bool(*b));
+                                }
+                                Value::Number(n) => {
+                                    cloned.insert(k.clone(), Value::Number(*n));
+                                }
+                                Value::String(s) => {
+                                    cloned.insert(k.clone(), Value::String(s.clone()));
+                                }
+                                Value::Array(a) if a.is_empty() => {
+                                    cloned.insert(k.clone(), Value::Array(Vec::new()));
+                                }
+                                Value::Object(o) if o.is_empty() => {
+                                    cloned.insert(k.clone(), Value::Object(IndexMap::new()));
+                                }
+                                Value::Array(a) => {
+                                    *pending_key = Some(k.as_str());
+                                    child_frame = Some(ValueCloneFrame::Array {
+                                        iter: a.iter(),
+                                        cloned: Vec::with_capacity(a.len()),
+                                    });
+                                    break;
+                                }
+                                Value::Object(o) => {
+                                    *pending_key = Some(k.as_str());
+                                    child_frame = Some(ValueCloneFrame::Object {
+                                        iter: o.iter(),
+                                        cloned: IndexMap::with_capacity(o.len()),
+                                        pending_key: None,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Some(frame) = child_frame {
+                            stack.push(frame);
+                        } else {
+                            let frame = stack.pop().unwrap();
+                            if let ValueCloneFrame::Object { cloned, .. } = frame {
+                                completed = Some(Value::Object(cloned));
+                            }
+                        }
+                    }
+                }
+            } else {
+                return completed.unwrap_or(Value::Null);
+            }
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        if core::ptr::eq(self, other) {
+            return true;
+        }
+
+        let mut stack: Vec<(&Value, &Value)> = Vec::new();
+        stack.push((self, other));
+
+        while let Some((a, b)) = stack.pop() {
+            if core::ptr::eq(a, b) {
+                continue;
+            }
+
+            match (a, b) {
+                (Value::Null, Value::Null) => {}
+                (Value::Bool(b1), Value::Bool(b2)) => {
+                    if b1 != b2 {
+                        return false;
+                    }
+                }
+                (Value::Number(n1), Value::Number(n2)) => {
+                    if n1 != n2 {
+                        return false;
+                    }
+                }
+                (Value::String(s1), Value::String(s2)) => {
+                    if s1 != s2 {
+                        return false;
+                    }
+                }
+                (Value::Array(arr1), Value::Array(arr2)) => {
+                    if arr1.len() != arr2.len() {
+                        return false;
+                    }
+                    for (item1, item2) in arr1.iter().zip(arr2.iter()) {
+                        stack.push((item1, item2));
+                    }
+                }
+                (Value::Object(map1), Value::Object(map2)) => {
+                    if map1.len() != map2.len() {
+                        return false;
+                    }
+                    for (k, v1) in map1 {
+                        match map2.get(k) {
+                            Some(v2) => stack.push((v1, v2)),
+                            None => return false,
+                        }
+                    }
+                }
+                _ => return false,
+            }
+        }
+
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum StateType {
     Atomic,
@@ -340,7 +677,6 @@ pub enum StateType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateDefinition {
     pub id: Option<String>,
-    pub type_: Option<String>, // "parallel", "compound", etc. (legacy string)
     pub state_type: StateType, // Enum representation
     pub initial: Option<String>,
     pub initial_actions: Vec<Action>,
@@ -365,7 +701,7 @@ pub struct InvokeDefinition {
 impl StateDefinition {
     pub fn default_atomic() -> Self {
         Self {
-            id: None, type_: None, state_type: StateType::Atomic, initial: None, 
+            id: None, state_type: StateType::Atomic, initial: None, 
             initial_actions: vec![],
             states: IndexMap::new(), on: IndexMap::new(), after: IndexMap::new(), entry: vec![], exit: vec![], 
             history: None, history_target: None, tags: vec![], invoke: vec![], history_actions: vec![]
@@ -405,7 +741,7 @@ pub enum HistoryType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransitionDefinition {
     pub target: Option<Vec<String>>,
-    pub cond: Option<TransitionGuard>,
+    pub guard: Option<TransitionGuard>,
     pub actions: Vec<Action>,
     pub reenter: bool,
 }
@@ -445,7 +781,6 @@ pub struct GenericAction {
 #[derive(Clone)]
 pub struct MachineDefinition {
     pub id: String,
-    pub type_: Option<String>,
     pub state_type: StateType,
     pub initial: String, pub initial_actions: Vec<Action>,
     pub states: IndexMap<String, StateDefinition>,
@@ -505,6 +840,7 @@ pub struct RuntimeMachine {
     pub history_value: IndexMap<String, StateValue>,
     pub initial_actions: Vec<Action>,
     pub is_started: bool,
+    pub is_initialized: bool,
     pub status: MachineStatus,
     pub guards: IndexMap<String, GuardFunction>,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
@@ -546,6 +882,7 @@ impl RuntimeMachine {
             history_value: IndexMap::new(),
             initial_actions: dummy,
             is_started: false,
+            is_initialized: false,
             status: MachineStatus::Active,
             guards: IndexMap::new(),
             active_timers: Vec::new(),
@@ -588,10 +925,7 @@ impl RuntimeMachine {
         !active_paths.is_empty()
             && active_paths.iter().all(|p| {
                 self.get_state_definition(p)
-                    .map(|def| {
-                        matches!(def.state_type, StateType::Final)
-                            || def.type_.as_deref() == Some("final")
-                    })
+                    .map(|def| matches!(def.state_type, StateType::Final))
                     .unwrap_or(false)
             })
     }
@@ -646,6 +980,237 @@ impl RuntimeMachine {
             }
         }
         false
+    }
+
+    pub fn get_tags(&self) -> Vec<String> {
+        let mut tags = Vec::new();
+        let active_paths = self.current_state.get_active_paths();
+        for path in &active_paths {
+            let mut current_path: &str = path.as_str();
+            while !current_path.is_empty() {
+                if let Some(def) = Self::get_state_def_recursive(&self.definition.states, current_path) {
+                    for tag in &def.tags {
+                        if !tags.contains(tag) {
+                            tags.push(tag.clone());
+                        }
+                    }
+                }
+                if let Some(idx) = current_path.rfind('.') {
+                    current_path = &current_path[..idx];
+                } else {
+                    break;
+                }
+            }
+        }
+        tags
+    }
+
+    pub fn compute_persisted_history_value(&self) -> Value {
+        let mut history_map = IndexMap::new();
+        let active_paths = self.current_state.get_active_paths();
+
+        for (id, path) in &self.definition.id_map {
+            if let Some(def) = self.get_state_definition(path) {
+                if matches!(def.state_type, StateType::History { .. }) {
+                    let parent_path = if let Some(idx) = path.rfind('.') {
+                        &path[..idx]
+                    } else {
+                        ""
+                    };
+                    let mut target_to_serialize: Option<String> = None;
+                    let matching_active_path = active_paths.iter().find(|p| {
+                        if parent_path.is_empty() {
+                            !p.is_empty()
+                        } else {
+                            *p == parent_path || p.starts_with(&alloc::format!("{}.", parent_path))
+                        }
+                    });
+
+                    if let Some(active_path) = matching_active_path {
+                        let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
+                        if active_path.len() > prefix_len {
+                            let rest = &active_path[prefix_len..];
+                            if let Some(end) = rest.find('.') {
+                                let child = &rest[0..end];
+                                target_to_serialize = Some(if parent_path.is_empty() { child.to_string() } else { alloc::format!("{}.{}", parent_path, child) });
+                            } else {
+                                target_to_serialize = Some(if parent_path.is_empty() { rest.to_string() } else { alloc::format!("{}.{}", parent_path, rest) });
+                            }
+                        }
+                    }
+
+                    if target_to_serialize.is_none() {
+                        if let Some(stored) = self.history_value.get(parent_path) {
+                            let stored_paths = stored.get_active_paths();
+                            target_to_serialize = stored_paths
+                                .iter()
+                                .find(|p| {
+                                    if parent_path.is_empty() {
+                                        !p.is_empty()
+                                    } else {
+                                        *p == parent_path || p.starts_with(&alloc::format!("{}.", parent_path))
+                                    }
+                                })
+                                .or_else(|| stored_paths.first())
+                                .cloned();
+                        }
+                    }
+
+                    if let Some(target) = &target_to_serialize {
+                        if let Some(p_def) = self.get_state_definition(parent_path) {
+                            if let Some(initial_key) = &p_def.initial {
+                                let full_initial = if parent_path.is_empty() { initial_key.clone() } else { alloc::format!("{}.{}", parent_path, initial_key) };
+                                if *target == full_initial {
+                                    target_to_serialize = None;
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(target_path) = target_to_serialize {
+                        // Find target state ID from id_map
+                        let target_id = self.definition.id_map.iter()
+                            .find(|(k, v)| v.as_str() == target_path.as_str() && !k.starts_with('('))
+                            .map(|(k, _)| k.clone())
+                            .unwrap_or_else(|| {
+                                self.definition.id_map.iter()
+                                    .find(|(_, v)| v.as_str() == target_path.as_str())
+                                    .map(|(k, _)| k.clone())
+                                    .unwrap_or_else(|| alloc::format!("{}.{}", self.definition.id, target_path))
+                            });
+
+                        let mut entry_obj = IndexMap::new();
+                        entry_obj.insert("id".to_string(), Value::String(target_id));
+                        history_map.insert(id.clone(), Value::Array(alloc::vec![Value::Object(entry_obj)]));
+                    }
+                }
+            }
+        }
+
+        Value::Object(history_map)
+    }
+
+    pub fn get_persisted_snapshot_value(&self) -> Value {
+        let mut map = IndexMap::new();
+        map.insert("status".to_string(), Value::String(self.status().as_str().to_string()));
+        map.insert("value".to_string(), self.current_state.to_value());
+        map.insert("context".to_string(), self.context.clone());
+        map.insert("historyValue".to_string(), self.compute_persisted_history_value());
+        map.insert(
+            "tags".to_string(),
+            Value::Array(self.get_tags().into_iter().map(Value::String).collect()),
+        );
+        map.insert("children".to_string(), Value::Object(IndexMap::new()));
+        Value::Object(map)
+    }
+
+    pub fn get_persisted_snapshot_json(&self) -> alloc::string::String {
+        self.get_persisted_snapshot_value().to_json_string()
+    }
+
+    pub fn get_snapshot_json(&self) -> alloc::string::String {
+        self.get_persisted_snapshot_json()
+    }
+
+    pub fn restore_from_snapshot_value_owned(&mut self, val: Value) -> Result<(), &'static str> {
+        let mut map = match val.into_object() {
+            Some(m) => m,
+            None => return Err("Snapshot must be a JSON object"),
+        };
+
+        // 1. Status
+        if let Some(status_val) = map.swap_remove("status") {
+            if let Some(s) = status_val.as_string() {
+                match s.as_str() {
+                    "stopped" => self.status = MachineStatus::Stopped,
+                    "done" => self.status = MachineStatus::Done,
+                    "active" => self.status = MachineStatus::Active,
+                    _ => {}
+                }
+            }
+        }
+
+        // 2. Value
+        if let Some(state_val) = map.swap_remove("value") {
+            if !matches!(state_val, Value::Null) {
+                self.current_state = value_to_state_value(state_val);
+                self.is_initialized = true;
+            }
+        }
+
+        // 3. Context
+        if let Some(ctx_val) = map.swap_remove("context") {
+            if !matches!(ctx_val, Value::Null) {
+                self.context = ctx_val;
+            }
+        }
+
+        // 4. History Value
+        let history_entry = map.swap_remove("historyValue").or_else(|| map.swap_remove("history"));
+        if let Some(h_val) = history_entry {
+            if let Some(hist_map) = h_val.into_object() {
+                self.history_value.clear();
+                for (k, mut v) in hist_map {
+                    let parent_path = if let Some(history_node_path) = self.definition.id_map.get(&k) {
+                        if let Some(idx) = history_node_path.rfind('.') {
+                            history_node_path[0..idx].to_string()
+                        } else {
+                            alloc::string::String::new()
+                        }
+                    } else if let Some(idx) = k.rfind('.') {
+                        k[0..idx].to_string()
+                    } else {
+                        k
+                    };
+
+                    match &mut v {
+                        Value::Array(arr) => {
+                            let mut longest_path: Option<String> = None;
+                            for item in arr.iter() {
+                                if let Some(id_val) = item.as_object().and_then(|o| o.get("id")).and_then(|i| i.as_string()) {
+                                    if let Some(path) = self.definition.id_map.get(id_val) {
+                                        match &longest_path {
+                                            None => longest_path = Some(path.clone()),
+                                            Some(curr) => {
+                                                if path.len() > curr.len() {
+                                                    longest_path = Some(path.clone());
+                                                }
+                                            }
+                                        }
+                                    } else if let Some(warn) = &self.warn_fn {
+                                        warn(&alloc::format!("Could not resolve StateNode for id: {}", id_val));
+                                    }
+                                }
+                            }
+                            if let Some(p) = longest_path {
+                                self.history_value.insert(parent_path, StateValue::Atomic(p));
+                            }
+                        }
+                        Value::String(s) => {
+                            self.history_value.insert(parent_path, StateValue::Atomic(core::mem::take(s)));
+                        }
+                        Value::Object(_) => {
+                            let obj = core::mem::replace(&mut v, Value::Null);
+                            self.history_value.insert(parent_path, value_to_state_value(obj));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        self.revive_timers();
+        self.refresh_status();
+        Ok(())
+    }
+
+    pub fn restore_from_snapshot_value(&mut self, val: &Value) -> Result<(), &'static str> {
+        self.restore_from_snapshot_value_owned(val.clone())
+    }
+
+    pub fn restore_from_snapshot_json(&mut self, json_str: &str) -> Result<(), &'static str> {
+        let val = Value::from_json(json_str).map_err(|_| "Invalid JSON for snapshot")?;
+        self.restore_from_snapshot_value_owned(val)
     }
 
     pub fn can(&self, event_name: &str) -> bool {
@@ -710,8 +1275,8 @@ impl RuntimeMachine {
                 Vec::new()
             };
             for t in candidates {
-                if let Some(cond) = &t.cond {
-                    let is_allowed = match cond {
+                if let Some(guard) = &t.guard {
+                    let is_allowed = match guard {
                         TransitionGuard::Name(n) => guards
                             .get(n)
                             .or_else(|| self.guards.get(n))
@@ -787,6 +1352,22 @@ impl RuntimeMachine {
             self.guards.insert(k.clone(), v.clone());
         }
         self.is_started = true;
+
+        if self.is_initialized {
+            self.revive_timers();
+            self.is_processing = true;
+            let mut init_map = IndexMap::new();
+            init_map.insert("type".to_string(), Value::String("xstate.init".to_string()));
+            let init_event = Value::Object(init_map);
+            let _ = self.transition_internal("", &init_event, guards, actions, 0, None);
+            let _ = self.drain_internal_queue(guards, actions);
+            self.is_processing = false;
+            let _ = self.drain_external_queue(guards, actions);
+            self.refresh_status();
+            return;
+        }
+
+        self.is_initialized = true;
         self.is_processing = true;
 
         let mut init_map = IndexMap::new();
@@ -1445,9 +2026,9 @@ impl RuntimeMachine {
             };
 
             if !candidates.is_empty() {
-                 for t in candidates {
-                       if let Some(cond) = &t.cond {
-                           let is_allowed = match cond {
+                  for t in candidates {
+                       if let Some(guard) = &t.guard {
+                           let is_allowed = match guard {
                                TransitionGuard::Name(n) => guards
                                    .get(n)
                                    .or_else(|| self.guards.get(n))
@@ -1527,7 +2108,7 @@ impl RuntimeMachine {
                       let mut next_val_opt: Option<StateValue> = None;
                       
                       if let Some(target_def) = target_def_opt {
-                           if target_def.type_.as_deref() == Some("history") || matches!(target_def.state_type, StateType::History{..}) {
+                           if matches!(target_def.state_type, StateType::History { .. }) {
                                 let history_parent = if let Some(idx) = target_full.rfind('.') { target_full[..idx].to_string() } else { "".to_string() };
                                 let is_deep = target_def.history == Some(HistoryType::Deep) || matches!(target_def.state_type, StateType::History{deep: true});
                                 let mut hist_opt = self.history_value.get(&history_parent).cloned();

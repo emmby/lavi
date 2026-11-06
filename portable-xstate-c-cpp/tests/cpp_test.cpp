@@ -303,6 +303,139 @@ int main() {
         q_stop.send("START");
         assert(q_stop.matches("idle"));
 
+        // Snapshot serialization and restoration test
+        const char* SNAPSHOT_CPP_JSON = R"({
+          "id": "snapshotCppMachine",
+          "initial": "idle",
+          "context": { "count": 10, "label": "test" },
+          "states": {
+            "idle": {
+              "on": {
+                "INC": {
+                  "actions": [
+                    { "type": "xstate.assign", "assignment": { "count": 25, "label": "updated" } }
+                  ],
+                  "target": "active.sub1"
+                }
+              }
+            },
+            "active": {
+              "initial": "sub1",
+              "states": {
+                "hist": { "type": "history" },
+                "sub1": {
+                  "on": { "GO2": "sub2" }
+                },
+                "sub2": {
+                  "on": { "LEAVE": "#snapshotCppMachine.suspended" }
+                }
+              }
+            },
+            "suspended": {
+              "on": { "BACK": "active.hist" }
+            }
+          }
+        })";
+
+        xstate::PortableXState snap_m1(SNAPSHOT_CPP_JSON);
+        snap_m1.start();
+        snap_m1.send("INC");
+        assert(snap_m1.matches("active.sub1"));
+        snap_m1.send("GO2");
+        assert(snap_m1.matches("active.sub2"));
+        snap_m1.send("LEAVE");
+        assert(snap_m1.matches("suspended"));
+
+        // Serialize snapshot
+        std::string snap_str = snap_m1.get_snapshot();
+        assert(!snap_str.empty());
+        assert(snap_str.find("\"suspended\"") != std::string::npos);
+        assert(snap_str.find("\"updated\"") != std::string::npos);
+
+        // Restore into fresh machine before start()
+        xstate::PortableXState snap_m2(SNAPSHOT_CPP_JSON);
+        assert(snap_m2.restore_snapshot(snap_str));
+        assert(snap_m2.matches("suspended"));
+
+        // Resuming from history must restore sub2
+        snap_m2.send("BACK");
+        assert(snap_m2.matches("active.sub2"));
+        assert(!snap_m2.matches("active.sub1"));
+
+        // Error handling validation
+        xstate::PortableXState snap_err(SNAPSHOT_CPP_JSON);
+        assert(!snap_err.restore_snapshot(""));
+        assert(!snap_err.restore_snapshot("{ malformed json ]"));
+
+        // Snapshot status parity test across active, done, and stopped states
+        const char* STATUS_CPP_JSON = R"({
+          "id": "statusCppFsm",
+          "initial": "s1",
+          "states": {
+            "s1": { "on": { "STEP": "s2", "FINISH": "doneState" } },
+            "s2": { "on": { "FINISH": "doneState" } },
+            "doneState": { "type": "final" }
+          }
+        })";
+
+        // 1. ACTIVE
+        xstate::PortableXState cpp_act(STATUS_CPP_JSON);
+        cpp_act.start();
+        cpp_act.send("STEP");
+        assert(cpp_act.matches("s2"));
+        assert(!cpp_act.isDone());
+        std::string act_snap = cpp_act.get_snapshot();
+        assert(act_snap.find("\"status\":\"active\"") != std::string::npos);
+
+        xstate::PortableXState cpp_act_res(STATUS_CPP_JSON);
+        assert(cpp_act_res.restore_snapshot(act_snap));
+        assert(cpp_act_res.matches("s2"));
+        assert(!cpp_act_res.isDone());
+        cpp_act_res.send("FINISH");
+        assert(cpp_act_res.matches("doneState"));
+        assert(cpp_act_res.isDone());
+
+        // 2. DONE
+        xstate::PortableXState cpp_done(STATUS_CPP_JSON);
+        cpp_done.start();
+        cpp_done.send("FINISH");
+        assert(cpp_done.matches("doneState"));
+        assert(cpp_done.isDone());
+        std::string done_snap = cpp_done.get_snapshot();
+        assert(done_snap.find("\"status\":\"done\"") != std::string::npos);
+
+        xstate::PortableXState cpp_done_res(STATUS_CPP_JSON);
+        assert(cpp_done_res.restore_snapshot(done_snap));
+        assert(cpp_done_res.matches("doneState"));
+        assert(cpp_done_res.isDone());
+        std::string done_res_snap = cpp_done_res.get_snapshot();
+        assert(done_res_snap.find("\"status\":\"done\"") != std::string::npos);
+        // Ignores events
+        cpp_done_res.send("STEP");
+        assert(cpp_done_res.matches("doneState"));
+        assert(cpp_done_res.isDone());
+
+        // 3. STOPPED
+        xstate::PortableXState cpp_stop(STATUS_CPP_JSON);
+        cpp_stop.start();
+        cpp_stop.send("STEP");
+        cpp_stop.stop();
+        assert(cpp_stop.matches("s2"));
+        assert(!cpp_stop.isDone());
+        std::string stop_snap = cpp_stop.get_snapshot();
+        assert(stop_snap.find("\"status\":\"stopped\"") != std::string::npos);
+
+        xstate::PortableXState cpp_stop_res(STATUS_CPP_JSON);
+        assert(cpp_stop_res.restore_snapshot(stop_snap));
+        assert(cpp_stop_res.matches("s2"));
+        assert(!cpp_stop_res.isDone());
+        // Drops events
+        cpp_stop_res.send("FINISH");
+        assert(cpp_stop_res.matches("s2"));
+        assert(!cpp_stop_res.matches("doneState"));
+        std::string stop_res_snap = cpp_stop_res.get_snapshot();
+        assert(stop_res_snap.find("\"status\":\"stopped\"") != std::string::npos);
+
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
         return 1;

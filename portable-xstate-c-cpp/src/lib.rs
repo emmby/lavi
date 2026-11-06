@@ -597,6 +597,69 @@ pub extern "C" fn fsm_register_guard(
     0
 }
 
+#[no_mangle]
+pub extern "C" fn fsm_get_snapshot_json(
+    ptr: *const MachineContext,
+    buffer: *mut c_char,
+    buffer_len: usize,
+) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &*ptr };
+    let json = ctx.machine.get_persisted_snapshot_json();
+    let json_bytes = json.as_bytes();
+    let needed_len = json_bytes.len() + 1;
+
+    if needed_len > i32::MAX as usize {
+        return -3;
+    }
+
+    if buffer.is_null() || buffer_len == 0 {
+        return needed_len as i32;
+    }
+
+    if buffer_len < needed_len {
+        return -2;
+    }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(json_bytes.as_ptr(), buffer as *mut u8, json_bytes.len());
+        *buffer.add(json_bytes.len()) = 0;
+    }
+
+    json_bytes.len() as i32
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_restore_snapshot_json(
+    ptr: *mut MachineContext,
+    json_ptr: *const c_char,
+) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    if json_ptr.is_null() {
+        return -2;
+    }
+    let c_str = unsafe { CStr::from_ptr(json_ptr) };
+    let json_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    let ctx = unsafe { &mut *ptr };
+    match ctx.machine.restore_from_snapshot_json(json_str) {
+        Ok(()) => {
+            if ctx.machine.status != portable_xstate_rust::MachineStatus::Stopped {
+                ctx.machine.is_started = true;
+            }
+            ctx.machine.revive_timers();
+            0
+        }
+        Err(_) => -4,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1171,6 +1234,75 @@ mod tests {
         assert_eq!(fsm_is_done(m2), 0);
         fsm_send_event(m2, ev_start.as_ptr());
         assert!(fsm_matches(m2, state_idle.as_ptr()));
+        fsm_free(m2);
+    }
+
+    #[test]
+    fn test_snapshot_persistence_ffi() {
+        let json = CString::new(r#"{
+          "id": "snapFfi",
+          "initial": "a",
+          "context": { "count": 0 },
+          "states": {
+            "a": {
+              "on": {
+                "NEXT": {
+                  "target": "b",
+                  "actions": [
+                    { "type": "xstate.assign", "assignment": { "count": 42 } }
+                  ]
+                }
+              }
+            },
+            "b": {
+              "on": { "FINISH": "c" }
+            },
+            "c": { "type": "final" }
+          }
+        }"#).unwrap();
+
+        let m1 = fsm_create(json.as_ptr());
+        assert!(!m1.is_null());
+        fsm_start(m1);
+
+        let ev_next = CString::new("NEXT").unwrap();
+        fsm_send_event(m1, ev_next.as_ptr());
+        let state_b = CString::new("b").unwrap();
+        assert!(fsm_matches(m1, state_b.as_ptr()));
+
+        // 1. Probe length
+        let req = fsm_get_snapshot_json(m1, ptr::null_mut(), 0);
+        assert!(req > 0);
+
+        // 2. Buffer too small
+        let mut small_buf = [0 as c_char; 4];
+        assert_eq!(fsm_get_snapshot_json(m1, small_buf.as_mut_ptr(), 4), -2);
+
+        // 3. Serialize
+        let mut snap_buf = alloc::vec![0 as c_char; req as usize];
+        let written = fsm_get_snapshot_json(m1, snap_buf.as_mut_ptr(), req as usize);
+        assert!(written > 0);
+        assert_eq!(written as usize, req as usize - 1);
+
+        // 4. Null checks
+        assert_eq!(fsm_get_snapshot_json(ptr::null(), snap_buf.as_mut_ptr(), req as usize), -1);
+        assert_eq!(fsm_restore_snapshot_json(ptr::null_mut(), snap_buf.as_ptr()), -1);
+        assert_eq!(fsm_restore_snapshot_json(m1, ptr::null()), -2);
+
+        // 5. Restore into new machine
+        let m2 = fsm_create(json.as_ptr());
+        assert!(!m2.is_null());
+        assert_eq!(fsm_restore_snapshot_json(m2, snap_buf.as_ptr()), 0);
+        assert!(fsm_matches(m2, state_b.as_ptr()));
+
+        // 6. Transition restored machine to final state
+        let ev_finish = CString::new("FINISH").unwrap();
+        fsm_send_event(m2, ev_finish.as_ptr());
+        let state_c = CString::new("c").unwrap();
+        assert!(fsm_matches(m2, state_c.as_ptr()));
+        assert_eq!(fsm_is_done(m2), 1);
+
+        fsm_free(m1);
         fsm_free(m2);
     }
 }

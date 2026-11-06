@@ -22,15 +22,375 @@
       "allowed_skips": []
     },
     "actions.test.ts": {
-      "status": "legacy-baseline",
-      "legacy_baseline_sha256": "e1246ba9efb1102b212506ff40a71f06299c377d25f74e761a8c02c146f73817",
-      "tech_debt_id": "TD-2",
-      "allowed_skips": []
+      "status": "strict",
+      "allowed_skips": [
+        {
+          "title": "root entry/exit actions should be called on root reentering transitions",
+          "category": "unimplemented-feature",
+          "feature": "root-reentering",
+          "reason": "Root-level reentering transitions with reenter: true on root machine node are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should exit current node and reenter target node when target is ancestor of current",
+          "category": "unimplemented-feature",
+          "feature": "ancestor-reentering",
+          "reason": "SCXML external transition domain resolution when targeting ancestor state node (#parent) is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should not enter exited state when targeting its ancestor and when its former descendant gets selected through initial state",
+          "category": "unimplemented-feature",
+          "feature": "ancestor-reentering",
+          "reason": "SCXML external transition domain resolution when targeting ancestor state node (#parent) is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should not enter exited state when targeting its ancestor and when its latter descendant gets selected through initial state",
+          "category": "unimplemented-feature",
+          "feature": "ancestor-reentering",
+          "reason": "SCXML external transition domain resolution when targeting ancestor state node (#parent) is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "shouldn't exit a state on a parent's targetless transition",
+          "category": "unimplemented-feature",
+          "feature": "targetless-transition-domain",
+          "reason": "Internal targetless transitions should not exit active descendant states",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "exit actions should be called when invoked machine reaches its final state",
+          "category": "unimplemented-feature",
+          "feature": "invoke",
+          "reason": "Invoked actor lifecycle (invoke: { src }) is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "an exit action executed when an interpreter reaches its final state should be called with the last received event",
+          "category": "unimplemented-feature",
+          "feature": "exit-action-event",
+          "reason": "Root exit action parameter passing upon machine final state is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "sent events from exit handlers of a done child should be received by the parent ",
+          "category": "unimplemented-feature",
+          "feature": "actor-model",
+          "reason": "Child actor event communication (sendParent / spawnChild) is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "sent events from exit handlers of a done child should be received by its children",
+          "category": "unimplemented-feature",
+          "feature": "actor-model",
+          "reason": "Child actor event communication (sendParent / spawnChild) is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should support initial actions from transition",
+          "category": "unimplemented-feature",
+          "feature": "initial-transition-order",
+          "reason": "Action execution ordering between initial state entry actions and initial transition actions is not yet supported in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute actions of the initial transition when taking a root reentering self-transition",
+          "category": "unimplemented-feature",
+          "feature": "root-reentering",
+          "reason": "Root-level reentering transitions with reenter: true on root machine node are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should provide the action with resolved params when they are dynamic",
+          "category": "unimplemented-feature",
+          "feature": "dynamic-params",
+          "reason": "Dynamic action parameter resolution functions ({ context, event }) => params are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should resolve dynamic params using context value",
+          "category": "unimplemented-feature",
+          "feature": "dynamic-params",
+          "reason": "Dynamic action parameter resolution functions ({ context, event }) => params are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should resolve dynamic params using event value",
+          "category": "unimplemented-feature",
+          "feature": "dynamic-params",
+          "reason": "Dynamic action parameter resolution functions ({ context, event }) => params are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should provide self",
+          "category": "unimplemented-feature",
+          "feature": "action-self",
+          "reason": "self ActorRef parameter in action callback parameters is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should forward an event to a service",
+          "category": "unimplemented-feature",
+          "feature": "forwardTo",
+          "reason": "forwardTo actor communication action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should forward an event to a service (dynamic)",
+          "category": "unimplemented-feature",
+          "feature": "forwardTo",
+          "reason": "forwardTo actor communication action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should not cause an infinite loop when forwarding to undefined",
+          "category": "unimplemented-feature",
+          "feature": "forwardTo",
+          "reason": "forwardTo actor communication action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should log a string",
+          "category": "unimplemented-feature",
+          "feature": "log",
+          "reason": "log built-in action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should log an expression",
+          "category": "unimplemented-feature",
+          "feature": "log",
+          "reason": "log built-in action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute a simple referenced action",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute multiple different referenced actions",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute multiple same referenced actions",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute a parameterized action",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute a function",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute a builtin action using its own action creator",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute a builtin action using its bound action creator",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should execute assigns when resolving the initial snapshot",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to check a simple referenced guard",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to check a parameterized guard",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to communicate with the parent using params",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should enqueue.sendParent",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to send an event to an actor",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to send an event from expression to an actor",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to send an event to a named actor",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to send an event directly to an ActorRef",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to read from event",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should error if given a string",
+          "category": "unimplemented-feature",
+          "feature": "raise-sendTo-validation",
+          "reason": "Runtime input validation and observer error channel delivery for action creators (raise, sendTo) are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "a self-event \"handler\" of an event sent using sendTo should be able to read updated snapshot of self",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should not attempt to deliver a delayed event to the spawned actor's ID that was stopped since the event was scheduled",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should not attempt to deliver a delayed event to the invoked actor's ID that was stopped since the event was scheduled",
+          "category": "unimplemented-feature",
+          "feature": "sendTo",
+          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to send a delayed event to itself",
+          "category": "unimplemented-feature",
+          "feature": "delayed-raise",
+          "reason": "Delayed raise actions with fake timers / deadline scheduling are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to send a delayed event to itself with delay = 0",
+          "category": "unimplemented-feature",
+          "feature": "delayed-raise",
+          "reason": "Delayed raise actions with fake timers / deadline scheduling are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to raise a delayed event and respond to it in the same state",
+          "category": "unimplemented-feature",
+          "feature": "delayed-raise",
+          "reason": "Delayed raise actions with fake timers / deadline scheduling are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should accept event expression",
+          "category": "unimplemented-feature",
+          "feature": "dynamic-raise",
+          "reason": "Dynamic raise event expression functions ({ context, event }) => ... are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be possible to access context in the event expression",
+          "category": "unimplemented-feature",
+          "feature": "dynamic-raise",
+          "reason": "Dynamic raise event expression functions ({ context, event }) => ... are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it first",
+          "category": "unimplemented-feature",
+          "feature": "cancel-child",
+          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it second",
+          "category": "unimplemented-feature",
+          "feature": "cancel-child",
+          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should not be able to cancel a just scheduled non-delayed event to a just invoked child",
+          "category": "unimplemented-feature",
+          "feature": "cancel-child",
+          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should be able to cancel a just scheduled delayed event to a just invoked child",
+          "category": "unimplemented-feature",
+          "feature": "cancel-child",
+          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should deeply preserve action order",
+          "category": "unimplemented-feature",
+          "feature": "enqueueActions",
+          "reason": "enqueueActions action creator is not yet implemented in portable-xstate",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should warn if called in custom action",
+          "category": "non-js-constraint",
+          "reason": "Dev-mode warning snapshot assertions for illegal imperative action calls in custom actions are host-specific JS runtime behavior",
+          "ref": "XSTATE_5_FEATURES.md"
+        }
+      ]
     },
     "after.test.ts": {
-      "status": "legacy-baseline",
-      "legacy_baseline_sha256": "84d140525275a8b6a84f3db51a2c5f67679d03c5ca10e1fd9fe27acb3684978c",
-      "tech_debt_id": "TD-1",
+      "status": "strict",
       "allowed_skips": [
         {
           "title": "should not try to clear an undefined timeout when exiting source state of a delayed transition",
@@ -42,6 +402,20 @@
           "title": "should format transitions properly",
           "category": "non-js-constraint",
           "reason": "Internal XState JS TransitionNode string formatting is not part of portable statechart semantics",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should evaluate the expression (function) to determine the delay",
+          "category": "unimplemented-feature",
+          "feature": "delays",
+          "reason": "Dynamic delay expressions (options.delays) are not yet implemented in portable-xstate core",
+          "ref": "XSTATE_5_FEATURES.md"
+        },
+        {
+          "title": "should evaluate the expression (string) to determine the delay",
+          "category": "unimplemented-feature",
+          "feature": "delays",
+          "reason": "Dynamic delay expressions (options.delays) are not yet implemented in portable-xstate core",
           "ref": "XSTATE_5_FEATURES.md"
         }
       ]

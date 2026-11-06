@@ -347,6 +347,46 @@ public:
     }
 
     /**
+     * @brief Serialize current machine state to a JSON snapshot string.
+     *
+     * @return Serialized JSON snapshot, or empty string if machine is uninitialized or serialization fails.
+     */
+    std::string get_snapshot() const {
+        if (!machine) return "";
+        int32_t req = fsm_get_snapshot_json(machine, nullptr, 0);
+        if (req <= 1) return "";
+        std::vector<char> buf(static_cast<size_t>(req));
+        int32_t written = fsm_get_snapshot_json(machine, buf.data(), buf.size());
+        if (written < 0) return "";
+        return std::string(buf.data(), static_cast<size_t>(written));
+    }
+
+    /**
+     * @brief Restore machine state from a serialized JSON snapshot string.
+     *
+     * If the machine has not yet been started, initializes the underlying FSM and binds
+     * registered handlers before restoring the snapshot.
+     *
+     * @param snapshot_json Serialized JSON snapshot string.
+     * @return true if snapshot was successfully restored, false otherwise.
+     */
+    bool restore_snapshot(const char* snapshot_json) {
+        if (!snapshot_json) return false;
+        if (!machine) {
+            machine = fsm_create(m_json);
+            if (!machine) {
+                return false;
+            }
+            bind_registered_handlers();
+        }
+        return fsm_restore_snapshot_json(machine, snapshot_json) == 0;
+    }
+
+    bool restore_snapshot(const std::string& snapshot_json) {
+        return restore_snapshot(snapshot_json.c_str());
+    }
+
+    /**
      * @brief Send an event to the state machine.
      * 
      * @param event The event name to send.

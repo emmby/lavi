@@ -176,19 +176,7 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
         .or_else(|| states.keys().next().cloned())
         .unwrap_or_default();
 
-    let is_compound = !states.is_empty();
-    let is_parallel = raw_type.as_deref() == Some("parallel");
-    let inferred_type = raw_type.or_else(|| {
-        if is_compound {
-            Some("compound".to_string())
-        } else if is_parallel {
-            Some("parallel".to_string())
-        } else {
-            Some("atomic".to_string())
-        }
-    });
-
-    let state_type = match inferred_type.as_deref() {
+    let state_type = match raw_type.as_deref() {
         Some("parallel") => StateType::Parallel,
         _ if !states.is_empty() => StateType::Compound,
         _ => StateType::Atomic,
@@ -196,7 +184,6 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
 
     Ok(MachineDefinition {
         id,
-        type_: inferred_type,
         state_type,
         initial,
         initial_actions,
@@ -295,31 +282,29 @@ fn parse_states_iterative(
                 .and_then(|v| v.into_object())
                 .unwrap_or_default();
             let is_compound = !grandchild_map.is_empty();
-            let is_parallel = raw_type.as_deref() == Some("parallel");
 
-            let inferred_type = raw_type.or_else(|| {
-                if history_present {
-                    Some("history".to_string())
-                } else if is_compound {
-                    Some("compound".to_string())
-                } else if is_parallel {
-                    Some("parallel".to_string())
-                } else {
-                    Some("atomic".to_string())
-                }
-            });
-
-            let state_type = match inferred_type.as_deref() {
+            let state_type = match raw_type.as_deref() {
                 Some("parallel") => StateType::Parallel,
                 Some("history") => StateType::History {
                     deep: is_deep_history,
                 },
                 Some("final") => StateType::Final,
-                _ if is_compound => StateType::Compound,
-                _ => StateType::Atomic,
+                Some("compound") => StateType::Compound,
+                Some("atomic") => StateType::Atomic,
+                _ => {
+                    if history_present {
+                        StateType::History {
+                            deep: is_deep_history,
+                        }
+                    } else if is_compound {
+                        StateType::Compound
+                    } else {
+                        StateType::Atomic
+                    }
+                }
             };
 
-            let history = if inferred_type.as_deref() == Some("history") || history_present {
+            let history = if matches!(state_type, StateType::History { .. }) || history_present {
                 if is_deep_history {
                     Some(HistoryType::Deep)
                 } else {
@@ -331,7 +316,6 @@ fn parse_states_iterative(
 
             let child_state_def = StateDefinition {
                 id: child_id,
-                type_: inferred_type,
                 state_type,
                 initial: initial_str,
                 initial_actions,
@@ -510,8 +494,8 @@ fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefini
         },
         None => None,
     };
-    let cond_val = obj.swap_remove("guard").or_else(|| obj.swap_remove("cond"));
-    let cond = cond_val.and_then(parse_guard);
+    let guard_val = obj.swap_remove("guard").or_else(|| obj.swap_remove("cond"));
+    let guard = guard_val.and_then(parse_guard);
     let actions = parse_action_list(obj.swap_remove("actions"));
     let reenter = obj
         .swap_remove("reenter")
@@ -520,7 +504,7 @@ fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefini
 
     TransitionDefinition {
         target,
-        cond,
+        guard,
         actions,
         reenter,
     }
@@ -530,14 +514,14 @@ fn parse_single_transition(mut val: Value) -> TransitionDefinition {
     match &mut val {
         Value::String(target) => TransitionDefinition {
             target: Some(vec![core::mem::take(target)]),
-            cond: None,
+            guard: None,
             actions: Vec::new(),
             reenter: false,
         },
         Value::Object(obj) => parse_transition_object(core::mem::take(obj)),
         _ => TransitionDefinition {
             target: None,
-            cond: None,
+            guard: None,
             actions: Vec::new(),
             reenter: false,
         },
@@ -553,7 +537,7 @@ fn parse_transition_list(v: Option<Value>) -> Vec<TransitionDefinition> {
                 .collect(),
             Value::String(s) => vec![TransitionDefinition {
                 target: Some(vec![core::mem::take(s)]),
-                cond: None,
+                guard: None,
                 actions: Vec::new(),
                 reenter: false,
             }],
