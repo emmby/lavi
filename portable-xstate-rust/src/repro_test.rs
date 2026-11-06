@@ -1071,4 +1071,243 @@ entry: vec![],
         assert!(!crate::matches_event_descriptor("eventually.bar.baz", "event*.bar.*"));
         assert!(!crate::matches_event_descriptor("prevent.whatever", "*event.*"));
     }
+
+    #[test]
+    fn test_td5_deep_state_value_small_stack() {
+        extern crate std;
+        let handle = std::thread::Builder::new()
+            .name("small_stack_td5".into())
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let depth = 300usize;
+                let mut val = StateValue::Atomic(format!("s{}", depth));
+                for i in (0..depth).rev() {
+                    if i % 50 == 0 {
+                        let mut regions = IndexMap::new();
+                        regions.insert(
+                            format!("s{}", i),
+                            StateValue::Compound(format!("s{}", i), Box::new(val)),
+                        );
+                        regions.insert(
+                            format!("side{}", i),
+                            StateValue::Compound(
+                                format!("side{}", i),
+                                Box::new(StateValue::Atomic("idle".to_string())),
+                            ),
+                        );
+                        val = StateValue::Parallel(regions);
+                    } else {
+                        val = StateValue::Compound(format!("s{}", i), Box::new(val));
+                    }
+                }
+
+                let paths = val.get_active_paths();
+                assert!(!paths.is_empty());
+
+                let expected_leaf: Vec<String> = (0..=depth).map(|i| format!("s{}", i)).collect();
+                let full_path = expected_leaf.join(".");
+                assert!(paths.contains(&full_path));
+                assert!(val.matches(&full_path));
+                assert!(val.matches("s0.s1.s2"));
+                assert!(val.matches("side0.idle"));
+                assert!(!val.matches("s0.s1.nonexistent"));
+            })
+            .expect("Failed to spawn small-stack thread");
+
+        handle.join().expect("Small-stack thread overflowed or panicked");
+    }
+
+    #[test]
+    fn test_td8_state_queries_can_has_tag_status_stop() {
+        use core::cell::Cell;
+        let json = r#"{
+            "id": "queries",
+            "initial": "idle",
+            "context": { "count": 0 },
+            "states": {
+                "idle": {
+                    "tags": ["ready", "standby"],
+                    "on": {
+                        "START": "working",
+                        "GUARDED_TRUE": {
+                            "target": "working",
+                            "guard": "allow"
+                        },
+                        "GUARDED_FALSE": {
+                            "target": "working",
+                            "guard": "deny"
+                        },
+                        "PING": {
+                            "actions": ["onPing"]
+                        },
+                        "INTERNAL_EMPTY": {},
+                        "FORBIDDEN": null
+                    }
+                },
+                "working": {
+                    "initial": "step1",
+                    "tags": "busy",
+                    "states": {
+                        "step1": {
+                            "tags": ["phase1"],
+                            "on": {
+                                "NEXT": "step2"
+                            }
+                        },
+                        "step2": {
+                            "type": "final",
+                            "tags": ["phase2"]
+                        }
+                    },
+                    "on": {
+                        "FINISH": "completed",
+                        "PARALLEL": "ortho"
+                    }
+                },
+                "ortho": {
+                    "type": "parallel",
+                    "tags": ["parallel_root"],
+                    "states": {
+                        "r1": {
+                            "initial": "a1",
+                            "states": {
+                                "a1": { "on": { "DONE_1": "a2" } },
+                                "a2": { "type": "final", "tags": ["r1_done"] }
+                            }
+                        },
+                        "r2": {
+                            "initial": "b1",
+                            "states": {
+                                "b1": { "on": { "DONE_2": "b2" } },
+                                "b2": { "type": "final", "tags": ["r2_done"] }
+                            }
+                        }
+                    },
+                    "on": {
+                        "FINISH": "completed"
+                    }
+                },
+                "completed": {
+                    "type": "final",
+                    "tags": ["done_tag"]
+                }
+            }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        let ping_called = Rc::new(Cell::new(false));
+        let ping_called_clone = ping_called.clone();
+
+        let guards: IndexMap<String, GuardFunction> = indexmap::indexmap! {
+            "allow".to_string() => Rc::new(|_ctx: &Value, evt: &Value, _params: &Option<Value>| {
+                if let Value::Object(map) = evt {
+                    if let Some(Value::Bool(flag)) = map.get("allowed") {
+                        return *flag;
+                    }
+                }
+                true
+            }) as GuardFunction,
+            "deny".to_string() => Rc::new(|_ctx: &Value, _evt: &Value, _params: &Option<Value>| false) as GuardFunction,
+        };
+        let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+            "onPing".to_string() => Rc::new(move |_ctx: &mut Value, _evt: &Value, _params: &Option<Value>| {
+                ping_called_clone.set(true);
+            }) as ActionFunction,
+        };
+
+        machine.start(&guards, &actions);
+
+        // Initial status & tags
+        assert_eq!(machine.status(), crate::MachineStatus::Active);
+        assert!(!machine.is_done());
+        assert!(machine.has_tag("ready"));
+        assert!(machine.has_tag("standby"));
+        assert!(!machine.has_tag("busy"));
+
+        // can() & can_event() checks without mutating state or running actions
+        assert!(machine.can("START"));
+        assert!(machine.can("GUARDED_TRUE"));
+        assert!(!machine.can("GUARDED_FALSE"));
+        assert!(machine.can("PING"));
+        assert!(machine.can("INTERNAL_EMPTY"));
+        assert!(!machine.can("FORBIDDEN"));
+        assert!(!machine.can("UNKNOWN_EVENT"));
+        assert!(!ping_called.get(), "can() must not execute transition actions");
+        assert!(machine.matches("idle"), "can() must not mutate state");
+
+        let mut disallowed_payload = IndexMap::new();
+        disallowed_payload.insert("allowed".to_string(), Value::Bool(false));
+        let disallowed_evt = Value::event_with_payload("GUARDED_TRUE", disallowed_payload);
+        assert!(!machine.can_event(&disallowed_evt));
+
+        let mut allowed_payload = IndexMap::new();
+        allowed_payload.insert("allowed".to_string(), Value::Bool(true));
+        let allowed_evt = Value::event_with_payload("GUARDED_TRUE", allowed_payload);
+        assert!(machine.can_event(&allowed_evt));
+
+        // Transition to compound working.step1
+        machine.transition("START", &Value::Null, &guards, &actions);
+        assert!(machine.matches("working.step1"));
+        assert_eq!(machine.status(), crate::MachineStatus::Active);
+        assert!(!machine.is_done());
+        assert!(machine.has_tag("busy"));
+        assert!(machine.has_tag("phase1"));
+        assert!(!machine.has_tag("ready"));
+        assert!(machine.can("NEXT"));
+        assert!(machine.can("FINISH"));
+
+        // Transition to working.step2 (final substate of compound state)
+        machine.transition("NEXT", &Value::Null, &guards, &actions);
+        assert!(machine.matches("working.step2"));
+        assert!(machine.has_tag("busy"));
+        assert!(machine.has_tag("phase2"));
+        assert!(machine.is_done());
+        assert_eq!(machine.status(), crate::MachineStatus::Done);
+
+        // Transition to parallel state ortho
+        machine.transition("PARALLEL", &Value::Null, &guards, &actions);
+        assert!(machine.matches("ortho.r1.a1"));
+        assert!(machine.matches("ortho.r2.b1"));
+        assert!(!machine.is_done());
+        assert_eq!(machine.status(), crate::MachineStatus::Active);
+        assert!(machine.has_tag("parallel_root"));
+        assert!(machine.can("DONE_1"));
+        assert!(machine.can("DONE_2"));
+
+        machine.transition("DONE_1", &Value::Null, &guards, &actions);
+        assert!(machine.has_tag("r1_done"));
+        assert!(!machine.has_tag("r2_done"));
+        assert!(!machine.is_done());
+
+        machine.transition("DONE_2", &Value::Null, &guards, &actions);
+        assert!(machine.has_tag("r1_done"));
+        assert!(machine.has_tag("r2_done"));
+        assert!(machine.is_done());
+        assert_eq!(machine.status(), crate::MachineStatus::Done);
+
+        // Transition to top-level final state "completed"
+        machine.transition("FINISH", &Value::Null, &guards, &actions);
+        assert!(machine.matches("completed"));
+        assert!(machine.is_done());
+        assert_eq!(machine.status(), crate::MachineStatus::Done);
+        assert!(machine.has_tag("done_tag"));
+        assert!(!machine.can("START"));
+
+        // Test stop() on an active machine
+        let mut machine2 = RuntimeMachine::from_json(json).unwrap();
+        machine2.start(&guards, &actions);
+        assert_eq!(machine2.status(), crate::MachineStatus::Active);
+        assert!(machine2.can("START"));
+
+        machine2.stop();
+        assert_eq!(machine2.status(), crate::MachineStatus::Stopped);
+        assert!(!machine2.is_done());
+        assert!(!machine2.can("START"));
+
+        // Stopped machine ignores subsequent transitions
+        let res = machine2.transition("START", &Value::Null, &guards, &actions);
+        assert!(res.is_none());
+        assert!(machine2.matches("idle"));
+        assert_eq!(machine2.status(), crate::MachineStatus::Stopped);
+    }
 }

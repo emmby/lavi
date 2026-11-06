@@ -124,24 +124,22 @@ impl StateNode {
     #[wasm_bindgen(getter)]
     pub fn events(&self) -> Vec<String> {
         let mut events_vec = Vec::new();
-        // Helper function for recursion
-        fn collect_events(state: &portable_xstate_rust::StateDefinition, events: &mut Vec<String>) {
-             // Iterate keys in definition order (IndexMap)
-             for (key, transitions) in &state.on {
-                 if transitions.is_empty() {
-                     continue;
-                 }
-                 if !events.contains(key) {
-                     events.push(key.clone());
-                 }
-            }
-            for substate in state.states.values() {
-                collect_events(substate, events);
-            }
-        }
+        let mut work_stack: Vec<&portable_xstate_rust::StateDefinition> =
+            self.machine.definition.states.values().rev().collect();
 
-        for state in self.machine.definition.states.values() {
-            collect_events(state, &mut events_vec);
+        while let Some(state) = work_stack.pop() {
+            // Iterate keys in definition order (IndexMap)
+            for (key, transitions) in &state.on {
+                if transitions.is_empty() {
+                    continue;
+                }
+                if !events_vec.contains(key) {
+                    events_vec.push(key.clone());
+                }
+            }
+            for substate in state.states.values().rev() {
+                work_stack.push(substate);
+            }
         }
 
         // Do NOT sort. XState definition order.
@@ -1694,16 +1692,11 @@ impl Actor {
             other => value_to_js(other),
         };
         let history_obj = self.get_history_value_obj();
-        let is_done = !active_paths.is_empty()
-            && active_paths.iter().all(|p| {
-                machine_ref
-                    .get_state_definition(p)
-                    .map(|def| def.type_.as_deref() == Some("final"))
-                    .unwrap_or(false)
-            });
-        let status = if is_stopped {
+        let status = if is_stopped
+            || machine_ref.status() == portable_xstate_rust::MachineStatus::Stopped
+        {
             "stopped".to_string()
-        } else if is_done {
+        } else if machine_ref.is_done() {
             "done".to_string()
         } else {
             "active".to_string()
@@ -1865,6 +1858,7 @@ impl Actor {
     pub fn stop(&mut self) -> Actor {
         self.pull_shared();
         self.is_stopped = true;
+        self.machine.stop();
         self.push_shared();
         self.clone()
     }
@@ -2006,44 +2000,29 @@ impl Snapshot {
 
     #[wasm_bindgen]
     pub fn can(&self, event: JsValue) -> bool {
-         // Create a temporary runtime machine from this snapshot
-         let mut machine = self.machine_ref.clone();
-         let actions_map: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>> = IndexMap::new(); // Dummy actions
-
-         // Parse event
-         let (event_name, event_payload) = if event.is_string() {
+        let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
-            let payload = Value::Object(IndexMap::from([("type".to_string(), Value::String(s.clone()))]));
+            let payload = Value::Object(IndexMap::from([(
+                "type".to_string(),
+                Value::String(s.clone()),
+            )]));
             (s, payload)
         } else {
-             let payload = js_to_value(&event);
-             let name = payload.as_object().and_then(|m| m.get("type")).and_then(|t| t.as_string()).unwrap_or(&"UNKNOWN".to_string()).clone();
-             (name, payload)
+            let payload = js_to_value(&event);
+            let name = payload
+                .as_object()
+                .and_then(|m| m.get("type"))
+                .and_then(|t| t.as_string())
+                .unwrap_or(&"UNKNOWN".to_string())
+                .clone();
+            (name, payload)
         };
-        // Try transition
-        // We need guards! Snapshot needs to store guards too.
-        let next = machine.transition(&event_name, &event_payload, &self.guards, &actions_map);
-        next.is_some()
+        self.machine_ref
+            .can_with_guards(&event_name, &event_payload, &self.guards)
     }
     #[wasm_bindgen(js_name = hasTag)]
     pub fn has_tag(&self, tag: &str) -> bool {
-        let active_paths = self.machine_ref.current_state.get_active_paths();
-        for path in active_paths {
-            let mut current_path = path.clone();
-            loop {
-                if let Some(def) = portable_xstate_rust::RuntimeMachine::get_state_def_recursive(&self.machine_ref.definition.states, &current_path) {
-                    if def.tags.iter().any(|t| t == tag) {
-                        return true;
-                    }
-                }
-                if let Some(idx) = current_path.rfind('.') {
-                    current_path = current_path[..idx].to_string();
-                } else {
-                    break;
-                }
-            }
-        }
-        false
+        self.machine_ref.has_tag(tag)
     }
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> JsValue {

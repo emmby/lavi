@@ -156,6 +156,81 @@ int main() {
     assert(fsm_matches(w3, "wild"));
     fsm_free(w3);
 
+    // State query tests: fsm_can, fsm_has_tag, fsm_is_done, fsm_stop
+    const char* QUERIES_JSON = "{"
+      "\"id\": \"queriesC\","
+      "\"initial\": \"idle\","
+      "\"states\": {"
+        "\"idle\": {"
+          "\"tags\": [\"ready\", \"standby\"],"
+          "\"on\": {"
+            "\"START\": \"working\""
+          "}"
+        "},"
+        "\"working\": {"
+          "\"initial\": \"step1\","
+          "\"tags\": \"busy\","
+          "\"states\": {"
+            "\"step1\": {"
+              "\"tags\": [\"phase1\"],"
+              "\"on\": {"
+                "\"FINISH\": \"#queriesC.done\""
+              "}"
+            "}"
+          "}"
+        "},"
+        "\"done\": {"
+          "\"type\": \"final\","
+          "\"tags\": [\"completed\"]"
+        "}"
+      "}"
+    "}";
+
+    MachineContext* q1 = fsm_create(QUERIES_JSON);
+    assert(q1 != NULL);
+    fsm_start(q1);
+
+    assert(fsm_can(NULL, "START") < 0);
+    assert(fsm_can(q1, NULL) < 0);
+    assert(fsm_has_tag(NULL, "ready") < 0);
+    assert(fsm_has_tag(q1, NULL) < 0);
+    assert(fsm_is_done(NULL) < 0);
+    assert(fsm_stop(NULL) < 0);
+
+    assert(fsm_is_done(q1) == 0);
+    assert(fsm_has_tag(q1, "ready") == 1);
+    assert(fsm_has_tag(q1, "standby") == 1);
+    assert(fsm_has_tag(q1, "busy") == 0);
+    assert(fsm_can(q1, "START") == 1);
+    assert(fsm_can(q1, "UNKNOWN") == 0);
+
+    fsm_send_event(q1, "START");
+    assert(fsm_matches(q1, "working.step1"));
+    assert(fsm_is_done(q1) == 0);
+    assert(fsm_has_tag(q1, "ready") == 0);
+    assert(fsm_has_tag(q1, "busy") == 1);
+    assert(fsm_has_tag(q1, "phase1") == 1);
+    assert(fsm_can(q1, "FINISH") == 1);
+    assert(fsm_can(q1, "START") == 0);
+
+    fsm_send_event(q1, "FINISH");
+    assert(fsm_matches(q1, "done"));
+    assert(fsm_is_done(q1) == 1);
+    assert(fsm_has_tag(q1, "completed") == 1);
+    assert(fsm_can(q1, "FINISH") == 0);
+    fsm_free(q1);
+
+    MachineContext* q2 = fsm_create(QUERIES_JSON);
+    assert(q2 != NULL);
+    fsm_start(q2);
+    assert(fsm_can(q2, "START") == 1);
+    assert(fsm_stop(q2) == 0);
+    assert(fsm_can(q2, "START") == 0);
+    assert(fsm_is_done(q2) == 0);
+    fsm_send_event(q2, "START");
+    assert(fsm_matches(q2, "idle"));
+    fsm_free(q2);
+
     printf("C Test Passed!\n");
     return 0;
 }

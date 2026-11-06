@@ -23,6 +23,10 @@ void fsm_free(MachineContext* ptr);
  * @return true if the state path is active, false otherwise.
  */
 bool fsm_matches(const MachineContext* ptr, const char* state_path);
+int fsm_can(const MachineContext* ctx, const char* event);
+int fsm_has_tag(const MachineContext* ctx, const char* tag);
+int fsm_is_done(const MachineContext* ctx);
+int fsm_stop(MachineContext* ctx);
 int fsm_send_event(MachineContext* ptr, const char* event_name);
 
 typedef struct fsm_value_t fsm_value_t;
