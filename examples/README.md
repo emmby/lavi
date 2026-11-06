@@ -19,7 +19,7 @@ Browse and interact with all WASM examples live on GitHub Pages (opens with the 
 
 If you have Python 3 installed (which acts as a simple HTTP server):
 
-1.  Open your terminal at the root of the repository (`/path/to/fsm-wasm`).
+1.  Open your terminal at the root of the repository (`/path/to/lavi`).
 2.  Run the following command:
     ```bash
     python3 -m http.server 8000

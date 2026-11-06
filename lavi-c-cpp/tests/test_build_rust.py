@@ -57,14 +57,14 @@ class TestBuildRust(unittest.TestCase):
         self.assertTrue(is_native)
 
     def test_get_lib_release_dir(self):
-        rust_dir = "/workspace/portable-xstate"
+        rust_dir = "/workspace/lavi"
         self.assertEqual(
             build_rust.get_lib_release_dir(rust_dir, "aarch64-apple-darwin", True),
-            "/workspace/portable-xstate/target/release",
+            "/workspace/lavi/target/release",
         )
         self.assertEqual(
             build_rust.get_lib_release_dir(rust_dir, "xtensa-esp32s3-espidf", False),
-            "/workspace/portable-xstate/target/xtensa-esp32s3-espidf/release",
+            "/workspace/lavi/target/xtensa-esp32s3-espidf/release",
         )
 
     def test_build_cargo_cmd_native_vs_cross(self):

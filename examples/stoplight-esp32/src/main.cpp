@@ -44,7 +44,7 @@ void setup() {
 
   Serial.println("Initializing Machine...");
   try {
-    // PortableXState throws logic_error/runtime_error if it fails
+    // lavi::Machine throws logic_error/runtime_error if it fails
     machine.reset(new lavi::Machine(MACHINE_JSON));
     
     // Register action callbacks to drive LEDs

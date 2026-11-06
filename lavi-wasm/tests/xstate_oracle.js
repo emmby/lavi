@@ -41,7 +41,7 @@ export function getDoorScenario() {
     return { machineDef, config, events };
 }
 
-// Helper to convert XState assign functions to JSON-serializable objects for fsm-wasm
+// Helper to convert XState assign functions to JSON-serializable objects for lavi-wasm
 function sanitizeForJson(obj) {
     if (Array.isArray(obj)) {
         return obj.map(sanitizeForJson);
@@ -112,7 +112,7 @@ export function getDynamicAssignScenario() {
     const events = ["INC", "INC"];
 
     // Note: dynamic assignments in 'config' don't need sanitization for the machineDefJson
-    // BUT fsm-wasm setup_wasm_machine(config) handles the config object.
+    // BUT lavi-wasm setup_wasm_machine(config) handles the config object.
     
     return { machineDef, machineDefJson: machineDef, config, events };
 }

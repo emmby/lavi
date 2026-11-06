@@ -109,7 +109,7 @@ int main() {
         uint64_t next_dl = 0;
         assert(april_fsm.getNextDeadline(next_dl) && next_dl == 500);
 
-        // Move PortableXState before increment, and then move SimulatedClock before set
+        // Move lavi::Machine before increment, and then move SimulatedClock before set
         lavi::Machine moved_fsm = std::move(april_fsm);
 
         // Advance by 60,000 ms:
