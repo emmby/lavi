@@ -21,7 +21,9 @@ Hierarchical statecharts replace fragile `if/else` boolean-flag logic with decla
 
 👉 **[Explore the Live Interactive WASM Examples →](https://emmby.github.io/portable-xstate/examples/)**
 
-[![Portable XState Interactive WASM Demo](./docs/images/robot-vacuum-demo.png)](https://emmby.github.io/portable-xstate/examples/)
+<a href="https://emmby.github.io/portable-xstate/examples/">
+  <img src="./docs/images/robot-vacuum-demo.png" alt="Portable XState Interactive WASM Demo" width="540">
+</a>
 
 ## Project Structure
 
