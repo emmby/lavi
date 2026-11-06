@@ -236,4 +236,75 @@ test.describe('FSM WASM Examples', () => {
       await expect(stateLabel).toHaveText(/high/);
   });
 
+  test('Autonomous Robot Vacuum', async ({ page }) => {
+    await page.goto('/examples/robot_vacuum.html');
+
+    const stateBadge = page.locator('#lblState');
+    const wheelsPill = page.locator('#lblWheels');
+    const vacuumPill = page.locator('#lblVacuum');
+    const brushesPill = page.locator('#lblBrushes');
+
+    const patrolNode = page.locator('#state-patrol');
+    const spotNode = page.locator('#state-spot');
+    const movingCluster = page.locator('#state-moving');
+    const stairsNode = page.locator('#state-stairsAlert');
+
+    // Initial state: moving.cleaning.patrol
+    await expect(stateBadge).toHaveText('moving.cleaning.patrol');
+    await expect(wheelsPill).toHaveText('Driving Forward');
+    await expect(vacuumPill).toHaveText('Standard');
+    await expect(brushesPill).toHaveText('Spinning');
+    await expect(movingCluster).toHaveClass(/active-parent/);
+    await expect(patrolNode).toHaveClass(/active-leaf/);
+
+    // Switch to Spot Clean -> moving.cleaning.spot
+    await page.locator('#btnSpotClean').click();
+    await expect(stateBadge).toHaveText('moving.cleaning.spot');
+    await expect(vacuumPill).toHaveText('Turbo Boost');
+    await expect(spotNode).toHaveClass(/active-leaf/);
+
+    // Bump Furniture -> moving.avoidingObstacle, then after 1.2s -> returns to moving.cleaning.spot via History (H)
+    await page.locator('#btnBump').click();
+    await expect(stateBadge).toHaveText('moving.avoidingObstacle');
+    await expect(wheelsPill).toHaveText('Reversing & Turning');
+    await expect(stateBadge).toHaveText('moving.cleaning.spot', { timeout: 3000 });
+
+    // Trigger Stairs -> exits Moving (shutting off all motors) and enters stopped.stairsAlert
+    await page.locator('#btnStairs').click();
+    await expect(stateBadge).toHaveText('stopped.stairsAlert');
+    await expect(wheelsPill).toHaveText('Off');
+    await expect(vacuumPill).toHaveText('Off');
+    await expect(brushesPill).toHaveText('Off');
+    await expect(stairsNode).toHaveClass(/active-leaf/);
+
+    // Resume from Stopped -> returns to moving.cleaning.spot via History (H)
+    await page.locator('#btnPauseResume').click();
+    await expect(stateBadge).toHaveText('moving.cleaning.spot');
+    await expect(vacuumPill).toHaveText('Turbo Boost');
+
+    // Trigger Low Battery -> 'always' guard routes immediately to moving.returningToDock
+    await page.locator('#btnLowBattery').click();
+    await expect(stateBadge).toHaveText('moving.returningToDock');
+    await expect(wheelsPill).toHaveText('Heading to Dock');
+
+    // Flip between Diagram SVG and Machine JSON without distorting column widths
+    const floorWrapper = page.locator('#floorWrapper');
+    const widthBefore = (await floorWrapper.boundingBox()).width;
+    const diagramView = page.locator('#diagramView');
+    const jsonView = page.locator('#jsonView');
+    await expect(diagramView).toBeVisible();
+    await expect(jsonView).toBeHidden();
+
+    await page.locator('#btnShowJson').click();
+    await expect(jsonView).toBeVisible();
+    await expect(diagramView).toBeHidden();
+    await expect(jsonView).toContainText('"id": "robotVacuum"');
+    const widthAfter = (await floorWrapper.boundingBox()).width;
+    expect(Math.abs(widthAfter - widthBefore)).toBeLessThan(2);
+
+    await page.locator('#btnShowDiagram').click();
+    await expect(diagramView).toBeVisible();
+    await expect(jsonView).toBeHidden();
+  });
+
 });

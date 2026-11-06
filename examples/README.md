@@ -10,7 +10,12 @@ You must serve these files using a local HTTP server.
 
 ## How to Run
 
-### Option 1: Python (Recommended)
+### Option 0: View Online (No Setup Required)
+
+Browse and interact with all WASM examples live on GitHub Pages (opens with the **Autonomous Robot Vacuum** demo selected):
+-   [https://emmby.github.io/lavi/examples/](https://emmby.github.io/lavi/examples/)
+
+### Option 1: Python (Local Server)
 
 If you have Python 3 installed (which acts as a simple HTTP server):
 
@@ -39,6 +44,7 @@ If you use VS Code:
 
 ## Available Examples
 
+-   **Autonomous Robot Vacuum** (`robot_vacuum.html`): Interactive open-floor robot vacuum simulator powered by `lavi-wasm`, featuring nested states, `exit` safety guarantees, `always` low-battery routing, `after` timers, shallow history (`H`), and a live Mermaid SVG / JSON toggle.
 -   **Simple Light Switch** (`simple.html`): Basic state toggling.
 -   **Traffic Light** (`traffic_light.html`): Timed transitions and consolidated configuration.
 -   **Guards** (`guards.html`): Conditional transitions based on context.

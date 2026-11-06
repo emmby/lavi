@@ -52,8 +52,8 @@ fn test_guard_alias_and_after_formats() {
     }"#;
     let def = create_machine(json).expect("valid machine");
     let s1 = &def.states["s1"];
-    assert_eq!(s1.after[&250][0].cond, Some(TransitionGuard::Name("isReady".to_string())));
-    match &s1.after[&500][0].cond {
+    assert_eq!(s1.after[&250][0].guard, Some(TransitionGuard::Name("isReady".to_string())));
+    match &s1.after[&500][0].guard {
         Some(TransitionGuard::Object(g)) => assert_eq!(g.guard_type, "minCount"),
         other => panic!("Expected GuardObject, got {:?}", other),
     }

@@ -11,7 +11,6 @@ mod tests {
     fn test_parallel_history_repro_rust() {
         let definition = MachineDefinition {
             id: "machine".to_string(),
-            type_: None,
             state_type: StateType::Compound,
             initial: "off".to_string(), initial_actions: vec![],
             context: None,
@@ -21,7 +20,6 @@ mod tests {
                 "off".to_string() => StateDefinition {
                     id: Some("off".to_string()),
                     state_type: StateType::Atomic,
-                    type_: None,
                     initial: None, initial_actions: vec![],
                     entry: vec![],
                     exit: vec![],
@@ -29,13 +27,13 @@ mod tests {
                     on: indexmap::indexmap! {
                         "SWITCH".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["on".to_string()]),
-                            cond: None,
+                            guard: None,
                             actions: vec![],
                             reenter: false,
                         }],
                         "DEEP_POWER".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["on.deepHistory".to_string()]),
-                            cond: None,
+                            guard: None,
                             actions: vec![],
                             reenter: false,
                         }],
@@ -50,7 +48,6 @@ mod tests {
                 "on".to_string() => StateDefinition {
                     id: Some("on".to_string()),
                     state_type: StateType::Parallel,
-                    type_: Some("parallel".to_string()),
                     initial: None, initial_actions: vec![], // Parallel has no initial -> enters all children
                     entry: vec![],
                     exit: vec![],
@@ -58,7 +55,7 @@ mod tests {
                     on: indexmap::indexmap! {
                         "POWER".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["off".to_string()]),
-                            cond: None,
+                            guard: None,
                             actions: vec![],
                             reenter: false,
                         }],
@@ -67,7 +64,6 @@ mod tests {
                         "A".to_string() => StateDefinition {
                             id: Some("A".to_string()),
                             state_type: StateType::Compound,
-                            type_: Some("compound".to_string()),
                             initial: Some("B".to_string()), initial_actions: vec![],
 // Default B
                             entry: vec![],
@@ -78,7 +74,6 @@ mod tests {
                                 "B".to_string() => StateDefinition {
                                     id: Some("B".to_string()),
                                     state_type: StateType::Atomic,
-                                    type_: None,
                                     initial: None, initial_actions: vec![],
                                     entry: vec![],
                                     exit: vec![],
@@ -86,7 +81,7 @@ mod tests {
                                     on: indexmap::indexmap! {
                                         "INNER_A".to_string() => vec![TransitionDefinition {
                                             target: Some(vec!["C".to_string()]), // Relative C
-                                            cond: None,
+                                            guard: None,
                                             actions: vec![],
                                             reenter: false,
                                         }],
@@ -101,7 +96,6 @@ mod tests {
                                  "C".to_string() => StateDefinition {
                                     id: Some("C".to_string()),
                                     state_type: StateType::Compound,
-                                    type_: Some("compound".to_string()),
                                     initial: Some("D".to_string()), initial_actions: vec![],
 entry: vec![],
                                     exit: vec![],
@@ -111,7 +105,6 @@ entry: vec![],
                                          "D".to_string() => StateDefinition {
                                             id: Some("D".to_string()),
                                             state_type: StateType::Atomic,
-                                            type_: None,
                                             initial: None, initial_actions: vec![],
                                             entry: vec![],
                                             exit: vec![],
@@ -141,7 +134,6 @@ entry: vec![],
                         "K".to_string() => StateDefinition {
                             id: Some("K".to_string()),
                             state_type: StateType::Compound,
-                            type_: Some("compound".to_string()),
                             initial: Some("L".to_string()), initial_actions: vec![],
 entry: vec![],
                             exit: vec![],
@@ -159,7 +151,6 @@ entry: vec![],
                         "deepHistory".to_string() => StateDefinition {
                             id: Some("deepHistory".to_string()),
                             state_type: StateType::History { deep: true },
-                            type_: Some("history".to_string()),
                             initial: None, initial_actions: vec![],
                             entry: vec![],
                             exit: vec![],
@@ -230,7 +221,6 @@ entry: vec![],
     fn test_combinatorial_machine() {
         let definition = MachineDefinition {
             id: "toggle".to_string(),
-            type_: None,
             state_type: StateType::Parallel, // Combinatorial is implicit parallel of empty states
             initial: "".to_string(),
             initial_actions: vec![],
@@ -244,7 +234,7 @@ entry: vec![],
             on: indexmap::indexmap! {
                 "INC".to_string() => vec![TransitionDefinition {
                     target: None,
-                    cond: None,
+                    guard: None,
                     actions: vec![Action::Assign(AssignAction {
                         action_type: "xstate.assign".to_string(),
                         assignment: Value::Object(indexmap::indexmap! {
@@ -301,7 +291,6 @@ entry: vec![],
 
         let definition = MachineDefinition {
             id: "order".to_string(),
-            type_: None,
             state_type: StateType::Compound,
             initial: "parent".to_string(),
             initial_actions: vec![Action::Named("root_init_action".to_string())],
@@ -361,7 +350,7 @@ entry: vec![],
             "".to_string(),
             vec![TransitionDefinition {
                 target: Some(vec!["settled".to_string()]),
-                cond: Some(TransitionGuard::Name("isReady".to_string())),
+                guard: Some(TransitionGuard::Name("isReady".to_string())),
                 actions: vec![],
                 reenter: false,
             }],
@@ -370,7 +359,7 @@ entry: vec![],
             "RAISED_EV".to_string(),
             vec![TransitionDefinition {
                 target: Some(vec!["wrong_from_boot".to_string()]),
-                cond: None,
+                guard: None,
                 actions: vec![],
                 reenter: false,
             }],
@@ -382,13 +371,13 @@ entry: vec![],
             vec![
                 TransitionDefinition {
                     target: Some(vec!["blocked_by_guard".to_string()]),
-                    cond: Some(TransitionGuard::Name("alwaysFalse".to_string())),
+                    guard: Some(TransitionGuard::Name("alwaysFalse".to_string())),
                     actions: vec![],
                     reenter: false,
                 },
                 TransitionDefinition {
                     target: Some(vec!["final_state".to_string()]),
-                    cond: Some(TransitionGuard::Name("isReady".to_string())),
+                    guard: Some(TransitionGuard::Name("isReady".to_string())),
                     actions: vec![],
                     reenter: false,
                 },
@@ -397,7 +386,6 @@ entry: vec![],
 
         let definition = MachineDefinition {
             id: "always_raise".to_string(),
-            type_: None,
             state_type: StateType::Compound,
             initial: "boot".to_string(),
             initial_actions: vec![],
@@ -450,7 +438,7 @@ entry: vec![],
             50,
             vec![TransitionDefinition {
                 target: Some(vec!["wrong_timeout".to_string()]),
-                cond: None,
+                guard: None,
                 actions: vec![],
                 reenter: false,
             }],
@@ -459,7 +447,7 @@ entry: vec![],
             "".to_string(),
             vec![TransitionDefinition {
                 target: Some(vec!["active".to_string()]),
-                cond: None,
+                guard: None,
                 actions: vec![],
                 reenter: false,
             }],
@@ -470,7 +458,7 @@ entry: vec![],
             100,
             vec![TransitionDefinition {
                 target: Some(vec!["timed_out".to_string()]),
-                cond: None,
+                guard: None,
                 actions: vec![],
                 reenter: false,
             }],
@@ -478,7 +466,6 @@ entry: vec![],
 
         let definition = MachineDefinition {
             id: "timers".to_string(),
-            type_: None,
             state_type: StateType::Compound,
             initial: "transient".to_string(),
             initial_actions: vec![],

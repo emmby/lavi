@@ -26,6 +26,16 @@ Statecharts were invented in 1983–1987 by computer scientist **David Harel** i
    - **C++11 (`lavi.hpp`)**: Move-safe RAII classes (`lavi::Machine`, `lavi::SimulatedClock`, `lavi::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
    - **Rust (`lavi`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
 
+## Interactive WASM Demos
+
+Hierarchical statecharts replace fragile `if/else` boolean-flag logic with declarative guarantees—such as parent-state `exit` safety cutoffs, eventless `always` guards, `after` timers, and `history` recovery—that run identically in the browser (WASM) and on microcontrollers (Rust / C / C++).
+
+👉 **[Explore the Live Interactive WASM Examples →](https://emmby.github.io/lavi/examples/)**
+
+<a href="https://emmby.github.io/lavi/examples/">
+  <img src="./docs/images/robot-vacuum-demo.png" alt="Lavi Interactive WASM Demo" width="540">
+</a>
+
 ## Project Structure
 
 * **`lavi`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
