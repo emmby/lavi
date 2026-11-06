@@ -21,11 +21,6 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: `tests/actions.test.ts` contains historical `it.skip` additions and minor inline edits that predate `npm run test:conformance-check`.
 - **Resolution**: Restore `tests/actions.test.ts` to match `tests/upstream/actions.test.ts` under strict normalization, register any legitimately unimplemented sub-features in `tests/conformance-manifest.json` `allowed_skips`, and graduate `actions.test.ts` from `"legacy-baseline"` to `"strict"`.
 
-### `TD-5`: Replace Remaining Recursive Traversal Helpers with Iterative Heap Work-Stacks
-- **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
-- **Problem**: While `json.rs`, `parser.rs`, `Value::drop`, and `StateDefinition::drop` use bounded $O(1)$ call-stack traversal via explicit heap `Vec` work-stacks, older helpers (`StateValue::collect_paths`, `StateValue::matches`, and `StateNode::events` in WASM) still use CPU call-stack recursion.
-- **Resolution**: Convert all remaining recursive state/value traversals in `portable-xstate-rust` and `portable-xstate-wasm` to iterative `Vec` work-stacks to guarantee microcontroller stack safety.
-
 ### `TD-6`: Remove Redundant `StateDefinition::type_` String Field and XState 4 `cond` Naming
 - **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-rust/src/parser.rs`](./portable-xstate-rust/src/parser.rs)
 - **Problem**: `StateDefinition` stores both `pub type_: Option<String>` and `pub state_type: StateType`, and `TransitionDefinition` uses XState 4's `cond` field name instead of XState 5's `guard`.
@@ -36,10 +31,10 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: `RuntimeMachine::transition_internal` (`portable-xstate-rust/src/lib.rs:1257-1261`) executes `def.invoke` entries as synchronous named actions during **state exit**, which was a one-off hack rather than proper XState 5 actor invocation lifecycle on state entry/exit.
 - **Resolution**: Replace with proper `invoke` lifecycle semantics when implementing the Actor Model (`invoke.test.ts`).
 
-### `TD-8`: Promote WASM-Only State Queries (`can`, `has_tag`, `status`) and Snapshot Persistence to `portable-xstate-rust` and `portable-xstate-c-cpp`
+### `TD-8`: Promote Snapshot Persistence to `portable-xstate-rust` and `portable-xstate-c-cpp`
 - **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), [`portable-xstate-c-cpp/include/portable_xstate.h`](./portable-xstate-c-cpp/include/portable_xstate.h), [`portable-xstate-c-cpp/include/portable_xstate.hpp`](./portable-xstate-c-cpp/include/portable_xstate.hpp)
-- **Problem**: `Snapshot::can`, `Snapshot::has_tag`, `status` (`active`/`done`/`stopped`), and snapshot restoration are currently implemented inside `portable-xstate-wasm/src/lib.rs` rather than on `RuntimeMachine` in `portable-xstate-rust`, and are not exposed in C/C++.
-- **Resolution**: Move `can()`, `has_tag()`, `status()`, and snapshot serialize/restore into `portable-xstate-rust::RuntimeMachine`, delegate to them from `portable-xstate-wasm`, and expose C/C++ bindings in `portable-xstate-c-cpp`.
+- **Problem**: While state queries (`can`, `has_tag`, `status`/`is_done`, and `stop`) are now implemented in `portable-xstate-rust` and exposed in `portable-xstate-c-cpp` (`fsm_can`, `fsm_has_tag`, `fsm_is_done`, `fsm_stop`), snapshot serialization and restoration remain implemented inside `portable-xstate-wasm/src/lib.rs` rather than on `RuntimeMachine` in `portable-xstate-rust`, and are not yet exposed in C/C++.
+- **Resolution**: Move snapshot serialize/restore into `portable-xstate-rust::RuntimeMachine`, delegate to it from `portable-xstate-wasm`, and expose C/C++ bindings in `portable-xstate-c-cpp`.
 
 ---
 
@@ -47,3 +42,5 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 
 - **`TD-4`** (Resolved): Removed `fs.appendFileSync('trace.log', ...)`, `fs.appendFileSync('debug.log', ...)`, `console.log` spam, and `machine.createActor` / `machine.provide` monkey-patching from [`tests/utils.ts`](./tests/utils.ts), bridging tracked entry/exit callbacks iteratively in `portable-xstate-wasm`.
 - **`TD-3`** (Resolved): Reconciled [`tests/machine.test.ts`](./tests/machine.test.ts), [`tests/state.test.ts`](./tests/state.test.ts), and [`tests/history.test.ts`](./tests/history.test.ts) with their upstream references in `tests/upstream/` and graduated all three suites from `"legacy-baseline"` to `"strict"` in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json).
+- **`TD-5`** (Resolved): Replaced remaining recursive traversal helpers (`StateValue::collect_paths`, `StateValue::matches`, `StateValue::drop` in [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs) and `StateNode::events` in [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)) with bounded $O(1)$ call-stack iterative traversals using explicit heap `Vec` work-stacks, verified by a 64 KB stack thread test at depth >= 256.
+- **`TD-8` (State Queries)** (Resolved): Promoted `can` / `can_event`, `has_tag`, `status` (`MachineStatus::Active` / `Done` / `Stopped`), `is_done`, and `stop` to `RuntimeMachine` in [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), delegated to them in [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), and exposed C/C++ bindings (`fsm_can`, `fsm_has_tag`, `fsm_is_done`, `fsm_stop`, and `PortableXState::{can, hasTag, isDone, stop}`) in `portable-xstate-c-cpp`.

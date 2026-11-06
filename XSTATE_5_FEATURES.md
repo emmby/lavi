@@ -44,7 +44,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
   - [x] Atomic States (Leaf nodes) `[Rust | WASM | C/C++]`
   - [x] Compound States (Nested states with `initial`) `[Rust | WASM | C/C++]`
   - [ ] Parallel States (Orthogonal regions) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/parallel.test.ts) — core support implemented; upstream `parallel.test.ts` not yet onboarded)
-  - [ ] Final States (`type: 'final'`) `[Rust | WASM]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts) — parsed in Rust and sets `status: 'done'` in WASM; `onDone` transitions and upstream `final.test.ts` not yet implemented)
+  - [ ] Final States (`type: 'final'`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts) — parsed in Rust and sets `MachineStatus::Done` / `is_done()` / `status: 'done'` / `fsm_is_done`; `onDone` transitions and upstream `final.test.ts` not yet implemented)
   - [x] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts) — 33/33 passing in `tests/history.test.ts`)
     - [x] Shallow history (default) `[Rust | WASM | C/C++]`
     - [x] Deep history (`history: 'deep'`) `[Rust | WASM | C/C++]`
@@ -109,13 +109,13 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 
 ## 3. State Inspection & Queries (High Priority)
 
-- [ ] **State / Snapshot API** (See `TD-8` in [`TECH_DEBT.md`](./TECH_DEBT.md) for promoting WASM-only queries to Rust & C/C++)
+- [ ] **State / Snapshot API** (See `TD-8` in [`TECH_DEBT.md`](./TECH_DEBT.md) for snapshot persistence in Rust & C/C++)
   - [x] `state.matches(stateValue)` (Dot-delimited path matching across `RuntimeMachine::matches`, `Snapshot::matches`, `fsm_matches`, and `PortableXState::matches`; partial object matching in Rust & WASM) `[Rust | WASM | C/C++]`
   - [x] `state.value` (`RuntimeMachine::current_state` in Rust, `snapshot.value` in WASM) `[Rust | WASM]`
   - [x] `state.context` (`RuntimeMachine::context` in Rust, `snapshot.context` in WASM) `[Rust | WASM]`
-  - [x] `state.status` (`'active' | 'done' | 'stopped'`) `[WASM]` (pending `TD-8` for Rust & C/C++)
-  - [x] `state.can(event)` (Pure transition check with guards) `[WASM]` (pending `TD-8` for Rust & C/C++)
-  - [x] `state.hasTag(tag)` (Active state hierarchy tag check) `[WASM]` (pending `TD-8` for Rust & C/C++)
+  - [x] `state.status` (`'active' | 'done' | 'stopped'` in WASM, `RuntimeMachine::status()` / `is_done()` / `stop()` in Rust, `fsm_is_done` / `fsm_stop` in C, and `PortableXState::isDone()` / `stop()` in C++) `[Rust | WASM | C/C++]`
+  - [x] `state.can(event)` (Pure transition check with guards across `RuntimeMachine::can` / `can_event`, `Snapshot::can`, `fsm_can`, and `PortableXState::can`) `[Rust | WASM | C/C++]`
+  - [x] `state.hasTag(tag)` (Active state hierarchy tag check across `RuntimeMachine::has_tag`, `Snapshot::hasTag`, `fsm_has_tag`, and `PortableXState::hasTag`) `[Rust | WASM | C/C++]`
 - [ ] **Machine / StateNode API**
   - [x] `machine.states` (StateNode tree registry) `[WASM]`
   - [x] `machine.events` (Accepted events list in definition order) `[WASM]`
@@ -148,7 +148,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
   - [ ] Full `@xstate.actor` / `@xstate.microstep` inspection protocol
 - [x] **Tags** (`tags: [...]`)
   - [x] Tag definition on states `[Rust | WASM | C/C++]`
-  - [x] Tag checking via `snapshot.hasTag(tag)` `[WASM]` (pending `TD-8` for Rust & C/C++)
+  - [x] Tag checking via `snapshot.hasTag(tag)` / `RuntimeMachine::has_tag` / `fsm_has_tag` / `PortableXState::hasTag` `[Rust | WASM | C/C++]`
   - [x] Tag persistence across state restoration `[WASM]`
 - [ ] **Metadata & Descriptions** (`meta: { ... }`, `description`, `output`)
 - [x] **Custom Clocks & Deterministic Virtual Time** (`SimulatedClock`, `register_clock`, `fsm_register_clock`, `fsm_register_clock_with_data`, `fsm_register_simulated_clock`, `fsm_simulated_clock_create`, `fsm_simulated_clock_free`, `fsm_simulated_clock_now`, `fsm_simulated_clock_set`, `fsm_simulated_clock_increment`) `[Rust | WASM | C/C++]`

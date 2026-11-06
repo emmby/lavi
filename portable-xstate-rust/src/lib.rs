@@ -32,37 +32,40 @@ impl StateValue {
     }
 
     fn collect_paths(&self, parent: &str, paths: &mut Vec<String>) {
-        match self {
-            StateValue::Atomic(name) => {
-                if name.is_empty() {
-                    if !parent.is_empty() {
-                        paths.push(parent.to_string());
+        let mut stack: Vec<(&StateValue, String)> = vec![(self, parent.to_string())];
+        while let Some((node, current_parent)) = stack.pop() {
+            match node {
+                StateValue::Atomic(name) => {
+                    if name.is_empty() {
+                        if !current_parent.is_empty() {
+                            paths.push(current_parent);
+                        }
+                    } else {
+                        let full = if current_parent.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{}.{}", current_parent, name)
+                        };
+                        paths.push(full);
                     }
-                } else {
-                    let full = if parent.is_empty() {
+                }
+                StateValue::Compound(name, child) => {
+                    let next_parent = if current_parent.is_empty() {
                         name.clone()
                     } else {
-                        format!("{}.{}", parent, name)
+                        format!("{}.{}", current_parent, name)
                     };
-                    paths.push(full);
+                    stack.push((child.as_ref(), next_parent));
                 }
-            }
-            StateValue::Compound(name, child) => {
-                let current = if parent.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}.{}", parent, name)
-                };
-                child.collect_paths(&current, paths);
-            }
-            StateValue::Parallel(regions) => {
-                if regions.is_empty() {
-                    if !parent.is_empty() {
-                        paths.push(parent.to_string());
-                    }
-                } else {
-                    for (_region_name, region_value) in regions {
-                        region_value.collect_paths(parent, paths);
+                StateValue::Parallel(regions) => {
+                    if regions.is_empty() {
+                        if !current_parent.is_empty() {
+                            paths.push(current_parent);
+                        }
+                    } else {
+                        for (_region_name, region_value) in regions.iter().rev() {
+                            stack.push((region_value, current_parent.clone()));
+                        }
                     }
                 }
             }
@@ -75,23 +78,34 @@ impl StateValue {
         if path.is_empty() {
             return false;
         }
-        match self {
-            StateValue::Atomic(name) => !name.is_empty() && path == name,
-            StateValue::Compound(name, child) => {
-                if path == name {
-                    true
-                } else if path.starts_with(name.as_str())
-                    && path.as_bytes().get(name.len()) == Some(&b'.')
-                {
-                    child.matches(&path[name.len() + 1..])
-                } else {
-                    false
+        let mut stack: Vec<(&StateValue, &str)> = vec![(self, path)];
+        while let Some((node, rem_path)) = stack.pop() {
+            if rem_path.is_empty() {
+                continue;
+            }
+            match node {
+                StateValue::Atomic(name) => {
+                    if !name.is_empty() && rem_path == name {
+                        return true;
+                    }
+                }
+                StateValue::Compound(name, child) => {
+                    if rem_path == name {
+                        return true;
+                    } else if rem_path.starts_with(name.as_str())
+                        && rem_path.as_bytes().get(name.len()) == Some(&b'.')
+                    {
+                        stack.push((child.as_ref(), &rem_path[name.len() + 1..]));
+                    }
+                }
+                StateValue::Parallel(regions) => {
+                    for region_value in regions.values().rev() {
+                        stack.push((region_value, rem_path));
+                    }
                 }
             }
-            StateValue::Parallel(regions) => regions
-                .values()
-                .any(|region_value| region_value.matches(path)),
         }
+        false
     }
 
     /// Returns true if all active paths in `partial` are active in `self`.
@@ -101,6 +115,43 @@ impl StateValue {
         }
         let paths = partial.get_active_paths();
         !paths.is_empty() && paths.iter().all(|p| self.matches(p))
+    }
+}
+
+fn push_state_value_children(val: &mut StateValue, stack: &mut Vec<StateValue>) {
+    match val {
+        StateValue::Atomic(_) => {}
+        StateValue::Compound(_, child) => {
+            let inner = core::mem::replace(&mut **child, StateValue::Atomic(String::new()));
+            if !matches!(inner, StateValue::Atomic(_)) {
+                stack.push(inner);
+            }
+        }
+        StateValue::Parallel(regions) => {
+            for (_k, item) in core::mem::take(regions) {
+                if !matches!(item, StateValue::Atomic(_)) {
+                    stack.push(item);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for StateValue {
+    fn drop(&mut self) {
+        let has_children = match self {
+            StateValue::Atomic(_) => false,
+            StateValue::Compound(_, _) => true,
+            StateValue::Parallel(regions) => !regions.is_empty(),
+        };
+        if !has_children {
+            return;
+        }
+        let mut stack: Vec<StateValue> = Vec::new();
+        push_state_value_children(self, &mut stack);
+        while let Some(mut top) = stack.pop() {
+            push_state_value_children(&mut top, &mut stack);
+        }
     }
 }
 
@@ -414,6 +465,38 @@ impl MachineDefinition {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MachineStatus {
+    Active,
+    Done,
+    Stopped,
+}
+
+impl MachineStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MachineStatus::Active => "active",
+            MachineStatus::Done => "done",
+            MachineStatus::Stopped => "stopped",
+        }
+    }
+}
+
+pub type Event = Value;
+
+impl Value {
+    pub fn event(event_type: &str) -> Self {
+        let mut map = IndexMap::new();
+        map.insert("type".to_string(), Value::String(event_type.to_string()));
+        Value::Object(map)
+    }
+
+    pub fn event_with_payload(event_type: &str, mut payload: IndexMap<String, Value>) -> Self {
+        payload.insert("type".to_string(), Value::String(event_type.to_string()));
+        Value::Object(payload)
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeMachine {
     pub definition: MachineDefinition,
@@ -422,6 +505,8 @@ pub struct RuntimeMachine {
     pub history_value: IndexMap<String, StateValue>,
     pub initial_actions: Vec<Action>,
     pub is_started: bool,
+    pub status: MachineStatus,
+    pub guards: IndexMap<String, GuardFunction>,
     pub active_timers: Vec<(String, u64, Vec<TransitionDefinition>)>,
     pub clock_millis_fn: Option<alloc::rc::Rc<dyn Fn() -> u64>>,
     pub warn_fn: Option<WarnFunction>,
@@ -454,20 +539,24 @@ impl RuntimeMachine {
 
         let context = definition.context.take().unwrap_or_else(|| Value::Object(IndexMap::new()));
 
-        Ok(Self {
+        let mut machine = Self {
             definition,
             current_state: initial_state,
             context,
             history_value: IndexMap::new(),
             initial_actions: dummy,
             is_started: false,
+            status: MachineStatus::Active,
+            guards: IndexMap::new(),
             active_timers: Vec::new(),
             clock_millis_fn: None,
             warn_fn: None,
             is_processing: false,
             external_queue: alloc::collections::VecDeque::new(),
             internal_queue: alloc::collections::VecDeque::new(),
-        })
+        };
+        machine.refresh_status();
+        Ok(machine)
     }
 
     pub fn from_json(json: &str) -> Result<Self, String> {
@@ -485,6 +574,163 @@ impl RuntimeMachine {
 
     pub fn register_warn_fn(&mut self, warn_fn: WarnFunction) {
         self.warn_fn = Some(warn_fn);
+    }
+
+    pub fn register_guard(&mut self, name: &str, guard: GuardFunction) {
+        self.guards.insert(name.to_string(), guard);
+    }
+
+    fn compute_is_done(&self) -> bool {
+        if matches!(self.definition.state_type, StateType::Final) {
+            return true;
+        }
+        let active_paths = self.current_state.get_active_paths();
+        !active_paths.is_empty()
+            && active_paths.iter().all(|p| {
+                self.get_state_definition(p)
+                    .map(|def| {
+                        matches!(def.state_type, StateType::Final)
+                            || def.type_.as_deref() == Some("final")
+                    })
+                    .unwrap_or(false)
+            })
+    }
+
+    fn refresh_status(&mut self) {
+        if self.status == MachineStatus::Stopped {
+            return;
+        }
+        if self.compute_is_done() {
+            self.status = MachineStatus::Done;
+        } else {
+            self.status = MachineStatus::Active;
+        }
+    }
+
+    pub fn status(&self) -> MachineStatus {
+        if self.status == MachineStatus::Stopped {
+            MachineStatus::Stopped
+        } else if self.compute_is_done() {
+            MachineStatus::Done
+        } else {
+            MachineStatus::Active
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.status() == MachineStatus::Done
+    }
+
+    pub fn stop(&mut self) {
+        self.status = MachineStatus::Stopped;
+        self.active_timers.clear();
+        self.external_queue.clear();
+        self.internal_queue.clear();
+    }
+
+    pub fn has_tag(&self, tag: &str) -> bool {
+        let active_paths = self.current_state.get_active_paths();
+        for path in &active_paths {
+            let mut current_path: &str = path.as_str();
+            while !current_path.is_empty() {
+                if let Some(def) = Self::get_state_def_recursive(&self.definition.states, current_path) {
+                    if def.tags.iter().any(|t| t == tag) {
+                        return true;
+                    }
+                }
+                if let Some(idx) = current_path.rfind('.') {
+                    current_path = &current_path[..idx];
+                } else {
+                    break;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn can(&self, event_name: &str) -> bool {
+        let payload = Value::event(event_name);
+        self.can_with_guards(event_name, &payload, &self.guards)
+    }
+
+    pub fn can_event(&self, event: &Event) -> bool {
+        match event {
+            Value::String(s) => self.can(s),
+            Value::Object(map) => {
+                let event_type = map
+                    .get("type")
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                if event_type.is_empty() {
+                    return false;
+                }
+                self.can_with_guards(event_type, event, &self.guards)
+            }
+            _ => false,
+        }
+    }
+
+    pub fn can_with_guards(
+        &self,
+        event_type: &str,
+        event_payload: &Value,
+        guards: &IndexMap<String, GuardFunction>,
+    ) -> bool {
+        if event_type.is_empty() || self.status() == MachineStatus::Stopped {
+            return false;
+        }
+        let active_leaves = self.current_state.get_active_paths();
+        let mut all_search_paths = Vec::new();
+        for leaf in &active_leaves {
+            let mut parts: Vec<&str> = leaf.split('.').collect();
+            while !parts.is_empty() {
+                let p = parts.join(".");
+                if !all_search_paths.contains(&p) {
+                    all_search_paths.push(p);
+                }
+                parts.pop();
+            }
+        }
+        if !all_search_paths.contains(&"".to_string()) {
+            all_search_paths.push("".to_string());
+        }
+        all_search_paths.sort_by_key(|b| core::cmp::Reverse(b.matches('.').count()));
+
+        for current_path in all_search_paths {
+            let on_map_opt = if current_path.is_empty() {
+                Some(&self.definition.on)
+            } else {
+                Self::get_state_def_recursive(&self.definition.states, &current_path)
+                    .map(|d| &d.on)
+            };
+            let candidates = if let Some(on_map) = on_map_opt {
+                Self::get_candidates(on_map, event_type, &None)
+            } else {
+                Vec::new()
+            };
+            for t in candidates {
+                if let Some(cond) = &t.cond {
+                    let is_allowed = match cond {
+                        TransitionGuard::Name(n) => guards
+                            .get(n)
+                            .or_else(|| self.guards.get(n))
+                            .map(|f| f(&self.context, event_payload, &None))
+                            .unwrap_or(true),
+                        TransitionGuard::Object(o) => guards
+                            .get(&o.guard_type)
+                            .or_else(|| self.guards.get(&o.guard_type))
+                            .map(|f| f(&self.context, event_payload, &o.params))
+                            .unwrap_or(true),
+                    };
+                    if !is_allowed {
+                        continue;
+                    }
+                }
+                return true;
+            }
+        }
+        false
     }
 
     fn get_candidates<'a>(
@@ -520,7 +766,7 @@ impl RuntimeMachine {
     }
 
     pub fn next_timer_deadline(&self) -> Option<u64> {
-        if !self.is_started {
+        if !self.is_started || self.status == MachineStatus::Stopped {
             return None;
         }
         self.active_timers
@@ -534,8 +780,11 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) {
-        if self.is_started {
+        if self.is_started || self.status == MachineStatus::Stopped {
             return;
+        }
+        for (k, v) in guards {
+            self.guards.insert(k.clone(), v.clone());
         }
         self.is_started = true;
         self.is_processing = true;
@@ -628,10 +877,11 @@ impl RuntimeMachine {
         // 3. Complete initialization macrostep and drain any reentrant external events
         self.is_processing = false;
         let _ = self.drain_external_queue(guards, actions);
+        self.refresh_status();
     }
 
     pub fn revive_timers(&mut self) {
-        if !self.is_started { return; }
+        if !self.is_started || self.status == MachineStatus::Stopped { return; }
         self.active_timers.clear();
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         let active_leaves = self.current_state.get_active_paths();
@@ -970,8 +1220,11 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
-        if !self.is_started || self.is_processing {
+        if !self.is_started || self.is_processing || self.status == MachineStatus::Stopped {
             return None;
+        }
+        for (k, v) in guards {
+            self.guards.insert(k.clone(), v.clone());
         }
         self.is_processing = true;
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
@@ -979,6 +1232,9 @@ impl RuntimeMachine {
         let mut last_ret = None;
         let mut steps = 0usize;
         while steps < 100 {
+            if self.status == MachineStatus::Stopped {
+                break;
+            }
             let expired = self
                 .active_timers
                 .iter()
@@ -1030,6 +1286,7 @@ impl RuntimeMachine {
         }
 
         self.is_processing = false;
+        self.refresh_status();
         last_ret
     }
 
@@ -1040,6 +1297,12 @@ impl RuntimeMachine {
         guards: &IndexMap<String, GuardFunction>,
         actions: &IndexMap<String, ActionFunction>,
     ) -> Option<StateValue> {
+        if self.status == MachineStatus::Stopped {
+            return None;
+        }
+        for (k, v) in guards {
+            self.guards.insert(k.clone(), v.clone());
+        }
         self.external_queue
             .push_back((event_type.to_string(), event_payload.clone()));
         self.drain_external_queue(guards, actions)
@@ -1054,6 +1317,10 @@ impl RuntimeMachine {
         let mut loop_count = 0;
 
         while !self.external_queue.is_empty() {
+            if self.status == MachineStatus::Stopped {
+                self.external_queue.clear();
+                break;
+            }
             if loop_count > 100 {
                 panic!("Maximum external queue iteration depth exceeded!");
             }
@@ -1084,6 +1351,7 @@ impl RuntimeMachine {
         self.is_processing = true;
         let last_ret = self.drain_reentrant_external_queue(guards, actions);
         self.is_processing = false;
+        self.refresh_status();
         last_ret
     }
     
@@ -1091,6 +1359,10 @@ impl RuntimeMachine {
         let mut last_valid_state = None;
         let mut iterations = 0;
         while let Some(raised) = self.internal_queue.pop_front() {
+            if self.status == MachineStatus::Stopped {
+                self.internal_queue.clear();
+                break;
+            }
             iterations += 1;
             if iterations > 100 {
                 // Prevent infinite loops from cyclic raised events
@@ -1123,6 +1395,9 @@ impl RuntimeMachine {
         // Used primarily for resolving event-less `always` transitions or executing queued delayed `after` transitions.
         force_transition: Option<(&str, &[TransitionDefinition])>,
     ) -> Option<StateValue> {
+        if self.status == MachineStatus::Stopped {
+            return None;
+        }
         if depth > 100 {
             panic!("Maximum transition depth exceeded!");
         }
@@ -1173,8 +1448,16 @@ impl RuntimeMachine {
                  for t in candidates {
                        if let Some(cond) = &t.cond {
                            let is_allowed = match cond {
-                               TransitionGuard::Name(n) => guards.get(n).map(|f| f(&self.context, event_payload, &None)).unwrap_or(true),
-                               TransitionGuard::Object(o) => guards.get(&o.guard_type).map(|f| f(&self.context, event_payload, &o.params)).unwrap_or(true),
+                               TransitionGuard::Name(n) => guards
+                                   .get(n)
+                                   .or_else(|| self.guards.get(n))
+                                   .map(|f| f(&self.context, event_payload, &None))
+                                   .unwrap_or(true),
+                               TransitionGuard::Object(o) => guards
+                                   .get(&o.guard_type)
+                                   .or_else(|| self.guards.get(&o.guard_type))
+                                   .map(|f| f(&self.context, event_payload, &o.params))
+                                   .unwrap_or(true),
                            };
                            if !is_allowed { continue; }
                        }
@@ -1408,6 +1691,7 @@ impl RuntimeMachine {
         self.current_state = finalized_state;
 
         let has_transition_or_actions = !selected_transitions.is_empty();
+        self.refresh_status();
         if !event_type.is_empty() || _changed || force_transition.is_some() {
              if let Some(next) = self.transition_internal("", event_payload, guards, actions, depth + 1, None) {
                  return Some(next);

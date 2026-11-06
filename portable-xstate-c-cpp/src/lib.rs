@@ -140,6 +140,75 @@ pub extern "C" fn fsm_matches(ptr: *const MachineContext, state_path: *const c_c
 }
 
 #[no_mangle]
+pub extern "C" fn fsm_can(ctx: *const MachineContext, event: *const c_char) -> c_int {
+    if ctx.is_null() {
+        return -1;
+    }
+    if event.is_null() {
+        return -2;
+    }
+    let ctx_ref = unsafe { &*ctx };
+    let event_c_str = unsafe { CStr::from_ptr(event) };
+    let event_str = match event_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    let payload = Value::event(event_str);
+    if ctx_ref
+        .machine
+        .can_with_guards(event_str, &payload, &ctx_ref.guards)
+    {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_has_tag(ctx: *const MachineContext, tag: *const c_char) -> c_int {
+    if ctx.is_null() {
+        return -1;
+    }
+    if tag.is_null() {
+        return -2;
+    }
+    let ctx_ref = unsafe { &*ctx };
+    let tag_c_str = unsafe { CStr::from_ptr(tag) };
+    let tag_str = match tag_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    if ctx_ref.machine.has_tag(tag_str) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_is_done(ctx: *const MachineContext) -> c_int {
+    if ctx.is_null() {
+        return -1;
+    }
+    let ctx_ref = unsafe { &*ctx };
+    if ctx_ref.machine.is_done() {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_stop(ctx: *mut MachineContext) -> c_int {
+    if ctx.is_null() {
+        return -1;
+    }
+    let ctx_ref = unsafe { &mut *ctx };
+    ctx_ref.machine.stop();
+    0
+}
+
+#[no_mangle]
 pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_char) -> c_int {
     let ctx = unsafe {
         if ptr.is_null() { return -1; }
@@ -1004,5 +1073,104 @@ mod tests {
         fsm_send_event(m4, wild_ev.as_ptr());
         assert!(fsm_matches(m4, catch_all_state.as_ptr()));
         fsm_free(m4);
+    }
+
+    #[test]
+    fn test_can_has_tag_is_done_stop_ffi() {
+        let json = CString::new(r##"{
+          "id": "queriesFfi",
+          "initial": "idle",
+          "states": {
+            "idle": {
+              "tags": ["ready", "standby"],
+              "on": {
+                "START": "working",
+                "BLOCKED": {
+                  "target": "working",
+                  "guard": "never"
+                }
+              }
+            },
+            "working": {
+              "initial": "step1",
+              "tags": "busy",
+              "states": {
+                "step1": {
+                  "tags": ["phase1"],
+                  "on": { "FINISH": "#queriesFfi.done" }
+                }
+              }
+            },
+            "done": {
+              "type": "final",
+              "tags": ["completed"]
+            }
+          }
+        }"##).unwrap();
+
+        let grd_never = CString::new("never").unwrap();
+        let ev_start = CString::new("START").unwrap();
+        let ev_blocked = CString::new("BLOCKED").unwrap();
+        let ev_finish = CString::new("FINISH").unwrap();
+        let ev_unknown = CString::new("UNKNOWN").unwrap();
+
+        let tag_ready = CString::new("ready").unwrap();
+        let tag_busy = CString::new("busy").unwrap();
+        let tag_phase1 = CString::new("phase1").unwrap();
+        let tag_completed = CString::new("completed").unwrap();
+
+        let state_idle = CString::new("idle").unwrap();
+        let state_working = CString::new("working.step1").unwrap();
+        let state_done = CString::new("done").unwrap();
+
+        let m = fsm_create(json.as_ptr());
+        assert!(!m.is_null());
+        fsm_register_guard(m, grd_never.as_ptr(), Some(guard_always_false), ptr::null_mut());
+        fsm_start(m);
+
+        // Null pointer error checks
+        assert_eq!(fsm_can(ptr::null(), ev_start.as_ptr()), -1);
+        assert_eq!(fsm_can(m, ptr::null()), -2);
+        assert_eq!(fsm_has_tag(ptr::null(), tag_ready.as_ptr()), -1);
+        assert_eq!(fsm_has_tag(m, ptr::null()), -2);
+        assert_eq!(fsm_is_done(ptr::null()), -1);
+        assert_eq!(fsm_stop(ptr::null_mut()), -1);
+
+        // In "idle"
+        assert_eq!(fsm_is_done(m), 0);
+        assert_eq!(fsm_has_tag(m, tag_ready.as_ptr()), 1);
+        assert_eq!(fsm_has_tag(m, tag_busy.as_ptr()), 0);
+        assert_eq!(fsm_can(m, ev_start.as_ptr()), 1);
+        assert_eq!(fsm_can(m, ev_blocked.as_ptr()), 0);
+        assert_eq!(fsm_can(m, ev_unknown.as_ptr()), 0);
+        assert!(fsm_matches(m, state_idle.as_ptr()));
+
+        // Transition to "working.step1"
+        fsm_send_event(m, ev_start.as_ptr());
+        assert!(fsm_matches(m, state_working.as_ptr()));
+        assert_eq!(fsm_is_done(m), 0);
+        assert_eq!(fsm_has_tag(m, tag_ready.as_ptr()), 0);
+        assert_eq!(fsm_has_tag(m, tag_busy.as_ptr()), 1);
+        assert_eq!(fsm_has_tag(m, tag_phase1.as_ptr()), 1);
+        assert_eq!(fsm_can(m, ev_finish.as_ptr()), 1);
+
+        // Transition to "done"
+        fsm_send_event(m, ev_finish.as_ptr());
+        assert!(fsm_matches(m, state_done.as_ptr()));
+        assert_eq!(fsm_is_done(m), 1);
+        assert_eq!(fsm_has_tag(m, tag_completed.as_ptr()), 1);
+        assert_eq!(fsm_can(m, ev_start.as_ptr()), 0);
+        fsm_free(m);
+
+        // Stop test
+        let m2 = fsm_create(json.as_ptr());
+        fsm_start(m2);
+        assert_eq!(fsm_can(m2, ev_start.as_ptr()), 1);
+        assert_eq!(fsm_stop(m2), 0);
+        assert_eq!(fsm_can(m2, ev_start.as_ptr()), 0);
+        assert_eq!(fsm_is_done(m2), 0);
+        fsm_send_event(m2, ev_start.as_ptr());
+        assert!(fsm_matches(m2, state_idle.as_ptr()));
+        fsm_free(m2);
     }
 }

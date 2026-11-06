@@ -231,6 +231,78 @@ int main() {
         assert(assign_cpp.matches("won"));
         assert(cpp_assign_verified);
 
+        // State query tests: can(), hasTag(), isDone(), stop()
+        const char* QUERIES_CPP_JSON = R"({
+          "id": "queriesCpp",
+          "initial": "idle",
+          "states": {
+            "idle": {
+              "tags": ["ready", "standby"],
+              "on": {
+                "START": "working",
+                "BLOCKED": {
+                  "target": "working",
+                  "guard": "deny"
+                }
+              }
+            },
+            "working": {
+              "initial": "step1",
+              "tags": "busy",
+              "states": {
+                "step1": {
+                  "tags": ["phase1"],
+                  "on": {
+                    "FINISH": "#queriesCpp.done"
+                  }
+                }
+              }
+            },
+            "done": {
+              "type": "final",
+              "tags": ["completed"]
+            }
+          }
+        })";
+
+        xstate::PortableXState q_cpp(QUERIES_CPP_JSON);
+        q_cpp.registerGuard("deny", [](const xstate::Value&, const xstate::Value&) {
+            return false;
+        });
+        q_cpp.start();
+
+        assert(!q_cpp.isDone());
+        assert(q_cpp.hasTag("ready"));
+        assert(q_cpp.hasTag(std::string("standby")));
+        assert(!q_cpp.hasTag("busy"));
+        assert(q_cpp.can("START"));
+        assert(!q_cpp.can("BLOCKED"));
+        assert(!q_cpp.can(std::string("UNKNOWN")));
+
+        q_cpp.send("START");
+        assert(q_cpp.matches("working.step1"));
+        assert(!q_cpp.isDone());
+        assert(!q_cpp.hasTag("ready"));
+        assert(q_cpp.hasTag("busy"));
+        assert(q_cpp.hasTag("phase1"));
+        assert(q_cpp.can("FINISH"));
+        assert(!q_cpp.can("START"));
+
+        q_cpp.send("FINISH");
+        assert(q_cpp.matches("done"));
+        assert(q_cpp.isDone());
+        assert(q_cpp.hasTag("completed"));
+        assert(!q_cpp.can("FINISH"));
+
+        xstate::PortableXState q_stop(QUERIES_CPP_JSON);
+        q_stop.start();
+        assert(q_stop.can("START"));
+        q_stop.stop();
+        assert(!q_stop.can("START"));
+        assert(!q_stop.isDone());
+        q_stop.send("START");
+        assert(q_stop.matches("idle"));
+
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
         return 1;

@@ -286,6 +286,67 @@ public:
     }
 
     /**
+     * @brief Check whether the given event would select an enabled transition without mutating state.
+     *
+     * @param event The event name to check.
+     * @return true if an enabled transition exists for the event, false otherwise.
+     */
+    bool can(const char* event) const noexcept {
+        if (!machine || !event) return false;
+        return fsm_can(machine, event) == 1;
+    }
+
+    /**
+     * @brief Check whether the given event would select an enabled transition without mutating state.
+     *
+     * @param event The event name to check.
+     * @return true if an enabled transition exists for the event, false otherwise.
+     */
+    bool can(const std::string& event) const noexcept {
+        return can(event.c_str());
+    }
+
+    /**
+     * @brief Check whether any currently active state node in the hierarchy has the given tag.
+     *
+     * @param tag The tag string to check.
+     * @return true if the active state configuration has the tag, false otherwise.
+     */
+    bool hasTag(const char* tag) const noexcept {
+        if (!machine || !tag) return false;
+        return fsm_has_tag(machine, tag) == 1;
+    }
+
+    /**
+     * @brief Check whether any currently active state node in the hierarchy has the given tag.
+     *
+     * @param tag The tag string to check.
+     * @return true if the active state configuration has the tag, false otherwise.
+     */
+    bool hasTag(const std::string& tag) const noexcept {
+        return hasTag(tag.c_str());
+    }
+
+    /**
+     * @brief Check whether the state machine has reached a final/done state.
+     *
+     * @return true if the machine is in a final/done state, false otherwise.
+     */
+    bool isDone() const noexcept {
+        if (!machine) return false;
+        return fsm_is_done(machine) == 1;
+    }
+
+    /**
+     * @brief Stop the state machine. A stopped machine ignores subsequent events and timers.
+     */
+    void stop() noexcept {
+        if (machine) {
+            fsm_stop(machine);
+        }
+    }
+
+    /**
      * @brief Send an event to the state machine.
      * 
      * @param event The event name to send.
