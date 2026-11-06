@@ -1,5 +1,5 @@
 use portable_xstate_rust::{
-    assign, create_machine, setup, Action, HistoryType, RuntimeMachine, StateValue, Value,
+    assign, create_machine, setup, Action, HistoryType, RuntimeMachine, StateType, StateValue, Value,
 };
 
 #[test]
@@ -196,7 +196,7 @@ fn test_history_mapping() {
     );
 
     let hist = second.states.get("hist").unwrap();
-    assert_eq!(hist.type_.as_deref(), Some("history"));
+    assert_eq!(hist.state_type, StateType::History { deep: false });
     assert_eq!(hist.history, Some(HistoryType::Shallow));
 }
 
@@ -246,6 +246,6 @@ fn test_explicit_deep_history_mapping() {
     let second = definition.states.get("second").expect("Missing second state");
     let hist = second.states.get("hist").unwrap();
 
-    assert_eq!(hist.type_.as_deref(), Some("history"));
+    assert_eq!(hist.state_type, StateType::History { deep: true });
     assert_eq!(hist.history, Some(HistoryType::Deep));
 }

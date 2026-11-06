@@ -110,6 +110,34 @@ int fsm_simulated_clock_increment(SimulatedClock* clock, uint64_t dt_ms);
  * @return 0 on success, or -1 if the context pointer is null.
  */
 int fsm_tick(MachineContext* ptr);
+
+/**
+ * @brief Serialize current machine snapshot (state value, context, history, status) as JSON.
+ *
+ * Buffer-safe sizing:
+ * - If buffer is NULL or buffer_len is 0, returns the required buffer capacity in bytes (including null terminator).
+ * - If buffer_len is insufficient to hold the null-terminated string, returns -2 without writing to buffer.
+ * - If buffer is valid and buffer_len is sufficient, writes null-terminated JSON and returns length written.
+ *
+ * @param ctx The machine context.
+ * @param buffer Output char buffer (or NULL for size query).
+ * @param buffer_len Capacity of buffer in bytes.
+ * @return Number of characters written on success (>= 0), required buffer size on query (buffer == NULL or buffer_len == 0),
+ *         or negative error code (-1: NULL ctx, -2: buffer too small, -3: integer overflow).
+ */
+int32_t fsm_get_snapshot_json(const MachineContext* ctx, char* buffer, size_t buffer_len);
+
+/**
+ * @brief Restore machine state from a serialized JSON snapshot.
+ *
+ * Updates current state value, context, history table, and machine status from the snapshot,
+ * and revives active timer deadlines.
+ *
+ * @param ctx The machine context.
+ * @param json_str Null-terminated JSON snapshot string.
+ * @return 0 on success, or negative error code (-1: NULL ctx, -2: NULL json_str, -3: invalid UTF-8, -4: restore failure).
+ */
+int32_t fsm_restore_snapshot_json(MachineContext* ctx, const char* json_str);
 #ifdef __cplusplus
 }
 #endif

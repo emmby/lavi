@@ -1,5 +1,7 @@
 #![allow(clippy::type_complexity, clippy::unused_unit)]
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use portable_xstate_rust::{RuntimeMachine, Value};
 use crate::utils::{js_to_value, value_to_js};
 use indexmap::IndexMap;
@@ -195,7 +197,7 @@ impl StateNode {
     fn is_state_done(&self, val: &JsValue, states: &IndexMap<String, portable_xstate_rust::StateDefinition>) -> bool {
          if let Some(key) = val.as_string() {
               if let Some(def) = states.get(&key) {
-                   return def.type_.as_deref() == Some("final");
+                   return def.state_type == portable_xstate_rust::StateType::Final;
               }
          } else if val.is_object() {
               // Compound/Parallel value { key: child_val }
@@ -376,10 +378,12 @@ fn map_state_map(
              let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("initial"), &JsValue::from_str(init));
         }
         // type
-        let type_str = if !def.states.is_empty() {
-             "compound" // or parallel? Core doesn't verify parallel yet.
-        } else {
-             "atomic" // or history/final
+        let type_str = match def.state_type {
+            portable_xstate_rust::StateType::Atomic => "atomic",
+            portable_xstate_rust::StateType::Compound => "compound",
+            portable_xstate_rust::StateType::Parallel => "parallel",
+            portable_xstate_rust::StateType::Final => "final",
+            portable_xstate_rust::StateType::History { .. } => "history",
         };
         let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("type"), &JsValue::from_str(type_str));
 
@@ -523,6 +527,43 @@ pub fn assign(assignment: JsValue) -> JsValue {
 }
 
 #[wasm_bindgen]
+pub fn raise(event: JsValue, options: Option<JsValue>) -> JsValue {
+    let obj = js_sys::Object::new();
+    let type_key = JsValue::from_str("type");
+    let params_key = JsValue::from_str("params");
+
+    let mut has_delay = false;
+    let params_obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &event);
+    if let Some(opts) = options {
+        if opts.is_object() && !opts.is_null() {
+            let opts_obj = js_sys::Object::from(opts);
+            let delay_key = JsValue::from_str("delay");
+            let delay_val = js_sys::Reflect::get(&opts_obj, &delay_key).unwrap_or(JsValue::UNDEFINED);
+            if !delay_val.is_undefined() {
+                has_delay = true;
+            }
+            let keys = js_sys::Object::keys(&opts_obj);
+            for i in 0..keys.length() {
+                let k = keys.get(i);
+                if let Ok(v) = js_sys::Reflect::get(&opts_obj, &k) {
+                    let _ = js_sys::Reflect::set(&params_obj, &k, &v);
+                }
+            }
+        }
+    }
+    let _ = js_sys::Reflect::set(&obj, &params_key, &params_obj);
+
+    if has_delay {
+        let _ = js_sys::Reflect::set(&obj, &type_key, &JsValue::from_str("xstate.raise.delayed"));
+    } else {
+        let _ = js_sys::Reflect::set(&obj, &type_key, &JsValue::from_str("xstate.raise"));
+    }
+
+    obj.into()
+}
+
+#[wasm_bindgen]
 impl StateNode {
     #[wasm_bindgen(js_name = createActor)]
     pub fn create_actor_method(&self, options: JsValue) -> Result<Actor, JsValue> {
@@ -556,127 +597,8 @@ impl StateNode {
                   let func: js_sys::Function = inspect_val.dyn_into().unwrap();
                   runner.set_inspector(func);
              }
-             // Restore snapshot
-             parse_implementations(&options, &mut runner.guards, &mut runner.actions); 
-             let mut snapshot_val = JsValue::UNDEFINED;
-             let snapshot_key = JsValue::from_str("snapshot");
-             if let Ok(val) = js_sys::Reflect::get(&options, &snapshot_key) {
-                 if !val.is_undefined() { snapshot_val = val; }
-             }
-             if snapshot_val.is_undefined() {
-                 let state_key = JsValue::from_str("state");
-                 if let Ok(val) = js_sys::Reflect::get(&options, &state_key) {
-                     snapshot_val = val; 
-                 }
-             }
-
-             if snapshot_val.is_object() && !snapshot_val.is_null() {
-                 let snap_obj = js_sys::Object::from(snapshot_val.clone());
-                 web_sys::console::log_2(&JsValue::from_str("StateNode restoring snapshot:"), &snap_obj);
-                 // Value
-                 let value_key = JsValue::from_str("value");
-                 if let Ok(v) = js_sys::Reflect::get(&snap_obj, &value_key) {
-                     if !v.is_undefined() {
-                         web_sys::console::log_2(&JsValue::from_str("StateNode restoring value:"), &v);
-                         runner.machine.current_state = portable_xstate_rust::value_to_state_value(js_to_value(&v));
-                         runner.is_initialized = true;
-                         web_sys::console::log_1(&JsValue::from_str("StateNode initialized from snapshot"));
-                     }
-                 }
-
-                 // Context
-                 let context_key = JsValue::from_str("context");
-                 if let Ok(c) = js_sys::Reflect::get(&snap_obj, &context_key) {
-                     if !c.is_undefined() {
-                         runner.machine.context = js_to_value(&c);
-                     }
-                 }
-
-                 // History Value
-                 let history_key = JsValue::from_str("historyValue");
-                 let mut history_found = false;
-                 web_sys::console::log_2(&JsValue::from_str("Looking for history key 2:"), &history_key);
-                 if let Ok(h) = js_sys::Reflect::get(&snap_obj, &history_key) {
-                     web_sys::console::log_2(&JsValue::from_str("Found history val 2:"), &h);
-                     if !h.is_undefined() && !h.is_null() && h.is_object() {
-                        let hist_map = js_sys::Object::from(h);
-                        web_sys::console::log_1(&JsValue::from_str("Getting keys..."));
-                        let keys = js_sys::Object::keys(&hist_map);
-                        web_sys::console::log_2(&JsValue::from_str("StateNode history keys length:"), &JsValue::from(keys.length()));
-                        for i in 0..keys.length() {
-                             let k = keys.get(i).as_string().unwrap_or_default();
-                             web_sys::console::log_2(&JsValue::from_str("Process Key:"), &JsValue::from_str(&k));
-                             // Resolve ID (k) to Parent Path for Core
-                             let parent_path = if let Some(history_path) = runner.machine.definition.id_map.get(&k) {
-                                 if let Some(idx) = history_path.rfind('.') {
-                                     history_path[0..idx].to_string()
-                                 } else {
-                                     "".to_string()
-                                 }
-                             } else {
-                                 // Fallback: assume k is path ? Or log warning? Usually ID should resolve.
-                                 // If snapshot is from Core, maybe it uses paths?
-                                 // But WASM get_snapshot uses IDs.
-                                 // Maybe log warning for debugging.
-                                 web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve History ID to Path: {}", k)));
-                                 k.clone()
-                             };
-
-                             if let Ok(v) = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)) {
-                                 if js_sys::Array::is_array(&v) {
-                                      let arr: &js_sys::Array = v.unchecked_ref();
-                                      let mut longest_path: Option<String> = None;
-                                      for j in 0..arr.length() {
-                                          let item = arr.get(j);
-                                          // lightweight ID extraction
-                                          let id_key = JsValue::from_str("id");
-                                          if let Ok(id_val) = js_sys::Reflect::get(&item, &id_key) {
-                                               if let Some(id_str) = id_val.as_string() {
-                                                    if let Some(path) = runner.machine.definition.id_map.get(&id_str) {
-                                                        web_sys::console::log_1(&JsValue::from_str(&format!("Resolved path for id {}: {}", id_str, path)));
-                                                        match &longest_path {
-                                                            None => longest_path = Some(path.clone()),
-                                                            Some(curr) => { if path.len() > curr.len() { longest_path = Some(path.clone()); } }
-                                                        }
-                                                    } else {
-                                                        web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve StateNode for id: {}", id_str)));
-                                                    }
-                                               }
-                                          }
-                                      }
-                                      if let Some(p) = longest_path {
-                                          runner.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(p));
-                                      }
-                                 } else if v.is_string() {
-                                      runner.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(v.as_string().unwrap()));
-                                 } else {
-                                      // Complex compound object
-                                      runner.machine.history_value.insert(parent_path, portable_xstate_rust::value_to_state_value(js_to_value(&v)));
-                                 }
-                             }
-                        }
-                        history_found = true;
-                     }
-                 }
-                 if !history_found {
-                     let h_v5_key = JsValue::from_str("history");
-                     if let Ok(h) = js_sys::Reflect::get(&snap_obj, &h_v5_key) {
-                          if !h.is_undefined() && !h.is_null() {
-                              let h_val = js_to_value(&h);
-                              if let Some(map) = h_val.into_object() {
-                                  for (k, v) in map {
-                                      runner.machine.history_value.insert(k, portable_xstate_rust::value_to_state_value(v));
-                                  }
-                              }
-                          }
-                     }
-                 }
-             }
-
-             // Overrides
+             runner.restore_snapshot_option(&options)?;
              parse_implementations(&options, &mut runner.guards, &mut runner.actions);
-             web_sys::console::log_1(&JsValue::from_str(&format!("Restored History Value: {:?}", runner.machine.history_value)));
-
              runner.apply_clock_option(&options);
         }
 
@@ -706,6 +628,9 @@ impl SimulatedClock {
     pub fn register_actor(&mut self, actor: &Actor) {
         let mut actor_clone = actor.clone();
         actor_clone.pull_shared();
+        if let Some(shared) = actor_clone.shared_state.borrow_mut().as_mut() {
+            shared.is_simulated_clock = true;
+        }
         let tick_override = actor_clone.tick_override.clone();
         let core_clock = self.clock.clone();
         actor_clone.machine.register_clock(Rc::new(move || {
@@ -741,7 +666,7 @@ impl SimulatedClock {
 
             let next_deadline_opt = actors
                 .iter()
-                .filter(|a| !a.is_stopped)
+                .filter(|a| !a.is_stopped && !a.machine.is_done() && a.machine.status != portable_xstate_rust::MachineStatus::Done)
                 .filter_map(|a| a.machine.next_timer_deadline())
                 .min();
 
@@ -768,7 +693,7 @@ impl SimulatedClock {
             self.clock.set_now_raw(next_deadline);
 
             for (idx, a) in actors.iter_mut().enumerate() {
-                if !a.is_stopped {
+                if !a.is_stopped && !a.machine.is_done() && a.machine.status != portable_xstate_rust::MachineStatus::Done {
                     a.set_in_tick(true);
                     let mut did_transition = a.machine.tick(&a.guards, &a.actions).is_some();
                     if a.drain_reentrant_shared() {
@@ -807,15 +732,54 @@ impl SimulatedClock {
 }
 
 #[derive(Clone)]
+pub(crate) enum Subscriber {
+    Fn(js_sys::Function),
+    Observer {
+        next: Option<js_sys::Function>,
+        complete: Option<js_sys::Function>,
+        #[allow(dead_code)]
+        error: Option<js_sys::Function>,
+    },
+}
+
+pub(crate) struct ActiveTimeout {
+    pub handle: JsValue,
+}
+
 pub(crate) struct SharedActorState {
     pub machine: RuntimeMachine,
     pub inspector: Option<js_sys::Function>,
+    pub subscribers: Vec<(u64, Subscriber)>,
     pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
     pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
     pub is_stopped: bool,
     pub is_initialized: bool,
     pub is_in_tick: bool,
     pub reentrant_queue: std::collections::VecDeque<(String, Value)>,
+    pub tick_override: Rc<core::cell::Cell<Option<u64>>>,
+    pub host_clock: Option<JsValue>,
+    pub is_simulated_clock: bool,
+    pub active_timeout: Option<ActiveTimeout>,
+}
+
+fn resolve_host_clock(custom_clock: Option<&JsValue>) -> Option<(js_sys::Function, js_sys::Function)> {
+    if let Some(opts) = custom_clock {
+        if opts.is_object() && !opts.is_null() {
+            let st = js_sys::Reflect::get(opts, &JsValue::from_str("setTimeout")).unwrap_or(JsValue::UNDEFINED);
+            let ct = js_sys::Reflect::get(opts, &JsValue::from_str("clearTimeout")).unwrap_or(JsValue::UNDEFINED);
+            if let (Ok(st_fn), Ok(ct_fn)) = (st.dyn_into::<js_sys::Function>(), ct.dyn_into::<js_sys::Function>()) {
+                return Some((st_fn, ct_fn));
+            }
+        }
+    }
+    let global = js_sys::global();
+    let st = js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout")).unwrap_or(JsValue::UNDEFINED);
+    let ct = js_sys::Reflect::get(&global, &JsValue::from_str("clearTimeout")).unwrap_or(JsValue::UNDEFINED);
+    if let (Ok(st_fn), Ok(ct_fn)) = (st.dyn_into::<js_sys::Function>(), ct.dyn_into::<js_sys::Function>()) {
+        Some((st_fn, ct_fn))
+    } else {
+        None
+    }
 }
 
 #[wasm_bindgen]
@@ -1234,110 +1198,55 @@ impl Actor {
             shared_state: Rc::new(RefCell::new(None)),
             tick_override,
         };
-
-
-        if options.is_object() {
-            let mut state_val_opt = None;
-            let snapshot_key = JsValue::from_str("snapshot");
-            if let Ok(val) = js_sys::Reflect::get(&options, &snapshot_key) {
-                if !val.is_undefined() { state_val_opt = Some(val); }
-            }
-            if state_val_opt.is_none() {
-                let state_key = JsValue::from_str("state");
-                if let Ok(val) = js_sys::Reflect::get(&options, &state_key) {
-                   if !val.is_undefined() { state_val_opt = Some(val); }
-                }
-            }
-
-            if let Some(state_val) = state_val_opt {
-                if !state_val.is_undefined() && !state_val.is_null() {
-                    let v_key = JsValue::from_str("value");
-                    if let Ok(v) = js_sys::Reflect::get(&state_val, &v_key) {
-                        if !v.is_undefined() {
-                             actor.machine.current_state = portable_xstate_rust::value_to_state_value(js_to_value(&v));
-                             actor.is_initialized = true;
-                        }
-                    }
-                    let c_key = JsValue::from_str("context");
-                    if let Ok(c) = js_sys::Reflect::get(&state_val, &c_key) {
-                        if !c.is_undefined() {
-                             actor.machine.context = js_to_value(&c);
-                        }
-                    }
-                    
-                     let _h_key = JsValue::from_str("historyValue"); // avoid unused var warning if logic changes
-                     let mut history_found = false;
-                     let h_key_lookup = JsValue::from_str("historyValue");
-                     if let Ok(h) = js_sys::Reflect::get(&state_val, &h_key_lookup) {
-                         if !h.is_undefined() && !h.is_null() && h.is_object() {
-                             let hist_map = js_sys::Object::from(h);
-                             let keys = js_sys::Object::keys(&hist_map);
-                             for i in 0..keys.length() {
-                                 let k = keys.get(i).as_string().unwrap_or_default();
-                                 let parent_path = if let Some(history_path) = actor.machine.definition.id_map.get(&k) {
-                                     if let Some(idx) = history_path.rfind('.') {
-                                         history_path[0..idx].to_string()
-                                     } else {
-                                         "".to_string()
-                                     }
-                                 } else {
-                                     k.clone()
-                                 };
-
-                                 if let Ok(v) = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)) {
-                                     if js_sys::Array::is_array(&v) {
-                                         let arr: &js_sys::Array = v.unchecked_ref();
-                                         let mut longest_path: Option<String> = None;
-                                         for j in 0..arr.length() {
-                                              let item = arr.get(j);
-                                              let id_key = JsValue::from_str("id");
-                                              if let Ok(id_val) = js_sys::Reflect::get(&item, &id_key) {
-                                                   if let Some(id_str) = id_val.as_string() {
-                                                        if let Some(path) = actor.machine.definition.id_map.get(&id_str) {
-                                                            match &longest_path {
-                                                                None => longest_path = Some(path.clone()),
-                                                                Some(curr) => { if path.len() > curr.len() { longest_path = Some(path.clone()); } }
-                                                            }
-                                                        } else {
-                                                            web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve StateNode for id: {}", id_str)));
-                                                        }
-                                                   }
-                                              }
-                                         }
-                                         if let Some(p) = longest_path {
-                                             actor.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(p));
-                                         }
-                                     } else if v.is_string() {
-                                         actor.machine.history_value.insert(parent_path, portable_xstate_rust::StateValue::Atomic(v.as_string().unwrap()));
-                                     } else {
-                                         actor.machine.history_value.insert(parent_path, portable_xstate_rust::value_to_state_value(js_to_value(&v)));
-                                     }
-                                 }
-                             }
-                             history_found = true;
-                         }
-                     }
-                      if !history_found {
-                        // Try "history" (XState v5)
-                        let h_v5_key = JsValue::from_str("history");
-                        if let Ok(h) = js_sys::Reflect::get(&state_val, &h_v5_key) {
-                             if !h.is_undefined() && !h.is_null() && h.is_object() {
-                                 let h_val = js_to_value(&h);
-                                 if let Some(map) = h_val.into_object() {
-                                     for (k, v) in map {
-                                         actor.machine.history_value.insert(k, portable_xstate_rust::value_to_state_value(v));
-                                     }
-                                 }
-                             }
-                        }
-                    }
-                }
-            }
-        }
+        actor.restore_snapshot_option(&options)?;
         actor.sync_tracked_entry_exit(&actor.config.clone());
         actor.apply_clock_option(&options);
         actor.push_shared();
         Ok(actor)
+    }
+
+    pub(crate) fn restore_snapshot_option(&mut self, options: &JsValue) -> Result<(), JsValue> {
+        if !options.is_object() || options.is_null() {
+            return Ok(());
+        }
+
+        let mut snapshot_val = JsValue::UNDEFINED;
+        let snapshot_key = JsValue::from_str("snapshot");
+        if let Ok(val) = js_sys::Reflect::get(options, &snapshot_key) {
+            if !val.is_undefined() {
+                snapshot_val = val;
+            }
+        }
+        if snapshot_val.is_undefined() {
+            let state_key = JsValue::from_str("state");
+            if let Ok(val) = js_sys::Reflect::get(options, &state_key) {
+                if !val.is_undefined() {
+                    snapshot_val = val;
+                }
+            }
+        }
+
+        if !snapshot_val.is_undefined() && !snapshot_val.is_null() {
+            let json_str = if snapshot_val.is_string() {
+                snapshot_val.as_string().unwrap()
+            } else {
+                js_sys::JSON::stringify(&snapshot_val)?
+                    .as_string()
+                    .unwrap_or_default()
+            };
+
+            if !json_str.is_empty() && json_str != "{}" {
+                self.machine
+                    .restore_from_snapshot_json(&json_str)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to restore snapshot: {}", e)))?;
+
+                self.is_initialized = true;
+                if self.machine.status == portable_xstate_rust::MachineStatus::Stopped {
+                    self.is_stopped = true;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn sync_tracked_entry_exit(&mut self, config: &JsValue) {
@@ -1422,20 +1331,30 @@ impl Actor {
 
     pub(crate) fn push_shared(&self) {
         let mut borrow = self.shared_state.borrow_mut();
-        let (is_in_tick, reentrant_queue) = borrow
-            .as_ref()
-            .map(|s| (s.is_in_tick, s.reentrant_queue.clone()))
-            .unwrap_or((false, std::collections::VecDeque::new()));
-        *borrow = Some(SharedActorState {
-            machine: self.machine.clone(),
-            inspector: self.inspector.clone(),
-            guards: self.guards.clone(),
-            actions: self.actions.clone(),
-            is_stopped: self.is_stopped,
-            is_initialized: self.is_initialized,
-            is_in_tick,
-            reentrant_queue,
-        });
+        if let Some(shared) = borrow.as_mut() {
+            shared.machine = self.machine.clone();
+            shared.inspector = self.inspector.clone();
+            shared.guards = self.guards.clone();
+            shared.actions = self.actions.clone();
+            shared.is_stopped = self.is_stopped;
+            shared.is_initialized = self.is_initialized;
+        } else {
+            *borrow = Some(SharedActorState {
+                machine: self.machine.clone(),
+                inspector: self.inspector.clone(),
+                subscribers: Vec::new(),
+                guards: self.guards.clone(),
+                actions: self.actions.clone(),
+                is_stopped: self.is_stopped,
+                is_initialized: self.is_initialized,
+                is_in_tick: false,
+                reentrant_queue: std::collections::VecDeque::new(),
+                tick_override: self.tick_override.clone(),
+                host_clock: None,
+                is_simulated_clock: false,
+                active_timeout: None,
+            });
+        }
     }
 
     pub(crate) fn set_in_tick(&self, in_tick: bool) {
@@ -1447,6 +1366,16 @@ impl Actor {
     pub(crate) fn drain_reentrant_shared(&mut self) -> bool {
         let mut transitioned = false;
         loop {
+            if self.is_stopped
+                || self.machine.status == portable_xstate_rust::MachineStatus::Stopped
+                || self.machine.status == portable_xstate_rust::MachineStatus::Done
+                || self.machine.is_done()
+            {
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.reentrant_queue.clear();
+                }
+                break;
+            }
             let next_evt = self
                 .shared_state
                 .borrow_mut()
@@ -1476,6 +1405,8 @@ impl Actor {
             return;
         }
 
+        self.push_shared();
+
         let tick_override = self.tick_override.clone();
         if let Ok(func) = clock_val.clone().dyn_into::<js_sys::Function>() {
             self.machine.register_clock(Rc::new(move || {
@@ -1495,7 +1426,9 @@ impl Actor {
             let attach = js_sys::Reflect::get(&clock_val, &JsValue::from_str("__registerActor"))
                 .unwrap_or(JsValue::UNDEFINED);
             if let Ok(attach_fn) = attach.dyn_into::<js_sys::Function>() {
-                self.push_shared();
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.is_simulated_clock = true;
+                }
                 let actor_js: JsValue = self.clone().into();
                 let _ = attach_fn.call1(&clock_val, &actor_js);
                 self.pull_shared();
@@ -1518,6 +1451,16 @@ impl Actor {
                         .unwrap_or(0)
                 }));
             }
+
+            let st = js_sys::Reflect::get(&clock_val, &JsValue::from_str("setTimeout"))
+                .unwrap_or(JsValue::UNDEFINED);
+            let ct = js_sys::Reflect::get(&clock_val, &JsValue::from_str("clearTimeout"))
+                .unwrap_or(JsValue::UNDEFINED);
+            if st.is_function() && ct.is_function() {
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.host_clock = Some(clock_val.clone());
+                }
+            }
         }
     }
 
@@ -1527,72 +1470,118 @@ impl Actor {
 
 
 
-    fn get_history_value_obj(&self) -> JsValue {
+    fn get_history_value_obj(&self, machine: &RuntimeMachine) -> JsValue {
          let history_obj = js_sys::Object::new();
-         let active_paths = self.machine.current_state.get_active_paths();
-         for (id, path) in &self.machine.definition.id_map {
-             if let Some(def) = self.machine.get_state_definition(path) {
-                 if def.type_ == Some("history".to_string()) {
+         let active_paths = machine.current_state.get_active_paths();
+         for (id, path) in &machine.definition.id_map {
+             if let Some(def) = machine.get_state_definition(path) {
+                 if matches!(def.state_type, portable_xstate_rust::StateType::History { .. }) {
+                     let is_deep = def.history == Some(portable_xstate_rust::HistoryType::Deep)
+                         || matches!(def.state_type, portable_xstate_rust::StateType::History { deep: true });
                      let parent_path = if let Some(idx) = path.rfind('.') {
                          &path[0..idx]
                      } else {
                          "" 
                      };
-                     let mut target_to_serialize: Option<String> = None;
-                     let matching_active_path = active_paths.iter().find(|p| {
-                         if parent_path.is_empty() {
-                             !p.is_empty()
-                         } else {
-                             *p == parent_path || p.starts_with(&format!("{}.", parent_path))
-                         }
-                     });
-                     if let Some(active_path) = matching_active_path {
-                          let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
-                          if active_path.len() > prefix_len {
-                               let rest = &active_path[prefix_len..];
-                               if let Some(end) = rest.find('.') {
-                                   let child = &rest[0..end];
-                                   target_to_serialize = Some(if parent_path.is_empty() { child.to_string() } else { format!("{}.{}", parent_path, child) });
-                               } else {
-                                   target_to_serialize = Some(if parent_path.is_empty() { rest.to_string() } else { format!("{}.{}", parent_path, rest) });
-                               }
-                          }
-                     }
-                     if target_to_serialize.is_none() {
-                         if let Some(stored) = self.machine.history_value.get(parent_path) {
+                     let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
+
+                     let mut raw_paths: Vec<String> = active_paths
+                         .iter()
+                         .filter(|p| {
+                             if parent_path.is_empty() {
+                                 !p.is_empty()
+                             } else {
+                                 p.len() > prefix_len
+                                     && p.starts_with(parent_path)
+                                     && p.as_bytes().get(parent_path.len()) == Some(&b'.')
+                             }
+                         })
+                         .cloned()
+                         .collect();
+
+                     if raw_paths.is_empty() {
+                         if let Some(stored) = machine.history_value.get(parent_path) {
                              let stored_paths = stored.get_active_paths();
-                             target_to_serialize = stored_paths
+                             let matching_stored: Vec<String> = stored_paths
                                  .iter()
-                                 .find(|p| {
+                                 .filter(|p| {
                                      if parent_path.is_empty() {
                                          !p.is_empty()
                                      } else {
-                                         *p == parent_path || p.starts_with(&format!("{}.", parent_path))
+                                         p.len() > prefix_len
+                                             && p.starts_with(parent_path)
+                                             && p.as_bytes().get(parent_path.len()) == Some(&b'.')
                                      }
                                  })
-                                 .or_else(|| stored_paths.first())
-                                 .cloned();
-                         }
-                     }
-                     if let Some(target) = &target_to_serialize {
-                         if let Some(p_def) = self.machine.get_state_definition(parent_path) {
-                             if let Some(initial_key) = &p_def.initial {
-                                  let full_initial = if parent_path.is_empty() { initial_key.clone() } else { format!("{}.{}", parent_path, initial_key) };
-                                  if *target == full_initial { target_to_serialize = None; }
+                                 .cloned()
+                                 .collect();
+                             if !matching_stored.is_empty() {
+                                 raw_paths = matching_stored;
+                             } else {
+                                 raw_paths = stored_paths
+                                     .into_iter()
+                                     .filter(|p| !p.is_empty())
+                                     .collect();
                              }
                          }
                      }
-                     if let Some(target_path) = target_to_serialize {
+
+                     let mut targets_to_serialize: Vec<String> = Vec::new();
+                     for raw_path in raw_paths {
+                         let target_path = if is_deep {
+                             raw_path
+                         } else if raw_path.len() > prefix_len {
+                             let rest = &raw_path[prefix_len..];
+                             let child = if let Some(end) = rest.find('.') {
+                                 &rest[..end]
+                             } else {
+                                 rest
+                             };
+                             if parent_path.is_empty() {
+                                 child.to_string()
+                             } else {
+                                 format!("{}.{}", parent_path, child)
+                             }
+                         } else {
+                             raw_path
+                         };
+                         if !targets_to_serialize.contains(&target_path) {
+                             targets_to_serialize.push(target_path);
+                         }
+                     }
+
+                     if !machine.history_value.contains_key(parent_path)
+                         && def.history_target.is_none()
+                     {
+                         if let Some(p_def) = machine.get_state_definition(parent_path) {
+                             if let Some(initial_key) = &p_def.initial {
+                                  let full_initial = if parent_path.is_empty() {
+                                      initial_key.clone()
+                                  } else {
+                                      format!("{}.{}", parent_path, initial_key)
+                                  };
+                                  if targets_to_serialize.len() == 1
+                                      && targets_to_serialize[0] == full_initial
+                                  {
+                                      targets_to_serialize.clear();
+                                  }
+                             }
+                         }
+                     }
+
+                     if !targets_to_serialize.is_empty() {
                           let entry_arr = js_sys::Array::new();
-                          let node = StateNode {
-                              machine: self.machine.clone(),
-                              path: target_path.clone(),
-                              guards: self.guards.clone(),
-                              actions: self.actions.clone(),
-                              config: self.config.clone(),
-                          };
-                          let node_val: JsValue = node.into();
-                          entry_arr.push(&node_val);
+                          for target_path in targets_to_serialize {
+                              let node = StateNode {
+                                  machine: machine.clone(),
+                                  path: target_path,
+                                  guards: self.guards.clone(),
+                                  actions: self.actions.clone(),
+                                  config: self.config.clone(),
+                              };
+                              let node_val: JsValue = node.into();
+                              entry_arr.push(&node_val);
+                          }
                           let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(id), &entry_arr);
                      }
                  }
@@ -1643,22 +1632,32 @@ impl Actor {
             Value::Null => js_sys::Object::new().into(),
             other => value_to_js(other),
         };
-        let history_obj = self.get_history_value_obj();
-        let status = if is_stopped
+        let history_obj = self.get_history_value_obj(machine_ref);
+        let status = if machine_ref.is_done()
+            || machine_ref.status() == portable_xstate_rust::MachineStatus::Done
+        {
+            "done".to_string()
+        } else if is_stopped
             || machine_ref.status() == portable_xstate_rust::MachineStatus::Stopped
         {
             "stopped".to_string()
-        } else if machine_ref.is_done() {
-            "done".to_string()
         } else {
             "active".to_string()
         };
+        let mut final_machine = machine_ref.clone();
+        if is_stopped
+            && !final_machine.is_done()
+            && final_machine.status != portable_xstate_rust::MachineStatus::Done
+            && final_machine.status != portable_xstate_rust::MachineStatus::Stopped
+        {
+            final_machine.stop();
+        }
 
         Snapshot {
             value: value_val,
             context: ctx_val,
             status,
-            machine_ref: machine_ref.clone(),
+            machine_ref: final_machine,
             guards: self.guards.clone(),
             history_value: history_obj,
             config: self.config.clone(),
@@ -1715,52 +1714,141 @@ impl Actor {
         obj.into()
     }
 
-    pub fn start(&mut self) -> Actor {
-        self.pull_shared();
-        if self.machine.is_started {
+    #[wasm_bindgen]
+    pub fn start(&self) -> Actor {
+        let (mut machine, guards, actions, is_started, is_initialized) = {
+            let borrow = self.shared_state.borrow();
+            if let Some(shared) = borrow.as_ref() {
+                (
+                    shared.machine.clone(),
+                    shared.guards.clone(),
+                    shared.actions.clone(),
+                    shared.machine.is_started,
+                    shared.is_initialized,
+                )
+            } else {
+                (
+                    self.machine.clone(),
+                    self.guards.clone(),
+                    self.actions.clone(),
+                    self.machine.is_started,
+                    self.is_initialized,
+                )
+            }
+        };
+
+        if is_started {
             return self.clone();
         }
 
-        if !self.is_initialized {
-            self.machine.start(&self.guards, &self.actions);
-            self.is_initialized = true;
+        self.set_in_tick(true);
+
+        if !is_initialized {
+            machine.start(&guards, &actions);
         } else {
-            self.machine.is_started = true;
-            self.machine.revive_timers();
-            self.handle_always_transition();
+            machine.is_started = true;
+            if machine.status != portable_xstate_rust::MachineStatus::Done && !machine.is_done() {
+                machine.revive_timers();
+                let mut loop_count = 0;
+                while loop_count < 100 {
+                    let res = machine.transition("", &Value::Null, &guards, &actions);
+                    if res.is_none() { break; }
+                    loop_count += 1;
+                }
+            }
         }
-        self.push_shared();
+
+        loop {
+            let is_now_stopped = {
+                let borrow = self.shared_state.borrow();
+                borrow.as_ref().map(|s| s.is_stopped).unwrap_or(false)
+            };
+            if is_now_stopped || machine.status == portable_xstate_rust::MachineStatus::Stopped {
+                machine.stop();
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.reentrant_queue.clear();
+                    shared.is_stopped = true;
+                }
+                break;
+            }
+            if machine.is_done() || machine.status == portable_xstate_rust::MachineStatus::Done {
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.reentrant_queue.clear();
+                }
+                break;
+            }
+            let next_reentrant = {
+                let mut borrow = self.shared_state.borrow_mut();
+                borrow.as_mut().and_then(|s| s.reentrant_queue.pop_front())
+            };
+            let Some((re_name, re_payload)) = next_reentrant else {
+                break;
+            };
+            let _ = machine.transition(&re_name, &re_payload, &guards, &actions);
+        }
+
+        {
+            let mut borrow = self.shared_state.borrow_mut();
+            if let Some(shared) = borrow.as_mut() {
+                shared.machine = machine;
+                shared.is_initialized = true;
+                shared.is_in_tick = false;
+            }
+        }
 
         // Emit initial snapshot
         self.emit_snapshot();
+
+        // Schedule host timer for any active deadline
+        Actor::reschedule_host_timer(&self.shared_state);
 
         self.clone()
     }
 
     fn emit_snapshot(&self) {
-        if let Some(inspector) = &self.inspector {
-             let snapshot = self.get_snapshot();
-             let obj: JsValue = snapshot.into();
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str("active"));
-             let _ = inspector.call1(&JsValue::NULL, &obj);
+        let snapshot = self.get_snapshot();
+        let status_str = snapshot.status();
+        let is_completed = status_str == "done"
+            || self.machine.is_done()
+            || self.machine.status == portable_xstate_rust::MachineStatus::Done;
+        let obj: JsValue = snapshot.into();
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str(&status_str));
+
+        let (subscribers, inspector) = {
+            let borrow = self.shared_state.borrow();
+            if let Some(shared) = borrow.as_ref() {
+                (shared.subscribers.clone(), shared.inspector.clone())
+            } else {
+                (Vec::new(), self.inspector.clone())
+            }
+        };
+
+        if let Some(insp) = &inspector {
+            let _ = insp.call1(&JsValue::NULL, &obj);
+        }
+
+        for (_, sub) in &subscribers {
+            match sub {
+                Subscriber::Fn(func) => {
+                    let _ = func.call1(&JsValue::NULL, &obj);
+                }
+                Subscriber::Observer { next, complete, .. } => {
+                    if let Some(next_fn) = next {
+                        let _ = next_fn.call1(&JsValue::NULL, &obj);
+                    }
+                    if is_completed {
+                        if let Some(complete_fn) = complete {
+                            let _ = complete_fn.call0(&JsValue::NULL);
+                        }
+                    }
+                }
+            }
         }
     }
 
 
-
-    fn handle_always_transition(&mut self) {
-        let mut loop_count = 0;
-        while loop_count < 100 {
-            let res = self.machine.transition("", &Value::Null, &self.guards, &self.actions);
-            if res.is_none() { break; }
-            loop_count += 1;
-        }
-    }
-
-    pub fn send(&mut self, event: JsValue) -> Result<JsValue, JsValue> {
-        self.pull_shared();
-        
+    pub fn send(&self, event: JsValue) -> Result<JsValue, JsValue> {
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
             let payload = Value::Object(IndexMap::from([("type".to_string(), Value::String(s.clone()))]));
@@ -1772,7 +1860,11 @@ impl Actor {
              (name, payload)
         };
 
-        if let Some(inspector) = &self.inspector {
+        let inspector = {
+            let borrow = self.shared_state.borrow();
+            borrow.as_ref().and_then(|s| s.inspector.clone()).or_else(|| self.inspector.clone())
+        };
+        if let Some(inspector) = &inspector {
              let obj = js_sys::Object::new();
              let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.event"));
              let evt_val = value_to_js(&event_payload);
@@ -1780,44 +1872,222 @@ impl Actor {
 
              let _ = inspector.call1(&JsValue::NULL, &obj);
         }
-        if self.shared_state.borrow().as_ref().map(|s| s.is_in_tick).unwrap_or(false) {
+
+        let (is_started, is_stopped, is_done, is_in_tick) = {
+            let borrow = self.shared_state.borrow();
+            if let Some(shared) = borrow.as_ref() {
+                (
+                    shared.machine.is_started,
+                    shared.is_stopped || shared.machine.status == portable_xstate_rust::MachineStatus::Stopped,
+                    shared.machine.status == portable_xstate_rust::MachineStatus::Done || shared.machine.is_done(),
+                    shared.is_in_tick,
+                )
+            } else {
+                (
+                    self.machine.is_started,
+                    self.is_stopped || self.machine.status == portable_xstate_rust::MachineStatus::Stopped,
+                    self.machine.status == portable_xstate_rust::MachineStatus::Done || self.machine.is_done(),
+                    false,
+                )
+            }
+        };
+
+        if !is_started || is_stopped || is_done {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        if is_in_tick {
             if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
                 shared.reentrant_queue.push_back((event_name, event_payload));
             }
             return Ok(JsValue::UNDEFINED);
         }
 
-        if !self.machine.is_started { return Ok(JsValue::UNDEFINED); }
-        let _ = self.machine.transition(&event_name, &event_payload, &self.guards, &self.actions);
-        self.push_shared();
+        self.set_in_tick(true);
 
-        // 2. Inspect Snapshot
-        // web_sys::console::error_2(&JsValue::from_str(&format!("AFTER TRANSITION: current_state={} history_value={:?}", self.machine.current_state, self.machine.history_value)), &JsValue::NULL);
+        let (mut machine, guards, actions) = {
+            let borrow = self.shared_state.borrow();
+            if let Some(shared) = borrow.as_ref() {
+                (shared.machine.clone(), shared.guards.clone(), shared.actions.clone())
+            } else {
+                (self.machine.clone(), self.guards.clone(), self.actions.clone())
+            }
+        };
+
+        let _ = machine.transition(&event_name, &event_payload, &guards, &actions);
+
+        loop {
+            let is_now_stopped = {
+                let borrow = self.shared_state.borrow();
+                borrow.as_ref().map(|s| s.is_stopped).unwrap_or(false)
+            };
+            if is_now_stopped || machine.status == portable_xstate_rust::MachineStatus::Stopped {
+                machine.stop();
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.reentrant_queue.clear();
+                    shared.is_stopped = true;
+                }
+                break;
+            }
+            if machine.is_done() || machine.status == portable_xstate_rust::MachineStatus::Done {
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.reentrant_queue.clear();
+                }
+                break;
+            }
+            let next_reentrant = {
+                let mut borrow = self.shared_state.borrow_mut();
+                borrow.as_mut().and_then(|s| s.reentrant_queue.pop_front())
+            };
+            let Some((re_name, re_payload)) = next_reentrant else {
+                break;
+            };
+            let _ = machine.transition(&re_name, &re_payload, &guards, &actions);
+        }
+
+        {
+            let mut borrow = self.shared_state.borrow_mut();
+            if let Some(shared) = borrow.as_mut() {
+                shared.machine = machine;
+                shared.is_in_tick = false;
+            }
+        }
 
         // 2. Inspect Snapshot
         self.emit_snapshot();
+
+        // Host timer scheduling
+        Actor::reschedule_host_timer(&self.shared_state);
         Ok(JsValue::UNDEFINED)
     }
 
     #[wasm_bindgen(js_name = subscribe)]
-    pub fn subscribe(&mut self, callback: js_sys::Function) {
-        self.pull_shared();
-        self.set_inspector(callback);
-        self.push_shared();
+    pub fn subscribe_js(&self, observer_or_fn: JsValue) -> Result<JsValue, JsValue> {
+        self.subscribe_internal(observer_or_fn)
+    }
+
+    fn subscribe_internal(&self, observer_or_fn: JsValue) -> Result<JsValue, JsValue> {
+        let sub = if observer_or_fn.is_function() {
+            Subscriber::Fn(observer_or_fn.unchecked_into())
+        } else if observer_or_fn.is_object() && !observer_or_fn.is_null() {
+            let obj = js_sys::Object::from(observer_or_fn);
+            let next_fn = js_sys::Reflect::get(&obj, &JsValue::from_str("next"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+            let complete_fn = js_sys::Reflect::get(&obj, &JsValue::from_str("complete"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+            let error_fn = js_sys::Reflect::get(&obj, &JsValue::from_str("error"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+            Subscriber::Observer {
+                next: next_fn,
+                complete: complete_fn,
+                error: error_fn,
+            }
+        } else {
+            return Err(JsValue::from_str("subscribe requires a function or observer"));
+        };
+
+        static NEXT_SUB_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+        let sub_id = NEXT_SUB_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+        let is_done = {
+            let borrow = self.shared_state.borrow();
+            borrow
+                .as_ref()
+                .map(|s| s.machine.is_done() || s.machine.status == portable_xstate_rust::MachineStatus::Done)
+                .unwrap_or(false)
+        };
+
+        if is_done {
+            if let Subscriber::Observer { complete: Some(ref comp), .. } = sub {
+                let _ = comp.call0(&JsValue::NULL);
+            }
+        }
+
+        {
+            let mut borrow = self.shared_state.borrow_mut();
+            if let Some(shared) = borrow.as_mut() {
+                shared.subscribers.push((sub_id, sub));
+            }
+        }
+
+        let shared_weak = Rc::downgrade(&self.shared_state);
+        let unsub_closure = Closure::wrap(Box::new(move || {
+            if let Some(shared_rc) = shared_weak.upgrade() {
+                if let Ok(mut borrow) = shared_rc.try_borrow_mut() {
+                    if let Some(shared) = borrow.as_mut() {
+                        shared.subscribers.retain(|(id, _)| *id != sub_id);
+                    }
+                }
+            }
+        }) as Box<dyn FnMut()>);
+
+        let unsub_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &unsub_obj,
+            &JsValue::from_str("unsubscribe"),
+            &unsub_closure.into_js_value(),
+        );
+
+        Ok(unsub_obj.into())
     }
 
     #[wasm_bindgen]
-    pub fn stop(&mut self) -> Actor {
-        self.pull_shared();
-        self.is_stopped = true;
-        self.machine.stop();
-        self.push_shared();
+    pub fn stop(&self) -> Actor {
+        let mut borrow = self.shared_state.borrow_mut();
+        if let Some(shared) = borrow.as_mut() {
+            if shared.machine.status == portable_xstate_rust::MachineStatus::Done || shared.machine.is_done() {
+                return self.clone();
+            }
+            shared.is_stopped = true;
+            shared.machine.stop();
+            if let Some((_, clear_timeout)) = resolve_host_clock(shared.host_clock.as_ref()) {
+                if let Some(active) = shared.active_timeout.take() {
+                    let _ = clear_timeout.call1(&JsValue::NULL, &active.handle);
+                }
+            }
+        }
         self.clone()
     }
 
     #[wasm_bindgen(js_name = getPersistedSnapshot)]
-    pub fn get_persisted_snapshot(&self) -> JsValue {
-        self.get_snapshot().into()
+    pub fn get_persisted_snapshot(&self) -> Result<JsValue, JsValue> {
+        let shared_borrow = self.shared_state.borrow();
+        let active_machine = shared_borrow
+            .as_ref()
+            .map(|s| &s.machine)
+            .unwrap_or(&self.machine);
+        let is_stopped = shared_borrow
+            .as_ref()
+            .map(|s| s.is_stopped)
+            .unwrap_or(self.is_stopped);
+        let is_initialized = shared_borrow
+            .as_ref()
+            .map(|s| s.is_initialized)
+            .unwrap_or(self.is_initialized);
+        let preview;
+        let machine_ref = if !active_machine.is_started && !is_initialized {
+            let mut m = active_machine.clone();
+            m.start(&self.guards, &IndexMap::new());
+            preview = m;
+            &preview
+        } else if is_stopped
+            && !active_machine.is_done()
+            && active_machine.status != portable_xstate_rust::MachineStatus::Done
+            && active_machine.status != portable_xstate_rust::MachineStatus::Stopped
+        {
+            let mut m = active_machine.clone();
+            m.stop();
+            preview = m;
+            &preview
+        } else {
+            active_machine
+        };
+
+        let json_str = machine_ref.get_persisted_snapshot_json();
+        js_sys::JSON::parse(&json_str)
     }
 
     #[wasm_bindgen(js_name = getNextDeadline)]
@@ -1830,16 +2100,30 @@ impl Actor {
             .as_ref()
             .map(|s| &s.machine)
             .unwrap_or(&self.machine);
+        if active_machine.is_done() || active_machine.status == portable_xstate_rust::MachineStatus::Done {
+            return None;
+        }
         active_machine.next_timer_deadline().map(|d| d as f64)
     }
 
     #[wasm_bindgen]
     pub fn tick(&mut self) -> Result<(), JsValue> {
         self.pull_shared();
-        if !self.machine.is_started || self.is_stopped {
+        if !self.machine.is_started
+            || self.is_stopped
+            || self.machine.status == portable_xstate_rust::MachineStatus::Stopped
+            || self.machine.status == portable_xstate_rust::MachineStatus::Done
+            || self.machine.is_done()
+        {
             return Ok(());
         }
-        let target_ms = self.machine.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
+        let target_ms = if let Some(override_now) = self.tick_override.get() {
+            override_now
+        } else if let Some(clock_fn) = &self.machine.clock_millis_fn {
+            clock_fn()
+        } else {
+            js_sys::Date::now() as u64
+        };
         let mut transitioned = false;
         let mut last_deadline: Option<u64> = None;
         let mut same_deadline_steps = 0usize;
@@ -1881,7 +2165,121 @@ impl Actor {
         if transitioned {
             self.emit_snapshot();
         }
+        Actor::reschedule_host_timer(&self.shared_state);
         Ok(())
+    }
+
+    pub(crate) fn reschedule_host_timer(shared_rc: &Rc<RefCell<Option<SharedActorState>>>) {
+        let mut borrow = shared_rc.borrow_mut();
+        let Some(shared) = borrow.as_mut() else {
+            return;
+        };
+
+        if shared.is_simulated_clock {
+            return;
+        }
+
+        let Some((set_timeout, clear_timeout)) = resolve_host_clock(shared.host_clock.as_ref()) else {
+            return;
+        };
+
+        // Cancel existing timer handle if any
+        if let Some(active) = shared.active_timeout.take() {
+            let _ = clear_timeout.call1(&JsValue::NULL, &active.handle);
+        }
+
+        // If stopped or done, do not schedule
+        if shared.is_stopped
+            || shared.machine.status == portable_xstate_rust::MachineStatus::Stopped
+            || shared.machine.status == portable_xstate_rust::MachineStatus::Done
+            || shared.machine.is_done()
+        {
+            return;
+        }
+
+        // Check if there is an active deadline
+        let Some(deadline) = shared.machine.next_timer_deadline() else {
+            return;
+        };
+
+        let now = shared
+            .machine
+            .clock_millis_fn
+            .as_ref()
+            .map(|c| c())
+            .unwrap_or_else(|| js_sys::Date::now() as u64);
+
+        let delay_ms = deadline.saturating_sub(now) as f64;
+
+        let shared_weak = Rc::downgrade(shared_rc);
+        let func = Closure::once_into_js(move || {
+            if let Some(shared_upgrade) = shared_weak.upgrade() {
+                Actor::on_host_timeout(&shared_upgrade);
+            }
+        });
+        let delay_val = JsValue::from_f64(delay_ms);
+
+        if let Ok(handle) = set_timeout.call2(&JsValue::NULL, &func, &delay_val) {
+            shared.active_timeout = Some(ActiveTimeout {
+                handle,
+            });
+        }
+    }
+
+    fn on_host_timeout(shared_rc: &Rc<RefCell<Option<SharedActorState>>>) {
+        // Step 1: Pre-clear active_timeout handle so exiting source state doesn't cancel it
+        {
+            let mut borrow = shared_rc.borrow_mut();
+            if let Some(shared) = borrow.as_mut() {
+                shared.active_timeout = None;
+            }
+        }
+
+        // Step 2: Create temp actor and tick
+        let mut temp_actor = {
+            let borrow = shared_rc.borrow();
+            let Some(shared) = borrow.as_ref() else {
+                return;
+            };
+            if shared.is_stopped
+                || shared.machine.status == portable_xstate_rust::MachineStatus::Stopped
+                || shared.machine.status == portable_xstate_rust::MachineStatus::Done
+                || shared.machine.is_done()
+            {
+                return;
+            }
+            Actor {
+                machine: shared.machine.clone(),
+                inspector: shared.inspector.clone(),
+                guards: shared.guards.clone(),
+                actions: shared.actions.clone(),
+                is_stopped: shared.is_stopped,
+                config: JsValue::NULL,
+                is_initialized: shared.is_initialized,
+                shared_state: shared_rc.clone(),
+                tick_override: shared.tick_override.clone(),
+            }
+        };
+
+        let next_deadline = {
+            let borrow = shared_rc.borrow();
+            borrow.as_ref().and_then(|s| s.machine.next_timer_deadline())
+        };
+        if let Some(dl) = next_deadline {
+            temp_actor.tick_override.set(Some(dl));
+        }
+
+        let _ = temp_actor.tick();
+
+        // Step 3: Reschedule for next deadline if any
+        Actor::reschedule_host_timer(shared_rc);
+    }
+}
+
+impl Actor {
+    pub fn subscribe<T: Into<JsValue>>(&self, observer_or_fn: T) -> JsValue {
+        self.subscribe_internal(observer_or_fn.into())
+            .unwrap_or(JsValue::UNDEFINED)
     }
 }
 
@@ -1978,29 +2376,8 @@ impl Snapshot {
     }
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> JsValue {
-         let obj = js_sys::Object::new();
-         let _ = js_sys::Reflect::set(&obj, &"value".into(), &self.value);
-         let _ = js_sys::Reflect::set(&obj, &"context".into(), &self.context);
-         let _ = js_sys::Reflect::set(&obj, &"status".into(), &self.status.clone().into());
-         // Add tags as empty array if not present (XState compat)
-         let tags = js_sys::Array::new();
-         // TODO: Populate tags properly? 
-         // For verification test, XState tags are [], and we don't have them in snapshot struct yet?
-         // verification.rs log shows XState has tags.
-         // Let's add them if we can, or empty array.
-         let _ = js_sys::Reflect::set(&obj, &"tags".into(), &tags);
-         // Children, etc? verification.rs filters them out or compares mismatch?
-         // Mismatch log: XState: {"children": Object {}, "context": ..., "historyValue": Object {}, "status": "active", "tags": [], "value": "a"}
-         // Verification filters 'machine' but not 'children'?
-         // Oh wait, verification comparison loop filters "type" from Wasm and "machine" from XState.
-         // It compares the rest.
-         // So we should try to match structure.
-         let _ = js_sys::Reflect::set(&obj, &"children".into(), &js_sys::Object::new());
-         // Transform history_value to match XState structure: { key: [StateNode, ...] }
-         // Since we don't have StateNode instances, we use objects with matching IDs.
-         // Use stored history value (already transformed in get_snapshot)
-         let _ = js_sys::Reflect::set(&obj, &"historyValue".into(), &self.history_value);
-         obj.into()
+        let json_str = self.machine_ref.get_persisted_snapshot_json();
+        js_sys::JSON::parse(&json_str).unwrap_or(JsValue::NULL)
     }
 }
 
@@ -2040,86 +2417,6 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
         }
 
         parse_implementations(&options, &mut runner.guards, &mut runner.actions);
-        // Snapshot restoration
-        let snap_key = JsValue::from_str("snapshot");
-        let snap_val = js_sys::Reflect::get(&options, &snap_key).unwrap_or(JsValue::UNDEFINED);
-        if snap_val.is_object() {
-             // Try to read value and context
-             let val_key = JsValue::from_str("value");
-             let ctx_key = JsValue::from_str("context");
-             let val = js_sys::Reflect::get(&snap_val, &val_key).unwrap_or(JsValue::UNDEFINED);
-             let ctx = js_sys::Reflect::get(&snap_val, &ctx_key).unwrap_or(JsValue::UNDEFINED);
-             let status_key = JsValue::from_str("status");
-             let status = js_sys::Reflect::get(&snap_val, &status_key).unwrap_or(JsValue::UNDEFINED);
-             if let Some(s) = status.as_string() {
-                 if s == "done" || s == "stopped" {
-                      runner.is_stopped = true;
-                 }
-             }
-
-             if !val.is_undefined() {
-                  runner.machine.current_state = portable_xstate_rust::value_to_state_value(js_to_value(&val));
-                  runner.is_initialized = true;
-             }
-             if !ctx.is_undefined() {
-                  runner.machine.context = js_to_value(&ctx);
-             }
-
-             // History Value restoration for createActor
-             let history_key = JsValue::from_str("historyValue");
-             let history_val = js_sys::Reflect::get(&snap_val, &history_key).unwrap_or(JsValue::UNDEFINED);
-             if history_val.is_object() && !history_val.is_null() {
-                  let hist_map = js_sys::Object::from(history_val);
-                  let keys = js_sys::Object::keys(&hist_map);
-                  for i in 0..keys.length() {
-                      let k = keys.get(i).as_string().unwrap_or_default();
-                      let v = js_sys::Reflect::get(&hist_map, &JsValue::from_str(&k)).unwrap_or(JsValue::UNDEFINED);
-                      if let Some(s) = v.as_string() {
-                          runner.machine.history_value.insert(k, portable_xstate_rust::StateValue::Atomic(s));
-                      } else if js_sys::Array::is_array(&v) {
-                          let arr: &js_sys::Array = v.unchecked_ref();
-                          let mut longest_path: Option<String> = None;
-                          for i in 0..arr.length() {
-                              let item = arr.get(i);
-                              let id_key = JsValue::from_str("id");
-                              if let Ok(id_val) = js_sys::Reflect::get(&item, &id_key) {
-                                  if let Some(id_str) = id_val.as_string() {
-                                      if let Some(path) = runner.machine.definition.id_map.get(&id_str) {
-                                           match &longest_path {
-                                               None => longest_path = Some(path.clone()),
-                                               Some(current) => {
-                                                   if path.len() > current.len() {
-                                                       longest_path = Some(path.clone());
-                                                   }
-                                               }
-                                           }
-                                      } else {
-                                          web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve StateNode for id: {}", id_str)));
-                                      }
-                                  }
-                              }
-                          }
-                          if let Some(p) = longest_path {
-                              // k is the History Node ID.
-                              // We need to store it under the Parent Path.
-                              // Resolve k -> Path -> Parent Path.
-                              if let Some(history_node_path) = runner.machine.definition.id_map.get(&k) {
-                                  // Strip last segment to get parent
-                                  if let Some(idx) = history_node_path.rfind('.') {
-                                      let parent_path = &history_node_path[0..idx];
-                                      runner.machine.history_value.insert(parent_path.to_string(), portable_xstate_rust::StateValue::Atomic(p.clone()));
-                                  } else {
-                                      // History node at root?
-                                      runner.machine.history_value.insert("".to_string(), portable_xstate_rust::StateValue::Atomic(p));
-                                  }
-                              } else {
-                                  web_sys::console::warn_1(&JsValue::from_str(&format!("Could not resolve History Node ID during hydration: {}", k)));
-                              }
-                          }
-                      }
-                  }
-             }
-        }
     }
 
     runner.push_shared();

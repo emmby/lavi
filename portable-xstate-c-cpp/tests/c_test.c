@@ -1,5 +1,6 @@
 #include "../include/portable_xstate.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
@@ -275,6 +276,210 @@ int main() {
     fsm_send_event(q2, "START");
     assert(fsm_matches(q2, "idle"));
     fsm_free(q2);
+
+    // Snapshot serialization and restoration test
+    const char* SNAPSHOT_TEST_JSON = "{"
+      "\"id\": \"snapshotTestMachine\","
+      "\"initial\": \"idle\","
+      "\"context\": { \"count\": 0, \"flag\": \"initial\" },"
+      "\"states\": {"
+        "\"idle\": {"
+          "\"tags\": [\"dormant\"],"
+          "\"on\": {"
+            "\"START\": {"
+              "\"target\": \"active.subA\","
+              "\"actions\": ["
+                "{ \"type\": \"xstate.assign\", \"assignment\": { \"count\": 42, \"flag\": \"started\" } }"
+              "]"
+            "}"
+          "}"
+        "},"
+        "\"active\": {"
+          "\"initial\": \"subA\","
+          "\"tags\": [\"working\"],"
+          "\"states\": {"
+            "\"hist\": { \"type\": \"history\", \"history\": \"shallow\" },"
+            "\"subA\": {"
+              "\"on\": { \"STEP\": \"subB\" }"
+            "},"
+            "\"subB\": {"
+              "\"on\": {"
+                "\"PAUSE\": \"#snapshotTestMachine.paused\","
+                "\"FINISH\": \"#snapshotTestMachine.done\""
+              "}"
+            "}"
+          "}"
+        "},"
+        "\"paused\": {"
+          "\"on\": {"
+            "\"RESUME\": \"active.hist\""
+          "}"
+        "},"
+        "\"done\": {"
+          "\"type\": \"final\","
+          "\"tags\": [\"completed\"]"
+        "}"
+      "}"
+    "}";
+
+    MachineContext* m1 = fsm_create(SNAPSHOT_TEST_JSON);
+    assert(m1 != NULL);
+    fsm_start(m1);
+    assert(fsm_matches(m1, "idle"));
+    assert(fsm_has_tag(m1, "dormant") == 1);
+
+    // Transition idle -> active.subA (with context assign: count=42, flag="started")
+    fsm_send_event(m1, "START");
+    assert(fsm_matches(m1, "active.subA"));
+    assert(fsm_has_tag(m1, "working") == 1);
+
+    // Transition active.subA -> active.subB
+    fsm_send_event(m1, "STEP");
+    assert(fsm_matches(m1, "active.subB"));
+
+    // Transition active.subB -> paused (records active's history as subB)
+    fsm_send_event(m1, "PAUSE");
+    assert(fsm_matches(m1, "paused"));
+
+    // 1. Buffer size query test
+    int32_t req_len = fsm_get_snapshot_json(m1, NULL, 0);
+    assert(req_len > 0);
+
+    // 2. Buffer too small test
+    char small_buf[8];
+    assert(fsm_get_snapshot_json(m1, small_buf, sizeof(small_buf)) == -2);
+
+    // 3. Serialize snapshot
+    char* snapshot_buf = (char*)malloc((size_t)req_len);
+    assert(snapshot_buf != NULL);
+    int32_t written = fsm_get_snapshot_json(m1, snapshot_buf, (size_t)req_len);
+    assert(written > 0);
+    assert((size_t)written < (size_t)req_len);
+    assert(strlen(snapshot_buf) == (size_t)written);
+
+    // 4. Null & error checks
+    assert(fsm_get_snapshot_json(NULL, snapshot_buf, (size_t)req_len) == -1);
+    assert(fsm_restore_snapshot_json(NULL, snapshot_buf) == -1);
+    assert(fsm_restore_snapshot_json(m1, NULL) == -2);
+    assert(fsm_restore_snapshot_json(m1, "{ invalid json ]") < 0);
+
+    // 5. Restore into a fresh machine context m2
+    MachineContext* m2 = fsm_create(SNAPSHOT_TEST_JSON);
+    assert(m2 != NULL);
+    assert(fsm_restore_snapshot_json(m2, snapshot_buf) == 0);
+
+    // Verify m2 resumed directly in "paused" state
+    assert(fsm_matches(m2, "paused"));
+    assert(!fsm_matches(m2, "idle"));
+
+    // 6. Resume via history state active.hist -> must enter active.subB (NOT default initial subA)
+    fsm_send_event(m2, "RESUME");
+    assert(fsm_matches(m2, "active.subB"));
+    assert(!fsm_matches(m2, "active.subA"));
+    assert(fsm_has_tag(m2, "working") == 1);
+
+    // 7. Transition to final state done
+    fsm_send_event(m2, "FINISH");
+    assert(fsm_matches(m2, "done"));
+    assert(fsm_is_done(m2) == 1);
+    assert(fsm_has_tag(m2, "completed") == 1);
+
+    free(snapshot_buf);
+    fsm_free(m1);
+    fsm_free(m2);
+
+    // Snapshot status parity test across active, done, and stopped states
+    const char* STATUS_TEST_JSON = "{"
+      "\"id\": \"statusFsm\","
+      "\"initial\": \"s1\","
+      "\"states\": {"
+        "\"s1\": { \"on\": { \"STEP\": \"s2\", \"FINISH\": \"doneState\" } },"
+        "\"s2\": { \"on\": { \"FINISH\": \"doneState\" } },"
+        "\"doneState\": { \"type\": \"final\" }"
+      "}"
+    "}";
+
+    // 1. ACTIVE
+    MachineContext* sm_act = fsm_create(STATUS_TEST_JSON);
+    assert(sm_act != NULL);
+    fsm_start(sm_act);
+    fsm_send_event(sm_act, "STEP");
+    assert(fsm_matches(sm_act, "s2"));
+    assert(fsm_is_done(sm_act) == 0);
+
+    int32_t act_req = fsm_get_snapshot_json(sm_act, NULL, 0);
+    char* act_buf = (char*)malloc((size_t)act_req);
+    fsm_get_snapshot_json(sm_act, act_buf, (size_t)act_req);
+    assert(strstr(act_buf, "\"status\":\"active\"") != NULL);
+
+    MachineContext* sm_act_res = fsm_create(STATUS_TEST_JSON);
+    assert(fsm_restore_snapshot_json(sm_act_res, act_buf) == 0);
+    assert(fsm_matches(sm_act_res, "s2"));
+    assert(fsm_is_done(sm_act_res) == 0);
+    fsm_send_event(sm_act_res, "FINISH");
+    assert(fsm_matches(sm_act_res, "doneState"));
+    assert(fsm_is_done(sm_act_res) == 1);
+    free(act_buf);
+    fsm_free(sm_act);
+    fsm_free(sm_act_res);
+
+    // 2. DONE
+    MachineContext* sm_done = fsm_create(STATUS_TEST_JSON);
+    assert(sm_done != NULL);
+    fsm_start(sm_done);
+    fsm_send_event(sm_done, "FINISH");
+    assert(fsm_matches(sm_done, "doneState"));
+    assert(fsm_is_done(sm_done) == 1);
+
+    int32_t done_req = fsm_get_snapshot_json(sm_done, NULL, 0);
+    char* done_buf = (char*)malloc((size_t)done_req);
+    fsm_get_snapshot_json(sm_done, done_buf, (size_t)done_req);
+    assert(strstr(done_buf, "\"status\":\"done\"") != NULL);
+
+    MachineContext* sm_done_res = fsm_create(STATUS_TEST_JSON);
+    assert(fsm_restore_snapshot_json(sm_done_res, done_buf) == 0);
+    assert(fsm_matches(sm_done_res, "doneState"));
+    assert(fsm_is_done(sm_done_res) == 1);
+    int32_t done_res_req = fsm_get_snapshot_json(sm_done_res, NULL, 0);
+    char* done_res_buf = (char*)malloc((size_t)done_res_req);
+    fsm_get_snapshot_json(sm_done_res, done_res_buf, (size_t)done_res_req);
+    assert(strstr(done_res_buf, "\"status\":\"done\"") != NULL);
+    fsm_send_event(sm_done_res, "STEP");
+    assert(fsm_matches(sm_done_res, "doneState"));
+    assert(fsm_is_done(sm_done_res) == 1);
+    free(done_buf);
+    free(done_res_buf);
+    fsm_free(sm_done);
+    fsm_free(sm_done_res);
+
+    // 3. STOPPED
+    MachineContext* sm_stop = fsm_create(STATUS_TEST_JSON);
+    assert(sm_stop != NULL);
+    fsm_start(sm_stop);
+    fsm_send_event(sm_stop, "STEP");
+    fsm_stop(sm_stop);
+    assert(fsm_matches(sm_stop, "s2"));
+
+    int32_t stop_req = fsm_get_snapshot_json(sm_stop, NULL, 0);
+    char* stop_buf = (char*)malloc((size_t)stop_req);
+    fsm_get_snapshot_json(sm_stop, stop_buf, (size_t)stop_req);
+    assert(strstr(stop_buf, "\"status\":\"stopped\"") != NULL);
+
+    MachineContext* sm_stop_res = fsm_create(STATUS_TEST_JSON);
+    assert(fsm_restore_snapshot_json(sm_stop_res, stop_buf) == 0);
+    assert(fsm_matches(sm_stop_res, "s2"));
+    assert(fsm_is_done(sm_stop_res) == 0);
+    fsm_send_event(sm_stop_res, "FINISH");
+    assert(fsm_matches(sm_stop_res, "s2"));
+    assert(!fsm_matches(sm_stop_res, "doneState"));
+    int32_t stop_res_req = fsm_get_snapshot_json(sm_stop_res, NULL, 0);
+    char* stop_res_buf = (char*)malloc((size_t)stop_res_req);
+    fsm_get_snapshot_json(sm_stop_res, stop_res_buf, (size_t)stop_res_req);
+    assert(strstr(stop_res_buf, "\"status\":\"stopped\"") != NULL);
+    free(stop_buf);
+    free(stop_res_buf);
+    fsm_free(sm_stop);
+    fsm_free(sm_stop_res);
 
     printf("C Test Passed!\n");
     return 0;
