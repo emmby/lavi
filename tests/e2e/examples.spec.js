@@ -277,7 +277,9 @@ test.describe('FSM WASM Examples', () => {
     await expect(brushesPill).toHaveText('Off');
     await expect(stairsNode).toHaveClass(/active-leaf/);
 
-    // Flip between Diagram SVG and Machine JSON
+    // Flip between Diagram SVG and Machine JSON without distorting column widths
+    const floorWrapper = page.locator('#floorWrapper');
+    const widthBefore = (await floorWrapper.boundingBox()).width;
     const diagramView = page.locator('#diagramView');
     const jsonView = page.locator('#jsonView');
     await expect(diagramView).toBeVisible();
@@ -287,6 +289,8 @@ test.describe('FSM WASM Examples', () => {
     await expect(jsonView).toBeVisible();
     await expect(diagramView).toBeHidden();
     await expect(jsonView).toContainText('"id": "robotVacuum"');
+    const widthAfter = (await floorWrapper.boundingBox()).width;
+    expect(Math.abs(widthAfter - widthBefore)).toBeLessThan(2);
 
     await page.locator('#btnShowDiagram').click();
     await expect(diagramView).toBeVisible();
