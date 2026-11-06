@@ -1,26 +1,37 @@
-# Portable XState
+# Lavi
 
-A portable, low-memory statechart runtime compatible with **XState 5**, written in `#![no_std]` Rust (`portable-xstate-rust`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`portable-xstate-wasm`) and **C / C++ on embedded microcontrollers** (`portable-xstate-c-cpp` / PlatformIO).
+**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in `#![no_std]` Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`) and **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO).
+
+## Why Lavi?
+
+### Design in XState. Run Everywhere.
+XState v5 and Stately Studio provide an expressive, standardized JSON configuration format for Harel Statecharts and W3C SCXML semantics. **Lavi** brings that same statechart execution model beyond JavaScript so the exact same machine definition can run identically across:
+- **Embedded Microcontrollers (C / C++ / PlatformIO)**: Run statecharts on ESP32, STM32, or bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
+- **Native Systems (Rust)**: Embed a lightweight `#![no_std]` + `alloc` statechart engine (`indexmap` is the sole dependency; zero `serde` overhead).
+- **Browsers & Node.js (WebAssembly)**: Use XState v5's `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock` APIs backed by the compiled WASM core.
+
+### Why the Name "Lavi"?
+Statecharts were invented in 1983–1987 by computer scientist **David Harel** in collaboration with systems engineering pioneer **Dr. Jonah Z. Lavi** while designing the avionics software for the **Lavi** aircraft—where complex embedded flight-control logic needed a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "young lion" in Hebrew.
 
 ## Core Principles
 
 1. **Strict XState 5 Behavioral Conformance**: Validated directly against upstream `statelyai/xstate` (`v5.25.0`) conformance tests with automated provenance verification (`npm run test:conformance-check`).
 2. **Microcontroller-Ready Resource Envelope**:
-   - `#![no_std]` + `alloc` core (`indexmap` is the sole dependency in `portable-xstate-rust`; zero `serde` overhead).
+   - `#![no_std]` + `alloc` core (`indexmap` is the sole dependency in `lavi`; zero `serde` overhead).
    - Bounded $O(1)$ CPU call-stack parsing and traversal via explicit heap work-stacks (`Vec`), fitting comfortably inside an 8 KB ESP32 FreeRTOS `loopTask` stack.
    - Zero-copy `const char*` JSON configuration in C/C++ and bounded runtime memory (pre-start events are safely dropped rather than queued on the heap).
 3. **Idiomatic Target-Language APIs**:
    - **JS / TS (WASM)**: `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock`.
-   - **C (`portable_xstate.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers with `void* user_data`.
-   - **C++11 (`portable_xstate.hpp`)**: Move-safe RAII classes (`xstate::PortableXState`, `xstate::SimulatedClock`, `xstate::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
-   - **Rust (`portable-xstate-rust`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
+   - **C (`lavi.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers with `void* user_data`.
+   - **C++11 (`lavi.hpp`)**: Move-safe RAII classes (`lavi::Machine`, `lavi::SimulatedClock`, `lavi::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
+   - **Rust (`lavi`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
 
 ## Project Structure
 
-* **`portable-xstate-rust`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
-* **`portable-xstate-wasm`**: WebAssembly adapter exposing XState 5's JavaScript/TypeScript API and bridging inline JS callbacks to named runtime handlers.
-* **`portable-xstate-c-cpp`**: C/C++ static library and headers (`include/portable_xstate.h`, `include/portable_xstate.hpp`) for embedded (`espressif32`) and host (`native`) targets.
-* **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/portable-xstate.git`).
+* **`lavi`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
+* **`lavi-wasm`**: WebAssembly adapter exposing XState 5's JavaScript/TypeScript API and bridging inline JS callbacks to named runtime handlers.
+* **`lavi-c-cpp`**: C/C++ static library and headers (`include/lavi.h`, `include/lavi.hpp`) for embedded (`espressif32`) and host (`native`) targets.
+* **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/lavi.git`).
 * **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
 * **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
 
@@ -49,7 +60,9 @@ Or run individual suites:
 
 ### JavaScript / TypeScript (WASM)
 ```javascript
-import { createMachine, createActor, assign } from './portable-xstate-wasm/pkg-npm/portable_xstate.js';
+// TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
+import { createMachine, createActor, assign } from 'lavi-wasm';
+// (Or import from './lavi-wasm/pkg-npm/lavi.js' when running from a local repo build)
 
 const machine = createMachine({
   initial: 'idle',
@@ -79,7 +92,7 @@ console.log(actor.getSnapshot().context.count); // 1
 
 ### C++11 (ESP32 / PlatformIO / Native)
 ```cpp
-#include "portable_xstate.hpp"
+#include "lavi.hpp"
 
 const char* MACHINE_JSON = R"({
   "initial": "idle",
@@ -89,11 +102,11 @@ const char* MACHINE_JSON = R"({
   }
 })";
 
-xstate::PortableXState fsm(MACHINE_JSON);
-fsm.registerAction("onStart", [](const xstate::Value& ctx, const xstate::Value& evt) {
+lavi::Machine fsm(MACHINE_JSON);
+fsm.registerAction("onStart", [](const lavi::Value& ctx, const lavi::Value& evt) {
   // Handle action
 });
-fsm.registerClock(millis); // Or bind an xstate::SimulatedClock for deterministic tests
+fsm.registerClock(millis); // Or bind a lavi::SimulatedClock for deterministic tests
 fsm.start();
 
 fsm.send("START");
@@ -103,10 +116,10 @@ fsm.tick();
 
 ## Known Discrepancy: XState 5 Parity vs. Microcontroller Memory Safety
 
-To safely target severely memory-constrained embedded environments (such as ESP32 and Arduino microcontrollers), `portable-xstate` intentionally deviates from XState 5 on pre-initialization event buffering:
+To safely target severely memory-constrained embedded environments (such as ESP32 and Arduino microcontrollers), `lavi` intentionally deviates from XState 5 on pre-initialization event buffering:
 
 - **In XState 5 (JS)**: Calling `actor.send()` before `actor.start()` appends events to a dynamically growing heap array (mailbox buffer) flushed on `start()`.
-- **In `portable-xstate`**: Calling `send()` before `start()` safely **drops** the event, preventing unbound hardware interrupts or rapid sensor polling before boot from exhausting heap memory.
+- **In `lavi`**: Calling `send()` before `start()` safely **drops** the event, preventing unbound hardware interrupts or rapid sensor polling before boot from exhausting heap memory.
 
 ## For Contributors: Agentic Development & Parallel Swarming
 
@@ -131,3 +144,10 @@ If you prefer separate top-level chat threads instead of subagents:
 - Open a new conversation in the Agent Manager with **Worktree isolation** enabled.
 - Give it a single one-liner:
   > *"Follow `PROCESS.md` to onboard `final.test.ts` across Rust, WASM, and C/C++."* or *"Resolve `TD-6` from `TECH_DEBT.md`."*
+
+## License & Attribution
+
+- **Lavi Runtime (`lavi`, `lavi-wasm`, `lavi-c-cpp`)**: Licensed under the [MIT License](./LICENSE) (`Copyright (c) 2025-2026 Mike Burton`).
+- **Conformance Test Suite (`tests/` & `tests/upstream/`)**: Adapted from the [statelyai/xstate](https://github.com/statelyai/xstate) repository (`xstate@5.25.0`), `Copyright (c) 2015 David Khourshid`, used under the MIT License. See [`tests/LICENSE-THIRD-PARTY`](./tests/LICENSE-THIRD-PARTY) for the full notice.
+- **Standards & Prior Art**: Statechart execution semantics follow David Harel's Statecharts formalism (1987) and the [W3C SCXML Specification](https://www.w3.org/TR/scxml/).
+- **Acknowledgments & Non-Affiliation**: With thanks to David Khourshid and the Stately.ai team for their work on XState and Stately Studio. Lavi is an independent community project and is not affiliated with, officially maintained by, or endorsed by Stately.ai or David Khourshid.

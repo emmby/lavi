@@ -1,4 +1,4 @@
-use portable_xstate_rust::{
+use lavi::{
     assign, create_machine, setup, Action, HistoryType, RuntimeMachine, StateValue, Value,
 };
 

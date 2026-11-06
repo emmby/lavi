@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assign, createActor, createMachine } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { assign, createActor, createMachine } from '../lavi-wasm/pkg-npm/lavi';
 
 interface CounterContext {
   count: number;

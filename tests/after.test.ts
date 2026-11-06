@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { createMachine, createActor } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createMachine, createActor } from '../lavi-wasm/pkg-npm/lavi';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const lightMachine = createMachine({

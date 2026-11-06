@@ -1,4 +1,4 @@
-import { assign } from '../portable-xstate-wasm/pkg/portable_xstate.js';
+import { assign } from '../lavi-wasm/pkg/lavi.js';
 
 /**
  * Displays the machine definition and configuration in the UI.

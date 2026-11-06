@@ -1,14 +1,14 @@
 # XState 5 Supported Operations Checklist
 
-This document tracks the feature set of `portable-xstate` against the XState 5 (`statelyai/xstate@5.25.0`) specification across all three targets:
-- **`Rust`**: `#![no_std]` core engine (`portable-xstate-rust`)
-- **`WASM`**: WebAssembly / JavaScript bindings (`portable-xstate-wasm`)
-- **`C/C++`**: Embedded C99 (`portable_xstate.h`) and C++11 (`portable_xstate.hpp`) bindings (`portable-xstate-c-cpp`)
+This document tracks the feature set of `lavi` against the XState 5 (`statelyai/xstate@5.25.0`) specification across all three targets:
+- **`Rust`**: `#![no_std]` core engine (`lavi`)
+- **`WASM`**: WebAssembly / JavaScript bindings (`lavi-wasm`)
+- **`C/C++`**: Embedded C99 (`lavi.h`) and C++11 (`lavi.hpp`) bindings (`lavi-c-cpp`)
 
 **Automated Sync Invariant (`npm run test:conformance-check`)**:
 - The **Conformance Test Suites** table below is verified automatically on every `npm test` run against [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) and the actual `it.skip` / `describe.skip` counts in `tests/*.test.ts`.
 - A top-level feature line linking to an upstream test suite (`packages/core/test/<suite>.test.ts`) may only be checked `- [x]` when `tests/<suite>.test.ts` is onboarded in `tests/conformance-manifest.json` with `"status": "strict"` and `0` skipped blocks.
-- Every `fsm_*` C API symbol referenced in this document is verified against [`portable-xstate-c-cpp/include/portable_xstate.h`](./portable-xstate-c-cpp/include/portable_xstate.h).
+- Every `fsm_*` C API symbol referenced in this document is verified against [`lavi-c-cpp/include/lavi.h`](./lavi-c-cpp/include/lavi.h).
 
 ---
 
@@ -66,7 +66,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
     - [ ] Named delays (`delays: { myDelay: ... }`) and dynamic delay callbacks `[ ]`
     - **Documented Target-Language Constraints**:
       - Dynamic delay expressions in C/C++/Rust must use registered named delay callbacks rather than runtime string/expression evaluation (WASM can bridge inline JS delay functions to synthetic named callbacks; see `TD-1` in [`TECH_DEBT.md`](./TECH_DEBT.md)).
-      - Host JS `setTimeout`/`clearTimeout` handle inspection (`should not try to clear an undefined timeout when exiting source state of a delayed transition`) and internal JS `TransitionNode` string formatting (`should format transitions properly`) are skipped by design because `portable-xstate` evaluates timers against an external clock deadline rather than spawning host JS timers.
+      - Host JS `setTimeout`/`clearTimeout` handle inspection (`should not try to clear an undefined timeout when exiting source state of a delayed transition`) and internal JS `TransitionNode` string formatting (`should format transitions properly`) are skipped by design because `lavi` evaluates timers against an external clock deadline rather than spawning host JS timers.
   - [x] Wildcard Transitions (`*`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/eventDescriptors.test.ts) — 14/14 passing in `tests/eventDescriptors.test.ts`)
   - [x] Partial Wildcard Transitions (`models.*`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/eventDescriptors.test.ts) — 14/14 passing in `tests/eventDescriptors.test.ts`, including `assertEvent` partial descriptor validation in WASM)
 
@@ -110,12 +110,12 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 ## 3. State Inspection & Queries (High Priority)
 
 - [ ] **State / Snapshot API** (See `TD-8` in [`TECH_DEBT.md`](./TECH_DEBT.md) for snapshot persistence in Rust & C/C++)
-  - [x] `state.matches(stateValue)` (Dot-delimited path matching across `RuntimeMachine::matches`, `Snapshot::matches`, `fsm_matches`, and `PortableXState::matches`; partial object matching in Rust & WASM) `[Rust | WASM | C/C++]`
+  - [x] `state.matches(stateValue)` (Dot-delimited path matching across `RuntimeMachine::matches`, `Snapshot::matches`, `fsm_matches`, and `lavi::Machine::matches`; partial object matching in Rust & WASM) `[Rust | WASM | C/C++]`
   - [x] `state.value` (`RuntimeMachine::current_state` in Rust, `snapshot.value` in WASM) `[Rust | WASM]`
   - [x] `state.context` (`RuntimeMachine::context` in Rust, `snapshot.context` in WASM) `[Rust | WASM]`
-  - [x] `state.status` (`'active' | 'done' | 'stopped'` in WASM, `RuntimeMachine::status()` / `is_done()` / `stop()` in Rust, `fsm_is_done` / `fsm_stop` in C, and `PortableXState::isDone()` / `stop()` in C++) `[Rust | WASM | C/C++]`
-  - [x] `state.can(event)` (Pure transition check with guards across `RuntimeMachine::can` / `can_event`, `Snapshot::can`, `fsm_can`, and `PortableXState::can`) `[Rust | WASM | C/C++]`
-  - [x] `state.hasTag(tag)` (Active state hierarchy tag check across `RuntimeMachine::has_tag`, `Snapshot::hasTag`, `fsm_has_tag`, and `PortableXState::hasTag`) `[Rust | WASM | C/C++]`
+  - [x] `state.status` (`'active' | 'done' | 'stopped'` in WASM, `RuntimeMachine::status()` / `is_done()` / `stop()` in Rust, `fsm_is_done` / `fsm_stop` in C, and `lavi::Machine::isDone()` / `stop()` in C++) `[Rust | WASM | C/C++]`
+  - [x] `state.can(event)` (Pure transition check with guards across `RuntimeMachine::can` / `can_event`, `Snapshot::can`, `fsm_can`, and `lavi::Machine::can`) `[Rust | WASM | C/C++]`
+  - [x] `state.hasTag(tag)` (Active state hierarchy tag check across `RuntimeMachine::has_tag`, `Snapshot::hasTag`, `fsm_has_tag`, and `lavi::Machine::hasTag`) `[Rust | WASM | C/C++]`
 - [ ] **Machine / StateNode API**
   - [x] `machine.states` (StateNode tree registry) `[WASM]`
   - [x] `machine.events` (Accepted events list in definition order) `[WASM]`
@@ -148,7 +148,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
   - [ ] Full `@xstate.actor` / `@xstate.microstep` inspection protocol
 - [x] **Tags** (`tags: [...]`)
   - [x] Tag definition on states `[Rust | WASM | C/C++]`
-  - [x] Tag checking via `snapshot.hasTag(tag)` / `RuntimeMachine::has_tag` / `fsm_has_tag` / `PortableXState::hasTag` `[Rust | WASM | C/C++]`
+  - [x] Tag checking via `snapshot.hasTag(tag)` / `RuntimeMachine::has_tag` / `fsm_has_tag` / `lavi::Machine::hasTag` `[Rust | WASM | C/C++]`
   - [x] Tag persistence across state restoration `[WASM]`
 - [ ] **Metadata & Descriptions** (`meta: { ... }`, `description`, `output`)
 - [x] **Custom Clocks & Deterministic Virtual Time** (`SimulatedClock`, `register_clock`, `fsm_register_clock`, `fsm_register_clock_with_data`, `fsm_register_simulated_clock`, `fsm_simulated_clock_create`, `fsm_simulated_clock_free`, `fsm_simulated_clock_now`, `fsm_simulated_clock_set`, `fsm_simulated_clock_increment`) `[Rust | WASM | C/C++]`

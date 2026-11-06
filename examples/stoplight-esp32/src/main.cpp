@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <portable_xstate.hpp>
+#include <lavi.hpp>
 #include <memory>
 
 const int PIN_RED = 13;
@@ -25,7 +25,7 @@ const char* MACHINE_JSON = R"({
   }
 })";
 
-std::unique_ptr<xstate::PortableXState> machine;
+std::unique_ptr<lavi::Machine> machine;
 unsigned long last_transition = 0;
 
 void update_leds(const std::string& state);
@@ -45,16 +45,16 @@ void setup() {
   Serial.println("Initializing Machine...");
   try {
     // PortableXState throws logic_error/runtime_error if it fails
-    machine.reset(new xstate::PortableXState(MACHINE_JSON));
+    machine.reset(new lavi::Machine(MACHINE_JSON));
     
     // Register action callbacks to drive LEDs
-    machine->registerAction("turnRed", [](const xstate::Value& ctx, const xstate::Value& evt) {
+    machine->registerAction("turnRed", [](const lavi::Value& ctx, const lavi::Value& evt) {
         update_leds("red");
     });
-    machine->registerAction("turnGreen", [](const xstate::Value& ctx, const xstate::Value& evt) {
+    machine->registerAction("turnGreen", [](const lavi::Value& ctx, const lavi::Value& evt) {
         update_leds("green");
     });
-    machine->registerAction("turnYellow", [](const xstate::Value& ctx, const xstate::Value& evt) {
+    machine->registerAction("turnYellow", [](const lavi::Value& ctx, const lavi::Value& evt) {
         update_leds("yellow");
     });
 

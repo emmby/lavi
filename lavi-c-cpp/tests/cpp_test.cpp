@@ -1,4 +1,4 @@
-#include "../include/portable_xstate.hpp"
+#include "../include/lavi.hpp"
 #include <iostream>
 #include <cassert>
 
@@ -17,10 +17,10 @@ int main() {
     std::cout << "Starting C++ Integration Test..." << std::endl;
 
     try {
-        xstate::PortableXState machine(STOPLIGHT_JSON);
+        lavi::Machine machine(STOPLIGHT_JSON);
 
         bool cpp_action_called = false;
-        machine.registerAction("doTimerAction", [&cpp_action_called](const xstate::Value& context, const xstate::Value& event) {
+        machine.registerAction("doTimerAction", [&cpp_action_called](const lavi::Value& context, const lavi::Value& event) {
             std::cout << "C++ Action called!" << std::endl;
             auto cycles = context.getProperty("cycles");
             assert(!cycles.isNull());
@@ -52,7 +52,7 @@ int main() {
         assert(!machine.matches("green"));
         assert(cpp_action_called == true);
 
-        // Test xstate::SimulatedClock with hierarchical polling, dynamic guards, cascading timers, and std::move
+        // Test lavi::SimulatedClock with hierarchical polling, dynamic guards, cascading timers, and std::move
         const char* APRIL_CPP_JSON = R"({
           "id": "aprilCpp",
           "initial": "ConnectToNetwork",
@@ -84,17 +84,17 @@ int main() {
           }
         })";
 
-        xstate::SimulatedClock sim_clock(0);
-        xstate::PortableXState april_fsm(APRIL_CPP_JSON, sim_clock);
+        lavi::SimulatedClock sim_clock(0);
+        lavi::Machine april_fsm(APRIL_CPP_JSON, sim_clock);
 
         int poll_count = 0;
         bool wifi_ready = false;
         uint64_t tenth_poll_timestamp = 0;
 
-        april_fsm.registerGuard("isConnected", [&](const xstate::Value&, const xstate::Value&) {
+        april_fsm.registerGuard("isConnected", [&](const lavi::Value&, const lavi::Value&) {
             return wifi_ready;
         });
-        april_fsm.registerAction("pollWifi", [&](const xstate::Value&, const xstate::Value&) {
+        april_fsm.registerAction("pollWifi", [&](const lavi::Value&, const lavi::Value&) {
             poll_count++;
             if (poll_count == 10) {
                 wifi_ready = true;
@@ -110,7 +110,7 @@ int main() {
         assert(april_fsm.getNextDeadline(next_dl) && next_dl == 500);
 
         // Move PortableXState before increment, and then move SimulatedClock before set
-        xstate::PortableXState moved_fsm = std::move(april_fsm);
+        lavi::Machine moved_fsm = std::move(april_fsm);
 
         // Advance by 60,000 ms:
         // - 10th poll happens at t = 4,500 ms -> sets wifi_ready = true
@@ -124,7 +124,7 @@ int main() {
         assert(moved_fsm.getNextDeadline(next_dl) && next_dl == 65000);
 
         // Move SimulatedClock and advance to 86,460,000 ms -> Wait -> Sleep at 65,000 ms, Sleep -> Wake at 3,665,000 ms
-        xstate::SimulatedClock moved_clock = std::move(sim_clock);
+        lavi::SimulatedClock moved_clock = std::move(sim_clock);
         moved_clock.set(86460000);
         assert(moved_clock.now() == 86460000);
         assert(moved_fsm.matches("Wake"));
@@ -149,7 +149,7 @@ int main() {
             }
           }
         })";
-        xstate::PortableXState parallelMachine(PARALLEL_JSON);
+        lavi::Machine parallelMachine(PARALLEL_JSON);
         parallelMachine.start();
         assert(parallelMachine.matches("Display"));
         assert(parallelMachine.matches("Display.Theme"));
@@ -179,20 +179,20 @@ int main() {
           }
         })";
 
-        xstate::PortableXState w_exact(WILDCARD_CPP_JSON);
+        lavi::Machine w_exact(WILDCARD_CPP_JSON);
         w_exact.start();
         w_exact.send("foo.bar");
         assert(w_exact.matches("exact"));
 
-        xstate::PortableXState w_fallback(WILDCARD_CPP_JSON);
-        w_fallback.registerGuard("allowLong", [](const xstate::Value&, const xstate::Value&) {
+        lavi::Machine w_fallback(WILDCARD_CPP_JSON);
+        w_fallback.registerGuard("allowLong", [](const lavi::Value&, const lavi::Value&) {
             return false;
         });
         w_fallback.start();
         w_fallback.send("foo.bar.baz");
         assert(w_fallback.matches("shortPartial"));
 
-        xstate::PortableXState w_catchall(WILDCARD_CPP_JSON);
+        lavi::Machine w_catchall(WILDCARD_CPP_JSON);
         w_catchall.start();
         w_catchall.send("UNRECOGNIZED");
         assert(w_catchall.matches("catchAll"));
@@ -218,8 +218,8 @@ int main() {
         })";
 
         bool cpp_assign_verified = false;
-        xstate::PortableXState assign_cpp(ASSIGN_CPP_JSON);
-        assign_cpp.registerAction("verifyAssigned", [&](const xstate::Value& context, const xstate::Value&) {
+        lavi::Machine assign_cpp(ASSIGN_CPP_JSON);
+        assign_cpp.registerAction("verifyAssigned", [&](const lavi::Value& context, const lavi::Value&) {
             double count_val = 0;
             std::string foo_val;
             assert(context.getProperty("count").getNumber(count_val) && count_val == 100.0);
@@ -265,8 +265,8 @@ int main() {
           }
         })";
 
-        xstate::PortableXState q_cpp(QUERIES_CPP_JSON);
-        q_cpp.registerGuard("deny", [](const xstate::Value&, const xstate::Value&) {
+        lavi::Machine q_cpp(QUERIES_CPP_JSON);
+        q_cpp.registerGuard("deny", [](const lavi::Value&, const lavi::Value&) {
             return false;
         });
         q_cpp.start();
@@ -294,7 +294,7 @@ int main() {
         assert(q_cpp.hasTag("completed"));
         assert(!q_cpp.can("FINISH"));
 
-        xstate::PortableXState q_stop(QUERIES_CPP_JSON);
+        lavi::Machine q_stop(QUERIES_CPP_JSON);
         q_stop.start();
         assert(q_stop.can("START"));
         q_stop.stop();

@@ -31,7 +31,7 @@ describe('sample', () => {
 `;
     const adapted = `
 import { describe, it, expect } from 'vitest';
-import { createMachine, createActor, assign } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createMachine, createActor, assign } from '../lavi-wasm/pkg-npm/lavi';
 
 describe('sample', () => {
   it('updates context', () => {
@@ -168,9 +168,9 @@ describe('m', () => {
           }
         })
       );
-      fs.mkdirSync(path.join(tmpDir, 'portable-xstate-c-cpp', 'include'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'lavi-c-cpp', 'include'), { recursive: true });
       fs.writeFileSync(
-        path.join(tmpDir, 'portable-xstate-c-cpp', 'include', 'portable_xstate.h'),
+        path.join(tmpDir, 'lavi-c-cpp', 'include', 'lavi.h'),
         'bool fsm_matches(const MachineContext* ptr, const char* state_path);\n'
       );
       fs.writeFileSync(

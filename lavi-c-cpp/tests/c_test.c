@@ -1,4 +1,4 @@
-#include "../include/portable_xstate.h"
+#include "../include/lavi.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>

@@ -23,19 +23,19 @@
     },
     "actions.test.ts": {
       "status": "legacy-baseline",
-      "legacy_baseline_sha256": "e1246ba9efb1102b212506ff40a71f06299c377d25f74e761a8c02c146f73817",
+      "legacy_baseline_sha256": "1f60f19c574c140b131c2340f4f057324b8bfae965a3ca9df635d6cedfeff9a7",
       "tech_debt_id": "TD-2",
       "allowed_skips": []
     },
     "after.test.ts": {
       "status": "legacy-baseline",
-      "legacy_baseline_sha256": "84d140525275a8b6a84f3db51a2c5f67679d03c5ca10e1fd9fe27acb3684978c",
+      "legacy_baseline_sha256": "d2a771b10b8ae44b9ffb68db74c718dbb1ec94e405c4cae3240f02ddf4bf8bdf",
       "tech_debt_id": "TD-1",
       "allowed_skips": [
         {
           "title": "should not try to clear an undefined timeout when exiting source state of a delayed transition",
           "category": "non-js-constraint",
-          "reason": "portable-xstate uses external clock deadlines rather than host JS setTimeout/clearTimeout handles",
+          "reason": "lavi uses external clock deadlines rather than host JS setTimeout/clearTimeout handles",
           "ref": "XSTATE_5_FEATURES.md"
         },
         {

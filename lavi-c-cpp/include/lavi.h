@@ -1,5 +1,5 @@
-#ifndef PORTABLE_XSTATE_H
-#define PORTABLE_XSTATE_H
+#ifndef LAVI_H
+#define LAVI_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -114,4 +114,4 @@ int fsm_tick(MachineContext* ptr);
 }
 #endif
 
-#endif // PORTABLE_XSTATE_H
+#endif // LAVI_H

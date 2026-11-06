@@ -1,4 +1,4 @@
-import { createMachine, createActor, assign } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createMachine, createActor, assign } from '../lavi-wasm/pkg-npm/lavi';
 import { fromCallback } from './stubs';
 import { describe, it, expect } from 'vitest';
 

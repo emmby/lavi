@@ -1,4 +1,4 @@
-import { createActor, createMachine, assign, setup } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createActor, createMachine, assign, setup } from '../lavi-wasm/pkg-npm/lavi';
 import { describe, it, expect, vi } from 'vitest';
 
 const pedestrianStates = {

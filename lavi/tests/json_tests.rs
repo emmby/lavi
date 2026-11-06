@@ -1,4 +1,4 @@
-use portable_xstate_rust::{JsonError, Value};
+use lavi::{JsonError, Value};
 
 #[test]
 fn test_json_primitives_and_containers() {

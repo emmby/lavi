@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use portable_xstate_rust::{
+use lavi::{
     assign, create_machine, setup, value_to_state_value, Action, HistoryType,
     RuntimeMachine, StateType, StateValue, TransitionGuard, Value,
 };

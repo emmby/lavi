@@ -12,9 +12,9 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 ## Open Cleanup Items
 
 ### `TD-1`: Restore Unmodified Upstream `tests/after.test.ts` and Fake-Timer / `SimulatedClock` Bridging
-- **Files**: [`tests/after.test.ts`](./tests/after.test.ts), [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
+- **Files**: [`tests/after.test.ts`](./tests/after.test.ts), [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
 - **Problem**: `tests/after.test.ts` was historically truncated (218 lines vs. upstream's full suite), manually injects `actorRef.tick()` into test bodies, and guts the bodies of `it.skip(...)` blocks.
-- **Resolution**: Replace `tests/after.test.ts` with `tests/upstream/after.test.ts` (using only whitelisted import and `: any` adaptations), bridge `SimulatedClock` / Vitest fake timers in `portable-xstate-wasm` so manual `.tick()` calls are unnecessary in JS tests, keep full bodies inside any registered `it.skip` entries, and switch `after.test.ts` from `"legacy-baseline"` to `"strict"` in `tests/conformance-manifest.json`.
+- **Resolution**: Replace `tests/after.test.ts` with `tests/upstream/after.test.ts` (using only whitelisted import and `: any` adaptations), bridge `SimulatedClock` / Vitest fake timers in `lavi-wasm` so manual `.tick()` calls are unnecessary in JS tests, keep full bodies inside any registered `it.skip` entries, and switch `after.test.ts` from `"legacy-baseline"` to `"strict"` in `tests/conformance-manifest.json`.
 
 ### `TD-2`: Reconcile `tests/actions.test.ts` with Upstream `statelyai/xstate@5.25.0`
 - **Files**: [`tests/actions.test.ts`](./tests/actions.test.ts), [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json)
@@ -22,25 +22,30 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Resolution**: Restore `tests/actions.test.ts` to match `tests/upstream/actions.test.ts` under strict normalization, register any legitimately unimplemented sub-features in `tests/conformance-manifest.json` `allowed_skips`, and graduate `actions.test.ts` from `"legacy-baseline"` to `"strict"`.
 
 ### `TD-6`: Remove Redundant `StateDefinition::type_` String Field and XState 4 `cond` Naming
-- **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-rust/src/parser.rs`](./portable-xstate-rust/src/parser.rs)
+- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi/src/parser.rs`](./lavi/src/parser.rs)
 - **Problem**: `StateDefinition` stores both `pub type_: Option<String>` and `pub state_type: StateType`, and `TransitionDefinition` uses XState 4's `cond` field name instead of XState 5's `guard`.
-- **Resolution**: Consolidate on `StateType` and rename `cond` to `guard` across `portable-xstate-rust` and its adapters.
+- **Resolution**: Consolidate on `StateType` and rename `cond` to `guard` across `lavi` and its adapters.
 
-### `TD-7`: Remove `def.invoke` Execution Hack from State Exit Loop in `portable-xstate-rust`
-- **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
-- **Problem**: `RuntimeMachine::transition_internal` (`portable-xstate-rust/src/lib.rs:1257-1261`) executes `def.invoke` entries as synchronous named actions during **state exit**, which was a one-off hack rather than proper XState 5 actor invocation lifecycle on state entry/exit.
+### `TD-7`: Remove `def.invoke` Execution Hack from State Exit Loop in `lavi`
+- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
+- **Problem**: `RuntimeMachine::transition_internal` (`lavi/src/lib.rs:1257-1261`) executes `def.invoke` entries as synchronous named actions during **state exit**, which was a one-off hack rather than proper XState 5 actor invocation lifecycle on state entry/exit.
 - **Resolution**: Replace with proper `invoke` lifecycle semantics when implementing the Actor Model (`invoke.test.ts`).
 
-### `TD-8`: Promote Snapshot Persistence to `portable-xstate-rust` and `portable-xstate-c-cpp`
-- **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), [`portable-xstate-c-cpp/include/portable_xstate.h`](./portable-xstate-c-cpp/include/portable_xstate.h), [`portable-xstate-c-cpp/include/portable_xstate.hpp`](./portable-xstate-c-cpp/include/portable_xstate.hpp)
-- **Problem**: While state queries (`can`, `has_tag`, `status`/`is_done`, and `stop`) are now implemented in `portable-xstate-rust` and exposed in `portable-xstate-c-cpp` (`fsm_can`, `fsm_has_tag`, `fsm_is_done`, `fsm_stop`), snapshot serialization and restoration remain implemented inside `portable-xstate-wasm/src/lib.rs` rather than on `RuntimeMachine` in `portable-xstate-rust`, and are not yet exposed in C/C++.
-- **Resolution**: Move snapshot serialize/restore into `portable-xstate-rust::RuntimeMachine`, delegate to it from `portable-xstate-wasm`, and expose C/C++ bindings in `portable-xstate-c-cpp`.
+### `TD-8`: Promote Snapshot Persistence to `lavi` and `lavi-c-cpp`
+- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs), [`lavi-c-cpp/include/lavi.h`](./lavi-c-cpp/include/lavi.h), [`lavi-c-cpp/include/lavi.hpp`](./lavi-c-cpp/include/lavi.hpp)
+- **Problem**: While state queries (`can`, `has_tag`, `status`/`is_done`, and `stop`) are now implemented in `lavi` and exposed in `lavi-c-cpp` (`fsm_can`, `fsm_has_tag`, `fsm_is_done`, `fsm_stop`), snapshot serialization and restoration remain implemented inside `lavi-wasm/src/lib.rs` rather than on `RuntimeMachine` in `lavi`, and are not yet exposed in C/C++.
+- **Resolution**: Move snapshot serialize/restore into `lavi::RuntimeMachine`, delegate to it from `lavi-wasm`, and expose C/C++ bindings in `lavi-c-cpp`.
+
+### `TD-9`: Publish `lavi-wasm` to npm [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
+- **Files**: [`lavi-wasm/Cargo.toml`](./lavi-wasm/Cargo.toml), [`package.json`](./package.json), [`README.md`](./README.md)
+- **Problem**: `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
+- **Resolution**: Publish `lavi-wasm` (or `lavi`) to npm so JavaScript/TypeScript users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly.
 
 ---
 
 ## Resolved Cleanup Items
 
-- **`TD-4`** (Resolved): Removed `fs.appendFileSync('trace.log', ...)`, `fs.appendFileSync('debug.log', ...)`, `console.log` spam, and `machine.createActor` / `machine.provide` monkey-patching from [`tests/utils.ts`](./tests/utils.ts), bridging tracked entry/exit callbacks iteratively in `portable-xstate-wasm`.
+- **`TD-4`** (Resolved): Removed `fs.appendFileSync('trace.log', ...)`, `fs.appendFileSync('debug.log', ...)`, `console.log` spam, and `machine.createActor` / `machine.provide` monkey-patching from [`tests/utils.ts`](./tests/utils.ts), bridging tracked entry/exit callbacks iteratively in `lavi-wasm`.
 - **`TD-3`** (Resolved): Reconciled [`tests/machine.test.ts`](./tests/machine.test.ts), [`tests/state.test.ts`](./tests/state.test.ts), and [`tests/history.test.ts`](./tests/history.test.ts) with their upstream references in `tests/upstream/` and graduated all three suites from `"legacy-baseline"` to `"strict"` in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json).
-- **`TD-5`** (Resolved): Replaced remaining recursive traversal helpers (`StateValue::collect_paths`, `StateValue::matches`, `StateValue::drop` in [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs) and `StateNode::events` in [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)) with bounded $O(1)$ call-stack iterative traversals using explicit heap `Vec` work-stacks, verified by a 64 KB stack thread test at depth >= 256.
-- **`TD-8` (State Queries)** (Resolved): Promoted `can` / `can_event`, `has_tag`, `status` (`MachineStatus::Active` / `Done` / `Stopped`), `is_done`, and `stop` to `RuntimeMachine` in [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), delegated to them in [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), and exposed C/C++ bindings (`fsm_can`, `fsm_has_tag`, `fsm_is_done`, `fsm_stop`, and `PortableXState::{can, hasTag, isDone, stop}`) in `portable-xstate-c-cpp`.
+- **`TD-5`** (Resolved): Replaced remaining recursive traversal helpers (`StateValue::collect_paths`, `StateValue::matches`, `StateValue::drop` in [`lavi/src/lib.rs`](./lavi/src/lib.rs) and `StateNode::events` in [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)) with bounded $O(1)$ call-stack iterative traversals using explicit heap `Vec` work-stacks, verified by a 64 KB stack thread test at depth >= 256.
+- **`TD-8` (State Queries)** (Resolved): Promoted `can` / `can_event`, `has_tag`, `status` (`MachineStatus::Active` / `Done` / `Stopped`), `is_done`, and `stop` to `RuntimeMachine` in [`lavi/src/lib.rs`](./lavi/src/lib.rs), delegated to them in [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs), and exposed C/C++ bindings (`fsm_can`, `fsm_has_tag`, `fsm_is_done`, `fsm_stop`, and `Machine::{can, hasTag, isDone, stop}`) in `lavi-c-cpp`.

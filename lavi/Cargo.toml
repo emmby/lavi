@@ -1,0 +1,11 @@
+[package]
+name = "lavi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A portable, #![no_std] statechart runtime compatible with the XState v5 specification and JSON format."
+repository = "https://github.com/emmby/lavi"
+
+[dependencies]
+# We don't want to have any dependencies in this package, except basic data structures
+indexmap = { version = "2.7" }

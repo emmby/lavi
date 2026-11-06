@@ -1,14 +1,14 @@
-#ifndef PORTABLE_XSTATE_HPP
-#define PORTABLE_XSTATE_HPP
+#ifndef LAVI_HPP
+#define LAVI_HPP
 
-#include "portable_xstate.h"
+#include "lavi.h"
 #include <string>
 #include <stdexcept>
 #include <functional>
 #include <map>
 #include <vector>
 
-namespace xstate {
+namespace lavi {
 
 class Value {
     const fsm_value_t* ptr;
@@ -119,11 +119,11 @@ public:
 };
 
 /**
- * @brief C++ Wrapper for the Portable XState machine.
+ * @brief C++ Wrapper for the Lavi state machine.
  * 
  * Handles memory management (RAII) and provides a cleaner C++ API.
  */
-class PortableXState {
+class Machine {
 private:
     MachineContext* machine;
     const char* m_json;
@@ -135,7 +135,7 @@ private:
     
     static void c_callback_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
         if (!user_data) return;
-        auto* instance = static_cast<PortableXState*>(user_data);
+        auto* instance = static_cast<Machine*>(user_data);
         auto it = instance->m_callbacks.find(name ? name : "");
         if (it != instance->m_callbacks.end() && it->second) {
             it->second(Value(ctx), Value(evt));
@@ -144,7 +144,7 @@ private:
 
     static bool c_guard_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
         if (!user_data) return false;
-        auto* instance = static_cast<PortableXState*>(user_data);
+        auto* instance = static_cast<Machine*>(user_data);
         auto it = instance->m_guards.find(name ? name : "");
         if (it != instance->m_guards.end() && it->second) {
             return it->second(Value(ctx), Value(evt));
@@ -154,7 +154,7 @@ private:
 
     static uint64_t c_clock_thunk(void* user_data) {
         if (!user_data) return 0;
-        auto* instance = static_cast<PortableXState*>(user_data);
+        auto* instance = static_cast<Machine*>(user_data);
         if (instance->m_clockFn) {
             return instance->m_clockFn();
         }
@@ -186,7 +186,7 @@ private:
 
 public:
     /**
-     * @brief Construct a new Portable X State object
+     * @brief Construct a new Lavi Machine object
      * 
      * @param json_config The JSON configuration string for the state machine.
      *                    MEMORY WARNING: This object deliberately stores only the pointer (const char*)
@@ -194,19 +194,19 @@ public:
      *                    pointed to by json_config remains valid and unchanged until `.start()` is called.
      * @throws std::runtime_error If the machine fails to initialize.
      */
-    PortableXState(const char* json_config) : machine(nullptr), m_json(json_config) {
+    Machine(const char* json_config) : machine(nullptr), m_json(json_config) {
     }
 
-    PortableXState(const char* json_config, SimulatedClock& clock)
+    Machine(const char* json_config, SimulatedClock& clock)
         : machine(nullptr), m_json(json_config), m_simClock(clock.raw()) {
     }
 
     /**
-     * @brief Destroy the Portable X State object
+     * @brief Destroy the Lavi Machine object
      * 
      * Automatically frees the underlying Rust memory.
      */
-    ~PortableXState() {
+    ~Machine() {
         if (machine) {
             fsm_free(machine);
             machine = nullptr;
@@ -214,11 +214,11 @@ public:
     }
 
     // Disable copying to prevent double-free issues
-    PortableXState(const PortableXState&) = delete;
-    PortableXState& operator=(const PortableXState&) = delete;
+    Machine(const Machine&) = delete;
+    Machine& operator=(const Machine&) = delete;
 
     // Allow moving
-    PortableXState(PortableXState&& other) noexcept
+    Machine(Machine&& other) noexcept
         : machine(other.machine),
           m_json(other.m_json),
           m_callbacks(std::move(other.m_callbacks)),
@@ -231,7 +231,7 @@ public:
         other.m_simClock = nullptr;
         rebind_this_pointers();
     }
-    PortableXState& operator=(PortableXState&& other) noexcept {
+    Machine& operator=(Machine&& other) noexcept {
         if (this != &other) {
             if (machine) fsm_free(machine);
             machine = other.machine;
@@ -444,6 +444,6 @@ public:
     }
 };
 
-} // namespace xstate
+} // namespace lavi
 
-#endif // PORTABLE_XSTATE_HPP
+#endif // LAVI_HPP

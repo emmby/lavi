@@ -1,4 +1,4 @@
-import { createActor, createMachine, StateNode } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createActor, createMachine, StateNode } from '../lavi-wasm/pkg-npm/lavi';
 import { describe, it, expect, vi } from 'vitest';
 import { trackEntries } from './utils';
 import { fromCallback } from './stubs';

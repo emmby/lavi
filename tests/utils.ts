@@ -6,7 +6,7 @@ import {
   matchesState,
   StateNode,
   StateValue
-} from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+} from '../lavi-wasm/pkg-npm/lavi';
 
 const resolveSerializedStateValue = (
   machine: AnyStateMachine,

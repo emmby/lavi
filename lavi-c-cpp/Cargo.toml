@@ -1,0 +1,15 @@
+[package]
+name = "lavi-c-cpp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "C and C++11 static library bindings for the Lavi statechart runtime."
+repository = "https://github.com/emmby/lavi"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+
+lavi = { path = "../lavi" }
+indexmap = { version = "2.7", default-features = false }

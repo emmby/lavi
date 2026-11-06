@@ -150,8 +150,8 @@ function checkFeaturesDocSync(rootDir, manifestFiles, errors) {
     }
   }
 
-  // 4c. Verify all referenced C API symbols (fsm_*) exist in portable_xstate.h
-  const cHeaderPath = path.join(rootDir, 'portable-xstate-c-cpp', 'include', 'portable_xstate.h');
+  // 4c. Verify all referenced C API symbols (fsm_*) exist in lavi.h
+  const cHeaderPath = path.join(rootDir, 'lavi-c-cpp', 'include', 'lavi.h');
   if (fs.existsSync(cHeaderPath)) {
     const cHeader = fs.readFileSync(cHeaderPath, 'utf8');
     const symbolRegex = /\b(fsm_[a-zA-Z0-9_]+)\b/g;
@@ -163,7 +163,7 @@ function checkFeaturesDocSync(rootDir, manifestFiles, errors) {
       seenSymbols.add(sym);
       if (!new RegExp(`\\b${escapeRegExp(sym)}\\b`).test(cHeader)) {
         errors.push(
-          `XSTATE_5_FEATURES.md references C symbol "${sym}", which does not exist in portable-xstate-c-cpp/include/portable_xstate.h.`
+          `XSTATE_5_FEATURES.md references C symbol "${sym}", which does not exist in lavi-c-cpp/include/lavi.h.`
         );
       }
     }

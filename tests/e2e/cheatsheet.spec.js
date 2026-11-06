@@ -21,12 +21,12 @@ test.describe('XState Cheatsheet Examples', () => {
     // Import the WASM module
     // Note: In a real Node environment we might need to handle WASM loading differently (e.g. fs.readFile)
     // or rely on a bundler. Playwright's test runner supports ESM.
-    const { Actor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
+    const { Actor, default: init } = await import('../../lavi-wasm/pkg-npm/lavi.js');
     
     // Initialize WASM
     // In Node (non-browser), wasm-pack generated code might try to fetch/load wasm_bg.wasm.
     // We might need to pass the bytes if fetch isn't available or if path is wrong.
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../lavi-wasm/pkg-npm/lavi_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
     if (typeof init === 'function') await init({ module_or_path: wasmModule });
@@ -187,10 +187,10 @@ test.describe('XState Cheatsheet Examples', () => {
   // TODO: Replace xstate with wasm
   test('Parent states [WASM]', async () => {
     // Import WASM module
-    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../lavi-wasm/pkg-npm/lavi.js');
 
     // Initialize WASM
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../lavi-wasm/pkg-npm/lavi_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
     if (typeof init === 'function') await init({ module_or_path: wasmModule });
@@ -236,12 +236,12 @@ test.describe('XState Cheatsheet Examples', () => {
   // TODO: Replace xstate with wasm
   test('Actions [WASM]', async () => {
     // Import WASM module
-    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../lavi-wasm/pkg-npm/lavi.js');
 
     // Initialize WASM (boilerplate)
     const fs = require('fs');
     const path = require('path');
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../lavi-wasm/pkg-npm/lavi_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
     if (typeof init === 'function') await init({ module_or_path: wasmModule });
@@ -311,12 +311,12 @@ test.describe('XState Cheatsheet Examples', () => {
   // to verify parameterized guards ('isAfterTime') and context-based guards ('canBeToggled') in WASM.
   test('Guards [WASM]', async () => {
     // Import WASM module
-    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../portable-xstate-wasm/pkg-npm/portable_xstate.js');
+    const { setup: wasmSetup, createActor: wasmCreateActor, default: init } = await import('../../lavi-wasm/pkg-npm/lavi.js');
 
     // Initialize WASM
     const fs = require('fs');
     const path = require('path');
-    const wasmPath = path.resolve(__dirname, '../../portable-xstate-wasm/pkg-npm/portable_xstate_bg.wasm');
+    const wasmPath = path.resolve(__dirname, '../../lavi-wasm/pkg-npm/lavi_bg.wasm');
     const wasmBuffer = fs.readFileSync(wasmPath);
     const wasmModule = await WebAssembly.compile(wasmBuffer);
     if (typeof init === 'function') await init({ module_or_path: wasmModule });

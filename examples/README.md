@@ -1,6 +1,6 @@
-# Portable XState Examples
+# Lavi Examples
 
-This directory contains HTML examples demonstrating the capabilities of the Portable XState library.
+This directory contains HTML and embedded examples demonstrating the capabilities of the Lavi statechart library.
 
 ## Prerequisite: Local Server Required
 
@@ -44,4 +44,4 @@ If you use VS Code:
 -   **Guards** (`guards.html`): Conditional transitions based on context.
 -   **Actions** (`actions.html`): Executing side-effects and updating functionality.
 -   **Dynamic Assignment** (`dynamic_assignment.html`): Modifying extended state (context) with math.
--   **ESP32 Traffic Light (PlatformIO)** (`stoplight-esp32/`): Arduino/ESP32 firmware project using the C++ wrapper (`xstate::PortableXState`) via PlatformIO.
+-   **ESP32 Traffic Light (PlatformIO)** (`stoplight-esp32/`): Arduino/ESP32 firmware project using the C++ wrapper (`lavi::Machine`) via PlatformIO.

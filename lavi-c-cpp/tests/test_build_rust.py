@@ -96,16 +96,16 @@ class TestBuildRust(unittest.TestCase):
 
     def test_c_cpp_crate_paths_and_no_dependency_ref(self):
         self.assertEqual(build_rust.LIB_ROOT, REPO_ROOT)
-        self.assertEqual(build_rust.CRATE_NAME, "portable-xstate-c-cpp")
-        self.assertEqual(build_rust.LIB_NAME, "portable_xstate_c_cpp")
-        self.assertEqual(build_rust.STATIC_LIB_FILENAME, "libportable_xstate_c_cpp.a")
+        self.assertEqual(build_rust.CRATE_NAME, "lavi-c-cpp")
+        self.assertEqual(build_rust.LIB_NAME, "lavi_c_cpp")
+        self.assertEqual(build_rust.STATIC_LIB_FILENAME, "liblavi_c_cpp.a")
         self.assertEqual(
             build_rust.CARGO_TOML,
-            os.path.join(REPO_ROOT, "portable-xstate-c-cpp", "Cargo.toml"),
+            os.path.join(REPO_ROOT, "lavi-c-cpp", "Cargo.toml"),
         )
         self.assertEqual(
             build_rust.INCLUDE_DIR,
-            os.path.join(REPO_ROOT, "portable-xstate-c-cpp", "include"),
+            os.path.join(REPO_ROOT, "lavi-c-cpp", "include"),
         )
         self.assertTrue(os.path.isfile(build_rust.CARGO_TOML))
         self.assertFalse(hasattr(build_rust, "DEPENDENCY_REF"))
@@ -126,7 +126,7 @@ class TestBuildRust(unittest.TestCase):
         self.assertEqual(scons_globals["LIB_ROOT"], REPO_ROOT)
         self.assertEqual(
             scons_globals["CARGO_TOML"],
-            os.path.join(REPO_ROOT, "portable-xstate-c-cpp", "Cargo.toml"),
+            os.path.join(REPO_ROOT, "lavi-c-cpp", "Cargo.toml"),
         )
 
     @patch("os.path.exists", return_value=True)
@@ -234,20 +234,20 @@ class TestBuildRust(unittest.TestCase):
         lib_json_path = os.path.join(REPO_ROOT, "library.json")
         with open(lib_json_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
-        self.assertEqual(manifest.get("name"), "portable-xstate")
+        self.assertEqual(manifest.get("name"), "lavi")
         self.assertEqual(manifest.get("frameworks"), ["*"])
         self.assertEqual(manifest.get("platforms"), ["*"])
         build_cfg = manifest.get("build", {})
         self.assertEqual(build_cfg.get("extraScript"), "build_rust.py")
-        self.assertEqual(build_cfg.get("includeDir"), "portable-xstate-c-cpp/include")
+        self.assertEqual(build_cfg.get("includeDir"), "lavi-c-cpp/include")
         self.assertEqual(build_cfg.get("srcFilter"), ["-<*>"])
 
         include_dir = os.path.join(REPO_ROOT, build_cfg["includeDir"])
-        self.assertTrue(os.path.isfile(os.path.join(include_dir, "portable_xstate.h")))
-        self.assertTrue(os.path.isfile(os.path.join(include_dir, "portable_xstate.hpp")))
+        self.assertTrue(os.path.isfile(os.path.join(include_dir, "lavi.h")))
+        self.assertTrue(os.path.isfile(os.path.join(include_dir, "lavi.hpp")))
 
         export_includes = manifest.get("export", {}).get("include", [])
-        for member in ["portable-xstate-rust", "portable-xstate-c-cpp", "portable-xstate-wasm"]:
+        for member in ["lavi", "lavi-c-cpp", "lavi-wasm"]:
             self.assertTrue(
                 any(member in pattern for pattern in export_includes),
                 f"Workspace member {member} must be covered in library.json export.include",
@@ -260,7 +260,7 @@ class TestBuildRust(unittest.TestCase):
         self.assertTrue(os.path.isfile(main_cpp))
         with open(pio_ini, "r", encoding="utf-8") as f:
             ini_content = f.read()
-        self.assertIn("https://github.com/emmby/portable-xstate.git", ini_content)
+        self.assertIn("https://github.com/emmby/lavi.git", ini_content)
         self.assertNotIn("portable-xstate-platformio", ini_content)
 
         dispatch_workflow = os.path.join(

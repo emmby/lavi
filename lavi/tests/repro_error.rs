@@ -1,4 +1,4 @@
-use portable_xstate_rust::{create_machine, RuntimeMachine, Value};
+use lavi::{create_machine, RuntimeMachine, Value};
 
 #[test]
 fn test_parallel_deep_history_repro() {

@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
 use alloc::collections::BTreeMap;
-use portable_xstate_rust::{from_json_str, RuntimeMachine, Value};
+use lavi::{from_json_str, RuntimeMachine, Value};
 use indexmap::IndexMap;
 
 #[repr(C)]
@@ -49,7 +49,7 @@ pub struct RegisteredGuard {
 type SharedMachineList = alloc::rc::Rc<core::cell::RefCell<alloc::vec::Vec<*mut MachineContext>>>;
 
 pub struct SimulatedClock {
-    clock: portable_xstate_rust::SimulatedClock,
+    clock: lavi::SimulatedClock,
     machines: SharedMachineList,
 }
 
@@ -57,8 +57,8 @@ pub struct MachineContext {
     machine: RuntimeMachine,
     callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
     guard_callbacks: BTreeMap<alloc::string::String, RegisteredGuard>,
-    actions: IndexMap<alloc::string::String, portable_xstate_rust::ActionFunction>,
-    guards: IndexMap<alloc::string::String, portable_xstate_rust::GuardFunction>,
+    actions: IndexMap<alloc::string::String, lavi::ActionFunction>,
+    guards: IndexMap<alloc::string::String, lavi::GuardFunction>,
     bound_clocks: alloc::vec::Vec<SharedMachineList>,
 }
 
@@ -296,7 +296,7 @@ pub extern "C" fn fsm_get_next_deadline(
 #[no_mangle]
 pub extern "C" fn fsm_simulated_clock_create(initial_ms: u64) -> *mut SimulatedClock {
     let sim = Box::new(SimulatedClock {
-        clock: portable_xstate_rust::SimulatedClock::with_initial(initial_ms),
+        clock: lavi::SimulatedClock::with_initial(initial_ms),
         machines: alloc::rc::Rc::new(core::cell::RefCell::new(alloc::vec::Vec::new())),
     });
     Box::into_raw(sim)
@@ -536,7 +536,7 @@ pub extern "C" fn fsm_register_action(
     
     // Process the ActionFunction immediately
     let action_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
-    let action_fn: portable_xstate_rust::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
+    let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
         if let Some(cb) = callback {
             cb(
                 action_name_cstr.as_ptr(),
@@ -579,7 +579,7 @@ pub extern "C" fn fsm_register_guard(
     });
     
     let guard_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
-    let guard_fn: portable_xstate_rust::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
+    let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
         if let Some(cb) = callback {
             cb(
                 guard_name_cstr.as_ptr(),

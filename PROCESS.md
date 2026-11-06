@@ -1,6 +1,6 @@
 # Testing & Implementation Process
 
-This document defines the autonomous workflow for implementing features and passing conformance tests in `portable-xstate`—whether working as a single agent or as part of a parallel agent swarm.
+This document defines the autonomous workflow for implementing features and passing conformance tests in `lavi`—whether working as a single agent or as part of a parallel agent swarm.
 
 **Required Reading First**: Always read [`AGENTS.md`](./AGENTS.md) for the 4-Level Decision Hierarchy, Microcontroller Resource Envelope, and Canonical vs. Legacy Anti-Patterns table.
 
@@ -23,7 +23,7 @@ This document defines the autonomous workflow for implementing features and pass
 - **Copy & Apply Whitelisted Adaptations Only**:
   Copy `tests/upstream/<filename>.test.ts` to `tests/<filename>.test.ts` and register `<filename>.test.ts` in `tests/conformance-manifest.json` with `"status": "strict"`.
   You may make **only** these three mechanical adaptations in `tests/<filename>.test.ts`:
-  1. Rewrite module imports from `'../src/...'` to `'../portable-xstate-wasm/pkg-npm/portable_xstate'` (and `'./stubs.ts'` / `'./utils.ts'`).
+  1. Rewrite module imports from `'../src/...'` to `'../lavi-wasm/pkg-npm/lavi'` (and `'./stubs.ts'` / `'./utils.ts'`).
   2. Add explicit `: any` TypeScript parameter annotations where required for compilation without XState's full TS generic inference.
   3. Change `it(` / `describe(` to `it.skip(` / `describe.skip(` for sub-features outside your current task scope, **keeping the inner test body 100% unmodified** and registering each skipped title in `tests/conformance-manifest.json` under `allowed_skips`.
 - **Verify Provenance & Watch the Target Test Fail (RED)**:
@@ -38,16 +38,16 @@ This document defines the autonomous workflow for implementing features and pass
 ## 3. Cross-Target Implementation (Rust $\rightarrow$ WASM $\rightarrow$ C/C++)
 Every statechart feature must be implemented across all three layers in the same task:
 
-1. **Core Portable Engine (`portable-xstate-rust`)**:
-   - Implement the statechart semantics in `portable-xstate-rust/src/lib.rs` and deserialization in `src/json.rs` / `src/parser.rs`.
+1. **Core Portable Engine (`lavi`)**:
+   - Implement the statechart semantics in `lavi/src/lib.rs` and deserialization in `src/json.rs` / `src/parser.rs`.
    - Enforce embedded invariants: `#![no_std]` + `alloc` only, microcontroller dependency policy (`indexmap` by default; ask for user approval before adding any new `#![no_std]` crate rather than reinventing non-trivial data structures), iterative heap `Vec` work-stacks (zero CPU call-stack recursion), and move semantics.
    - Add native Rust unit tests (`cargo test`).
-2. **WASM / JS Adapter (`portable-xstate-wasm`)**:
-   - Bridge JS APIs and inline JS functions (`js_sys::Function` $\rightarrow$ synthetic named callbacks) in `portable-xstate-wasm/src/lib.rs`.
+2. **WASM / JS Adapter (`lavi-wasm`)**:
+   - Bridge JS APIs and inline JS functions (`js_sys::Function` $\rightarrow$ synthetic named callbacks) in `lavi-wasm/src/lib.rs`.
    - Rebuild WASM (`npm run build:npm`) and run `npx vitest run tests/<filename>.test.ts` until the target conformance tests pass unmodified.
-3. **C & C++ Embedded Adapter (`portable-xstate-c-cpp`)**:
-   - Expose any new runtime capabilities idiomatically in C (`portable-xstate-c-cpp/include/portable_xstate.h` and `src/lib.rs`) using opaque handles and function pointers with `void* user_data`, and in C++11 (`portable-xstate-c-cpp/include/portable_xstate.hpp`) using RAII and move-safe methods.
-   - Add unit tests in `portable-xstate-c-cpp/tests/c_test.c` and `portable-xstate-c-cpp/tests/cpp_test.cpp` and run `npm run test:c-cpp`.
+3. **C & C++ Embedded Adapter (`lavi-c-cpp`)**:
+   - Expose any new runtime capabilities idiomatically in C (`lavi-c-cpp/include/lavi.h` and `src/lib.rs`) using opaque handles and function pointers with `void* user_data`, and in C++11 (`lavi-c-cpp/include/lavi.hpp`) using RAII and move-safe methods.
+   - Add unit tests in `lavi-c-cpp/tests/c_test.c` and `lavi-c-cpp/tests/cpp_test.cpp` and run `npm run test:c-cpp`.
 
 ## 4. Handling Legacy Anti-Patterns & Host-Language Boundaries
 - **Spotted Legacy Debt**: If you see existing code using recursion, XState 4 naming (`cond`, `type_`), manual `actorRef.tick()` in tests, or debug hacks in `tests/utils.ts`, **do not copy it** and **do not refactor unrelated files mid-feature**. Append a scoped entry to [`TECH_DEBT.md`](./TECH_DEBT.md).
@@ -67,5 +67,5 @@ Before committing or claiming completion, run the full verification checklist:
    ```
    Verify that all 6 stages (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, and `test:unit`) pass.
 4. **Update Documentation (Verified by `npm run test:conformance-check`)**:
-   - Update the Conformance Test Suites table and feature checkboxes in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) (and [`TECH_DEBT.md`](./TECH_DEBT.md)). Note that `npm run test:conformance-check` mechanically verifies that `XSTATE_5_FEATURES.md` stays in sync with `tests/conformance-manifest.json`, active `it.skip`/`describe.skip` counts, and `portable_xstate.h`.
+   - Update the Conformance Test Suites table and feature checkboxes in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) (and [`TECH_DEBT.md`](./TECH_DEBT.md)). Note that `npm run test:conformance-check` mechanically verifies that `XSTATE_5_FEATURES.md` stays in sync with `tests/conformance-manifest.json`, active `it.skip`/`describe.skip` counts, and `lavi.h`.
    - Update [`README.md`](./README.md) if public APIs or capabilities changed.

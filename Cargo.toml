@@ -1,14 +1,14 @@
 [workspace]
 members = [
-    "portable-xstate-rust",
-    "portable-xstate-wasm",
-    "portable-xstate-c-cpp",
+    "lavi",
+    "lavi-wasm",
+    "lavi-c-cpp",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 wasm-bindgen = "0.2"
-portable-xstate-rust = { path = "./portable-xstate-rust" }
+lavi = { path = "./lavi" }
 
 
 

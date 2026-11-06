@@ -29,7 +29,7 @@ fn verify_scenario(scenario: JsValue) {
 
     // 2. Setup WASM Machine
     console::log_1(&"Setting up WASM machine...".into());
-    let setup_obj = portable_xstate_wasm::setup_wasm_machine(config.clone());
+    let setup_obj = lavi_wasm::setup_wasm_machine(config.clone());
     let wasm_machine = setup_obj.create_wasm_machine(wasm_def).expect("Failed to create wasm machine");
 
     // Capture WASM snapshots
@@ -74,8 +74,8 @@ fn verify_scenario(scenario: JsValue) {
         let x_obj = xstate_snapshots.get(i as u32);
         let x_json = js_sys::JSON::stringify(&x_obj).unwrap().as_string().unwrap();
         
-        let w_val = portable_xstate_rust::Value::from_json(w_json).unwrap();
-        let x_val = portable_xstate_rust::Value::from_json(&x_json).unwrap();
+        let w_val = lavi::Value::from_json(w_json).unwrap();
+        let x_val = lavi::Value::from_json(&x_json).unwrap();
         
         let w_obj = w_val.as_object().unwrap();
         let x_obj_map = x_val.as_object().unwrap();
@@ -124,7 +124,7 @@ fn test_assign_identity() {
     // Case 1: Object assignment
     let obj_assign = js_sys::JSON::parse(r#"{"count":10}"#).unwrap();
     let xstate_res = getXStateAssign(&obj_assign);
-    let wasm_res = portable_xstate_wasm::assign(obj_assign);
+    let wasm_res = lavi_wasm::assign(obj_assign);
     
     // Compare type
     let type_key = JsValue::from_str("type");
@@ -157,9 +157,9 @@ fn test_js_to_value_ignores_undefined_and_functions() {
     let func = js_sys::Function::new_no_args("return 42;");
     js_sys::Reflect::set(&obj, &"c".into(), &func).unwrap();
 
-    let val = portable_xstate_wasm::utils::js_to_value(&obj.clone().into());
-    if let portable_xstate_rust::Value::Object(map) = &val {
-        assert_eq!(map.get("a"), Some(&portable_xstate_rust::Value::Number(1.0)));
+    let val = lavi_wasm::utils::js_to_value(&obj.clone().into());
+    if let lavi::Value::Object(map) = &val {
+        assert_eq!(map.get("a"), Some(&lavi::Value::Number(1.0)));
         assert!(!map.contains_key("b"), "undefined property should be ignored");
         assert!(!map.contains_key("c"), "function property should be ignored");
     } else {
@@ -174,7 +174,7 @@ fn test_js_to_value_ignores_undefined_and_functions() {
             "idle": {}
         }
     }"#;
-    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
+    let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
     let provided = machine.provide(JsValue::NULL, Some(obj.into())).unwrap();
     let runner = provided.create_actor_method(JsValue::NULL).unwrap();
     let snapshot = runner.get_snapshot();
@@ -208,12 +208,12 @@ fn test_wasm_simulated_clock_and_get_next_deadline() {
         }
     }"#;
 
-    let mut clock = portable_xstate_wasm::SimulatedClock::new();
+    let mut clock = lavi_wasm::SimulatedClock::new();
     let opts = js_sys::Object::new();
     let clock_js: JsValue = clock.clone().into();
     js_sys::Reflect::set(&opts, &"clock".into(), &clock_js).unwrap();
 
-    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
+    let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
     let mut actor = machine.create_actor_method(opts.into()).unwrap().start();
 
     let sub_count = std::rc::Rc::new(std::cell::Cell::new(0u32));
@@ -279,7 +279,7 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     js_sys::Reflect::set(&opts, &"clock".into(), clock_cb.as_ref().unchecked_ref()).unwrap();
     js_sys::Reflect::set(&opts, &"guards".into(), &guards_obj).unwrap();
 
-    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
+    let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
     let mut actor = machine.create_actor_method(opts.into()).unwrap().start();
 
     assert_eq!(actor.get_next_deadline(), Some(100.0));
@@ -292,7 +292,7 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     assert_eq!(actor.get_next_deadline(), None);
 
     // Verify stop() prevents SimulatedClock from advancing a stopped actor
-    let mut sim_clock = portable_xstate_wasm::SimulatedClock::new();
+    let mut sim_clock = lavi_wasm::SimulatedClock::new();
     let sim_opts = js_sys::Object::new();
     let sim_js: JsValue = sim_clock.clone().into();
     js_sys::Reflect::set(&sim_opts, &"clock".into(), &sim_js).unwrap();
@@ -361,7 +361,7 @@ fn test_wasm_initial_state_deferral_and_compound_order() {
         }
     }"#;
 
-    let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), Some(opts.into())).unwrap();
+    let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), Some(opts.into())).unwrap();
     let mut actor = machine.create_actor_method(JsValue::NULL).unwrap();
 
     // Pre-start createActor and getSnapshot() must not fire side-effect actions
