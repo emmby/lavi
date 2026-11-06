@@ -46,7 +46,7 @@ fn verify_scenario(scenario: JsValue) {
     let inspect_opts = js_sys::Object::new();
     js_sys::Reflect::set(&inspect_opts, &"inspect".into(), inspector.as_ref().unchecked_ref()).unwrap();
 
-    let mut runner = wasm_machine.create_actor_method(inspect_opts.into()).expect("Failed to spawn runner");
+    let runner = wasm_machine.create_actor_method(inspect_opts.into()).expect("Failed to spawn runner");
     
     // 3. Start WASM
     console::log_1(&"Starting WASM runner...".into());
@@ -214,7 +214,7 @@ fn test_wasm_simulated_clock_and_get_next_deadline() {
     js_sys::Reflect::set(&opts, &"clock".into(), &clock_js).unwrap();
 
     let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
-    let mut actor = machine.create_actor_method(opts.into()).unwrap().start();
+    let actor = machine.create_actor_method(opts.into()).unwrap().start();
 
     let sub_count = std::rc::Rc::new(std::cell::Cell::new(0u32));
     let sub_count_clone = sub_count.clone();
@@ -297,7 +297,7 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     let sim_js: JsValue = sim_clock.clone().into();
     js_sys::Reflect::set(&sim_opts, &"clock".into(), &sim_js).unwrap();
     js_sys::Reflect::set(&sim_opts, &"guards".into(), &guards_obj).unwrap();
-    let mut stopped_actor = machine.create_actor_method(sim_opts.into()).unwrap().start();
+    let stopped_actor = machine.create_actor_method(sim_opts.into()).unwrap().start();
     let _ = stopped_actor.stop();
     assert_eq!(stopped_actor.get_next_deadline(), None);
     sim_clock.increment(100_000.0);
@@ -362,7 +362,7 @@ fn test_wasm_initial_state_deferral_and_compound_order() {
     }"#;
 
     let machine = portable_xstate_wasm::create_machine(JsValue::from_str(machine_def), Some(opts.into())).unwrap();
-    let mut actor = machine.create_actor_method(JsValue::NULL).unwrap();
+    let actor = machine.create_actor_method(JsValue::NULL).unwrap();
 
     // Pre-start createActor and getSnapshot() must not fire side-effect actions
     assert!(order.borrow().is_empty());
