@@ -558,8 +558,8 @@
 
                             <!-- Transition Arrows & Labels -->
                             <!-- Docked <-> Moving -->
-                            <path d="M 108 30 L 136 30" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <path d="M 148 181 L 60 181 L 60 54" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
+                            <path d="M 108 28 L 136 28" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+                            <path d="M 148 181 L 125 181 L 125 42 L 108 42" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
 
                             <!-- Patrol <-> Spot Clean -->
                             <path d="M 232 74 L 244 74" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow)"/>
@@ -576,8 +576,8 @@
                             <!-- Cleaning -> Returning to Dock -->
                             <path d="M 239 148 L 239 164" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-                            <!-- Moving -> Stopped -->
-                            <path d="M 136 218 L 106 218" fill="none" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrow)"/>
+                            <!-- Moving <-> Stopped -->
+                            <path d="M 136 200 L 114 200" fill="none" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrow)"/>
                             <path d="M 114 156 L 136 156" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
                         </svg>
                     </div>
@@ -614,8 +614,10 @@
                     entry: ['setDockedHardware'],
                     on: {
                         CLEAN: { target: 'moving.cleaning.patrol' },
+                        RESUME: { target: 'moving.cleaning.patrol' },
                         SPOT_CLEAN: { target: 'moving.cleaning.spot' },
-                        CHARGE_TICK: { actions: ['chargeBattery'] }
+                        CHARGE_TICK: { actions: ['chargeBattery'] },
+                        LOW_BATTERY: { actions: ['forceLowBattery'] }
                     }
                 },
                 moving: {
@@ -677,7 +679,6 @@
                             entry: ['setReturningHardware'],
                             on: {
                                 ARRIVED_AT_DOCK: { target: '#robotVacuum.docked' },
-                                BUMP: { target: 'avoidingObstacle' },
                                 CLEAN: {
                                     target: 'cleaning.patrol',
                                     guard: 'hasEnoughBattery'
@@ -966,7 +967,7 @@
             if (parts[0] === 'moving') {
                 actor.send({ type: 'PAUSE' });
             } else {
-                actor.send({ type: 'CLEAN' });
+                actor.send({ type: 'RESUME' });
             }
             updateUI();
         });
@@ -992,7 +993,6 @@
 
         document.getElementById('btnLowBattery').addEventListener('click', () => {
             actor.send({ type: 'LOW_BATTERY' });
-            actor.send({ type: 'DRAIN_TICK' });
             updateUI();
         });
 

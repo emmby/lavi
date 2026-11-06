@@ -10,7 +10,13 @@ You must serve these files using a local HTTP server.
 
 ## How to Run
 
-### Option 1: Python (Recommended)
+### Option 0: View Online (No Setup Required)
+
+All browser WASM examples are hosted on GitHub Pages:
+-   **All Examples**: [https://emmby.github.io/portable-xstate/examples/](https://emmby.github.io/portable-xstate/examples/)
+-   **Autonomous Robot Vacuum Demo**: [https://emmby.github.io/portable-xstate/examples/robot_vacuum.html](https://emmby.github.io/portable-xstate/examples/robot_vacuum.html)
+
+### Option 1: Python (Local Server)
 
 If you have Python 3 installed (which acts as a simple HTTP server):
 

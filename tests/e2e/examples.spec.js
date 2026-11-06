@@ -277,6 +277,16 @@ test.describe('FSM WASM Examples', () => {
     await expect(brushesPill).toHaveText('Off');
     await expect(stairsNode).toHaveClass(/active-leaf/);
 
+    // Resume from Stopped -> returns to moving.cleaning.spot via History (H)
+    await page.locator('#btnPauseResume').click();
+    await expect(stateBadge).toHaveText('moving.cleaning.spot');
+    await expect(vacuumPill).toHaveText('Turbo Boost');
+
+    // Trigger Low Battery -> 'always' guard routes immediately to moving.returningToDock
+    await page.locator('#btnLowBattery').click();
+    await expect(stateBadge).toHaveText('moving.returningToDock');
+    await expect(wheelsPill).toHaveText('Heading to Dock');
+
     // Flip between Diagram SVG and Machine JSON without distorting column widths
     const floorWrapper = page.locator('#floorWrapper');
     const widthBefore = (await floorWrapper.boundingBox()).width;

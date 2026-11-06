@@ -51,7 +51,6 @@ stateDiagram-v2
         cleaning --> avoidingObstacle : BUMP
         avoidingObstacle --> hist : after 1.2s
         cleaning --> returningToDock : battery <= 15%
-        returningToDock --> avoidingObstacle : BUMP
     }
 
     moving --> paused : PAUSE
