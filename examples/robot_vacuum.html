@@ -142,7 +142,8 @@
         #floorCanvas {
             display: block;
             width: 100%;
-            height: 270px;
+            height: auto;
+            aspect-ratio: 2 / 1;
         }
 
         .floor-toolbar {
@@ -567,7 +568,7 @@
 
                             <!-- Cleaning -> Avoiding Obstacle (Bump) -->
                             <path d="M 330 76 L 348 76" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <text x="339" y="69" text-anchor="middle" fill="#64748b" font-size="8.5">bump</text>
+                            <text x="339" y="51" text-anchor="middle" fill="#64748b" font-size="8.5">bump</text>
 
                             <!-- Avoiding Obstacle -> History (H) -->
                             <path d="M 393 102 L 393 124 L 254 124" fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4,2" marker-end="url(#arrowHistory)"/>

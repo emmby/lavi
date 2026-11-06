@@ -42,7 +42,7 @@ jobs:
           mkdir -p _site/portable-xstate-wasm
           cp -r examples _site/examples
           cp -r portable-xstate-wasm/pkg _site/portable-xstate-wasm/pkg
-          printf '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=./examples/robot_vacuum.html"><title>Portable XState Demo</title></head><body><a href="./examples/robot_vacuum.html">Launch Autonomous Robot Vacuum Demo</a></body></html>\n' > _site/index.html
+          printf '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=./examples/"><title>Portable XState Examples</title></head><body><a href="./examples/">Launch Portable XState Interactive Examples</a></body></html>\n' > _site/index.html
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

@@ -15,58 +15,13 @@ A portable, low-memory statechart runtime compatible with **XState 5**, written 
    - **C++11 (`portable_xstate.hpp`)**: Move-safe RAII classes (`xstate::PortableXState`, `xstate::SimulatedClock`, `xstate::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
    - **Rust (`portable-xstate-rust`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
 
-## Interactive WASM Demo: Autonomous Robot Vacuum
+## Interactive WASM Demos
 
-Want to see why statecharts beat `if/else` boolean-flag spaghetti in physical devices? Try the live **Autonomous Robot Vacuum** simulator directly in your browser (powered by `portable-xstate-wasm`, no install or build required):
+Hierarchical statecharts replace fragile `if/else` boolean-flag logic with declarative guarantees—such as parent-state `exit` safety cutoffs, eventless `always` guards, `after` timers, and `history` recovery—that run identically in the browser (WASM) and on microcontrollers (Rust / C / C++).
 
-👉 **[Launch the Autonomous Robot Vacuum Demo →](https://emmby.github.io/portable-xstate/examples/robot_vacuum.html)** *(or browse [all interactive WASM examples](https://emmby.github.io/portable-xstate/examples/))*
+👉 **[Explore the Live Interactive WASM Examples →](https://emmby.github.io/portable-xstate/examples/)**
 
-```mermaid
-stateDiagram-v2
-    [*] --> moving
-
-    state "⚡ Docked" as docked
-    state "Stopped" as stopped {
-        [*] --> paused
-        state "⏸ Paused" as paused
-        state "⚠️ Stairs Safety Stop" as stairsAlert
-    }
-
-    state "Moving (exit: turns off wheels, vacuum & brushes)" as moving {
-        [*] --> cleaning
-
-        state "Cleaning (always: if battery <= 15% → Returning to Dock)" as cleaning {
-            [*] --> patrol
-            state "Patrol" as patrol
-            state "Spot Clean" as spot
-            state "H (Shallow History)" as hist
-
-            patrol --> spot : SPOT_CLEAN
-            spot --> patrol : after 4s / CLEAN
-        }
-
-        state "Avoiding Obstacle" as avoidingObstacle
-        state "Returning to Dock" as returningToDock
-
-        cleaning --> avoidingObstacle : BUMP
-        avoidingObstacle --> hist : after 1.2s
-        cleaning --> returningToDock : battery <= 15%
-    }
-
-    moving --> paused : PAUSE
-    moving --> stairsAlert : STAIRS_DETECTED
-    moving --> returningToDock : DOCK
-    returningToDock --> docked : ARRIVED_AT_DOCK
-    docked --> patrol : CLEAN
-    stopped --> hist : CLEAN / RESUME
-```
-
-### What to try in the demo
-- **Open Living-Room Floor**: Watch the robot glide across the floor, sweep up crumbs, and steer around furniture—or click anywhere on the floor to drop more crumbs or place a toy obstacle.
-- **One-Place Safety Rule (`exit` action)**: Trigger **⚠️ Reach Stairs** or **⏸ Pause** from *any* driving mode (`Patrol`, `Spot Clean`, `Avoiding Obstacle`, or `Returning to Dock`). Leaving the outer `Moving` state is guaranteed to run `stopAllMotors`, shutting off the wheels, vacuum, and side brushes without having to remember boolean flags in every state.
-- **Timed Obstacle Evasion + Memory (`after` + History `H`)**: Switch to **🌀 Spot Clean** and click **💥 Bump Furniture**. The robot backs up in `Avoiding Obstacle` for `1.2s`, then follows the `H` history node right back into `Spot Clean` (or `Patrol` if it was patrolling).
-- **Automatic Low-Battery Return (`always` guard)**: Click **🪫 Low Battery (14%)** while cleaning—an eventless transition immediately switches off suction and steers the robot back to the `⚡ Dock` to recharge.
-- **Live Mermaid SVG ↔ Machine JSON Toggle**: Flip between the live-highlighted Mermaid statechart diagram and the raw XState 5 JSON definition on the right side of the page.
+[![Portable XState Interactive WASM Demo](./docs/images/robot-vacuum-demo.png)](https://emmby.github.io/portable-xstate/examples/)
 
 ## Project Structure
 

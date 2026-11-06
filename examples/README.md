@@ -12,9 +12,8 @@ You must serve these files using a local HTTP server.
 
 ### Option 0: View Online (No Setup Required)
 
-All browser WASM examples are hosted on GitHub Pages:
--   **All Examples**: [https://emmby.github.io/portable-xstate/examples/](https://emmby.github.io/portable-xstate/examples/)
--   **Autonomous Robot Vacuum Demo**: [https://emmby.github.io/portable-xstate/examples/robot_vacuum.html](https://emmby.github.io/portable-xstate/examples/robot_vacuum.html)
+Browse and interact with all WASM examples live on GitHub Pages (opens with the **Autonomous Robot Vacuum** demo selected):
+-   [https://emmby.github.io/portable-xstate/examples/](https://emmby.github.io/portable-xstate/examples/)
 
 ### Option 1: Python (Local Server)
 
