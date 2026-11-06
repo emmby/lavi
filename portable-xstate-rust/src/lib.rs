@@ -145,13 +145,17 @@ impl StateValue {
                             }
                             if let Some((next_k, next_node_ref)) = iter.next() {
                                 *pending_key = Some(next_k.as_str());
-                                let node_to_eval = match next_node_ref {
+                                match next_node_ref {
                                     StateValue::Compound(c_key, child) if c_key == next_k => {
-                                        child.as_ref()
+                                        next_node = Some(child.as_ref());
                                     }
-                                    other => other,
-                                };
-                                next_node = Some(node_to_eval);
+                                    StateValue::Atomic(a_key) if a_key == next_k => {
+                                        completed = Some(Value::Object(IndexMap::new()));
+                                    }
+                                    other => {
+                                        next_node = Some(other);
+                                    }
+                                }
                             } else {
                                 let finished_map = core::mem::take(map);
                                 stack.pop();
@@ -198,13 +202,17 @@ impl StateValue {
                                 map: IndexMap::new(),
                                 pending_key: Some(first_k.as_str()),
                             });
-                            let node_to_eval = match first_node {
+                            match first_node {
                                 StateValue::Compound(c_key, child) if c_key == first_k => {
-                                    child.as_ref()
+                                    next_node = Some(child.as_ref());
                                 }
-                                other => other,
-                            };
-                            next_node = Some(node_to_eval);
+                                StateValue::Atomic(a_key) if a_key == first_k => {
+                                    completed = Some(Value::Object(IndexMap::new()));
+                                }
+                                other => {
+                                    next_node = Some(other);
+                                }
+                            }
                         }
                     }
                 }
@@ -609,18 +617,10 @@ impl Clone for Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        if core::ptr::eq(self, other) {
-            return true;
-        }
-
         let mut stack: Vec<(&Value, &Value)> = Vec::new();
         stack.push((self, other));
 
         while let Some((a, b)) = stack.pop() {
-            if core::ptr::eq(a, b) {
-                continue;
-            }
-
             match (a, b) {
                 (Value::Null, Value::Null) => {}
                 (Value::Bool(b1), Value::Bool(b2)) => {
@@ -1012,76 +1012,130 @@ impl RuntimeMachine {
         for (id, path) in &self.definition.id_map {
             if let Some(def) = self.get_state_definition(path) {
                 if matches!(def.state_type, StateType::History { .. }) {
+                    let is_deep = def.history == Some(HistoryType::Deep)
+                        || matches!(def.state_type, StateType::History { deep: true });
                     let parent_path = if let Some(idx) = path.rfind('.') {
                         &path[..idx]
                     } else {
                         ""
                     };
-                    let mut target_to_serialize: Option<String> = None;
-                    let matching_active_path = active_paths.iter().find(|p| {
-                        if parent_path.is_empty() {
-                            !p.is_empty()
-                        } else {
-                            *p == parent_path || p.starts_with(&alloc::format!("{}.", parent_path))
-                        }
-                    });
+                    let prefix_len = if parent_path.is_empty() {
+                        0
+                    } else {
+                        parent_path.len() + 1
+                    };
 
-                    if let Some(active_path) = matching_active_path {
-                        let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
-                        if active_path.len() > prefix_len {
-                            let rest = &active_path[prefix_len..];
-                            if let Some(end) = rest.find('.') {
-                                let child = &rest[0..end];
-                                target_to_serialize = Some(if parent_path.is_empty() { child.to_string() } else { alloc::format!("{}.{}", parent_path, child) });
+                    let mut raw_paths: Vec<String> = active_paths
+                        .iter()
+                        .filter(|p| {
+                            if parent_path.is_empty() {
+                                !p.is_empty()
                             } else {
-                                target_to_serialize = Some(if parent_path.is_empty() { rest.to_string() } else { alloc::format!("{}.{}", parent_path, rest) });
+                                p.len() > prefix_len
+                                    && p.starts_with(parent_path)
+                                    && p.as_bytes().get(parent_path.len()) == Some(&b'.')
+                            }
+                        })
+                        .cloned()
+                        .collect();
+
+                    if raw_paths.is_empty() {
+                        if let Some(stored) = self.history_value.get(parent_path) {
+                            let stored_paths = stored.get_active_paths();
+                            let matching_stored: Vec<String> = stored_paths
+                                .iter()
+                                .filter(|p| {
+                                    if parent_path.is_empty() {
+                                        !p.is_empty()
+                                    } else {
+                                        p.len() > prefix_len
+                                            && p.starts_with(parent_path)
+                                            && p.as_bytes().get(parent_path.len()) == Some(&b'.')
+                                    }
+                                })
+                                .cloned()
+                                .collect();
+                            if !matching_stored.is_empty() {
+                                raw_paths = matching_stored;
+                            } else {
+                                raw_paths = stored_paths
+                                    .into_iter()
+                                    .filter(|p| !p.is_empty())
+                                    .collect();
                             }
                         }
                     }
 
-                    if target_to_serialize.is_none() {
-                        if let Some(stored) = self.history_value.get(parent_path) {
-                            let stored_paths = stored.get_active_paths();
-                            target_to_serialize = stored_paths
-                                .iter()
-                                .find(|p| {
-                                    if parent_path.is_empty() {
-                                        !p.is_empty()
-                                    } else {
-                                        *p == parent_path || p.starts_with(&alloc::format!("{}.", parent_path))
-                                    }
-                                })
-                                .or_else(|| stored_paths.first())
-                                .cloned();
+                    let mut targets_to_serialize: Vec<String> = Vec::new();
+                    for raw_path in raw_paths {
+                        let target_path = if is_deep {
+                            raw_path
+                        } else if raw_path.len() > prefix_len {
+                            let rest = &raw_path[prefix_len..];
+                            let child = if let Some(end) = rest.find('.') {
+                                &rest[..end]
+                            } else {
+                                rest
+                            };
+                            if parent_path.is_empty() {
+                                child.to_string()
+                            } else {
+                                alloc::format!("{}.{}", parent_path, child)
+                            }
+                        } else {
+                            raw_path
+                        };
+                        if !targets_to_serialize.contains(&target_path) {
+                            targets_to_serialize.push(target_path);
                         }
                     }
 
-                    if let Some(target) = &target_to_serialize {
+                    if !self.history_value.contains_key(parent_path)
+                        && def.history_target.is_none()
+                    {
                         if let Some(p_def) = self.get_state_definition(parent_path) {
                             if let Some(initial_key) = &p_def.initial {
-                                let full_initial = if parent_path.is_empty() { initial_key.clone() } else { alloc::format!("{}.{}", parent_path, initial_key) };
-                                if *target == full_initial {
-                                    target_to_serialize = None;
+                                let full_initial = if parent_path.is_empty() {
+                                    initial_key.clone()
+                                } else {
+                                    alloc::format!("{}.{}", parent_path, initial_key)
+                                };
+                                if targets_to_serialize.len() == 1
+                                    && targets_to_serialize[0] == full_initial
+                                {
+                                    targets_to_serialize.clear();
                                 }
                             }
                         }
                     }
 
-                    if let Some(target_path) = target_to_serialize {
-                        // Find target state ID from id_map
-                        let target_id = self.definition.id_map.iter()
-                            .find(|(k, v)| v.as_str() == target_path.as_str() && !k.starts_with('('))
-                            .map(|(k, _)| k.clone())
-                            .unwrap_or_else(|| {
-                                self.definition.id_map.iter()
-                                    .find(|(_, v)| v.as_str() == target_path.as_str())
-                                    .map(|(k, _)| k.clone())
-                                    .unwrap_or_else(|| alloc::format!("{}.{}", self.definition.id, target_path))
-                            });
+                    if !targets_to_serialize.is_empty() {
+                        let mut entries = Vec::with_capacity(targets_to_serialize.len());
+                        for target_path in targets_to_serialize {
+                            let target_id = self
+                                .definition
+                                .id_map
+                                .iter()
+                                .find(|(k, v)| {
+                                    v.as_str() == target_path.as_str() && !k.starts_with('(')
+                                })
+                                .map(|(k, _)| k.clone())
+                                .unwrap_or_else(|| {
+                                    self.definition
+                                        .id_map
+                                        .iter()
+                                        .find(|(_, v)| v.as_str() == target_path.as_str())
+                                        .map(|(k, _)| k.clone())
+                                        .unwrap_or_else(|| {
+                                            alloc::format!("{}.{}", self.definition.id, target_path)
+                                        })
+                                });
 
-                        let mut entry_obj = IndexMap::new();
-                        entry_obj.insert("id".to_string(), Value::String(target_id));
-                        history_map.insert(id.clone(), Value::Array(alloc::vec![Value::Object(entry_obj)]));
+                            let mut entry_obj = IndexMap::new();
+                            entry_obj.insert("id".to_string(), Value::String(target_id));
+                            entries.push(Value::Object(entry_obj));
+                        }
+                        history_map.insert(id.clone(), Value::Array(entries));
                     }
                 }
             }
@@ -1150,6 +1204,8 @@ impl RuntimeMachine {
         if let Some(h_val) = history_entry {
             if let Some(hist_map) = h_val.into_object() {
                 self.history_value.clear();
+                let mut paths_by_parent: IndexMap<String, Vec<String>> = IndexMap::new();
+
                 for (k, mut v) in hist_map {
                     let parent_path = if let Some(history_node_path) = self.definition.id_map.get(&k) {
                         if let Some(idx) = history_node_path.rfind('.') {
@@ -1165,35 +1221,71 @@ impl RuntimeMachine {
 
                     match &mut v {
                         Value::Array(arr) => {
-                            let mut longest_path: Option<String> = None;
                             for item in arr.iter() {
-                                if let Some(id_val) = item.as_object().and_then(|o| o.get("id")).and_then(|i| i.as_string()) {
+                                if let Some(id_val) = item
+                                    .as_object()
+                                    .and_then(|o| o.get("id"))
+                                    .and_then(|i| i.as_string())
+                                {
                                     if let Some(path) = self.definition.id_map.get(id_val) {
-                                        match &longest_path {
-                                            None => longest_path = Some(path.clone()),
-                                            Some(curr) => {
-                                                if path.len() > curr.len() {
-                                                    longest_path = Some(path.clone());
-                                                }
-                                            }
+                                        let entry = paths_by_parent
+                                            .entry(parent_path.clone())
+                                            .or_default();
+                                        if !entry.contains(path) {
+                                            entry.push(path.clone());
                                         }
                                     } else if let Some(warn) = &self.warn_fn {
-                                        warn(&alloc::format!("Could not resolve StateNode for id: {}", id_val));
+                                        warn(&alloc::format!(
+                                            "Could not resolve StateNode for id: {}",
+                                            id_val
+                                        ));
                                     }
                                 }
                             }
-                            if let Some(p) = longest_path {
-                                self.history_value.insert(parent_path, StateValue::Atomic(p));
-                            }
                         }
                         Value::String(s) => {
-                            self.history_value.insert(parent_path, StateValue::Atomic(core::mem::take(s)));
+                            let s_taken = core::mem::take(s);
+                            if !s_taken.is_empty() {
+                                let entry = paths_by_parent.entry(parent_path).or_default();
+                                if !entry.contains(&s_taken) {
+                                    entry.push(s_taken);
+                                }
+                            }
                         }
                         Value::Object(_) => {
                             let obj = core::mem::replace(&mut v, Value::Null);
-                            self.history_value.insert(parent_path, value_to_state_value(obj));
+                            self.history_value
+                                .insert(parent_path, value_to_state_value(obj));
                         }
                         _ => {}
+                    }
+                }
+
+                for (parent_path, paths) in paths_by_parent {
+                    let leaf_paths: Vec<String> = paths
+                        .iter()
+                        .filter(|p| {
+                            let prefix = alloc::format!("{}.", p);
+                            !paths
+                                .iter()
+                                .any(|other| other.len() > p.len() && other.starts_with(&prefix))
+                        })
+                        .cloned()
+                        .collect();
+
+                    let mut merged: Option<StateValue> = None;
+                    for p in leaf_paths {
+                        let mut dummy_actions = Vec::new();
+                        let sv =
+                            Self::resolve_initial_state(&self.definition, &p, &mut dummy_actions)
+                                .unwrap_or_else(|| value_to_state_value(Value::String(p.clone())));
+                        merged = Some(match merged {
+                            None => sv,
+                            Some(acc) => Self::merge_state_value(&acc, &sv, "", &p),
+                        });
+                    }
+                    if let Some(state_val) = merged {
+                        self.history_value.insert(parent_path, state_val);
                     }
                 }
             }

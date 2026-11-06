@@ -372,14 +372,22 @@ public:
      */
     bool restoreSnapshot(const char* snapshot_json) {
         if (!snapshot_json) return false;
-        if (!machine) {
+        bool created_here = (machine == nullptr);
+        if (created_here) {
             machine = fsm_create(m_json);
             if (!machine) {
                 return false;
             }
             bind_registered_handlers();
         }
-        return fsm_restore_snapshot_json(machine, snapshot_json) == 0;
+        if (fsm_restore_snapshot_json(machine, snapshot_json) != 0) {
+            if (created_here) {
+                fsm_free(machine);
+                machine = nullptr;
+            }
+            return false;
+        }
+        return true;
     }
 
     bool restoreSnapshot(const std::string& snapshot_json) {

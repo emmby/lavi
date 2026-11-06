@@ -73,7 +73,16 @@ pub fn value_to_state_value(v: Value) -> StateValue {
                         current_key,
                     } => {
                         if let Some(k) = current_key.take() {
-                            regions.insert(k.clone(), StateValue::Compound(k, Box::new(comp)));
+                            let region_val = match comp {
+                                StateValue::Parallel(ref m) if m.is_empty() => {
+                                    StateValue::Atomic(k.clone())
+                                }
+                                StateValue::Atomic(ref s) if s.is_empty() => {
+                                    StateValue::Atomic(k.clone())
+                                }
+                                other => StateValue::Compound(k.clone(), Box::new(other)),
+                            };
+                            regions.insert(k, region_val);
                         }
                         if let Some((next_key, next_val)) = remaining.next() {
                             *current_key = Some(next_key);

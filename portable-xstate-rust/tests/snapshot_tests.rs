@@ -517,3 +517,168 @@ fn test_snapshot_status_roundtrip_all_states() {
     assert!(m_stopped_restored.current_state.matches("step2"));
 }
 
+#[test]
+fn test_snapshot_parallel_atomic_final_regions_roundtrip() {
+    let json = r#"{
+        "id": "parallelFinal",
+        "type": "parallel",
+        "states": {
+            "a": { "type": "final" },
+            "b": { "type": "final" }
+        }
+    }"#;
+
+    let mut m = RuntimeMachine::from_json(json).expect("valid machine");
+    m.start(&IndexMap::new(), &IndexMap::new());
+    assert!(m.is_done());
+    assert_eq!(m.status(), MachineStatus::Done);
+    assert!(m.matches("a"));
+    assert!(m.matches("b"));
+
+    let snap_val = m.get_persisted_snapshot_value();
+    let val_obj = snap_val
+        .as_object()
+        .and_then(|o| o.get("value"))
+        .and_then(|v| v.as_object())
+        .expect("value is object");
+    assert_eq!(val_obj.get("a"), Some(&Value::Object(IndexMap::new())));
+    assert_eq!(val_obj.get("b"), Some(&Value::Object(IndexMap::new())));
+
+    let snap_json = m.get_persisted_snapshot_json();
+    let mut m2 = RuntimeMachine::from_json(json).expect("valid machine");
+    m2.restore_from_snapshot_json(&snap_json).expect("restore succeeded");
+    assert!(m2.is_done());
+    assert_eq!(m2.status(), MachineStatus::Done);
+    assert!(m2.matches("a"));
+    assert!(m2.matches("b"));
+    assert_eq!(m2.get_persisted_snapshot_json(), snap_json);
+}
+
+#[test]
+fn test_value_partial_eq_nan_consistency() {
+    let nan_val = Value::Number(f64::NAN);
+    assert_ne!(nan_val, nan_val);
+    assert_ne!(nan_val, nan_val.clone());
+
+    let nan_arr = Value::Array(alloc::vec![Value::Number(f64::NAN)]);
+    assert_ne!(nan_arr, nan_arr);
+    assert_ne!(nan_arr, nan_arr.clone());
+}
+
+#[test]
+fn test_snapshot_history_custom_default_target_preserves_initial() {
+    let json = r#"{
+        "id": "customDefaultHist",
+        "initial": "on",
+        "states": {
+            "on": {
+                "initial": "first",
+                "on": { "POWER": "off" },
+                "states": {
+                    "first": { "on": { "NEXT": "second" } },
+                    "second": {},
+                    "hist": { "type": "history", "target": "second" }
+                }
+            },
+            "off": {
+                "on": { "POWER": "on.hist" }
+            }
+        }
+    }"#;
+
+    let mut m = RuntimeMachine::from_json(json).expect("valid machine");
+    m.start(&IndexMap::new(), &IndexMap::new());
+    assert!(m.matches("on.first"));
+
+    // Exit `on` while still in `first`
+    let power_ev = Value::event("POWER");
+    m.transition("POWER", &power_ev, &IndexMap::new(), &IndexMap::new());
+    assert!(m.matches("off"));
+
+    let snap_json = m.get_persisted_snapshot_json();
+    let mut m2 = RuntimeMachine::from_json(json).expect("valid machine");
+    m2.restore_from_snapshot_json(&snap_json).expect("restore succeeded");
+    m2.start(&IndexMap::new(), &IndexMap::new());
+
+    // Transitioning to `on.hist` must restore `on.first`, NOT the default history target `on.second`
+    m2.transition("POWER", &power_ev, &IndexMap::new(), &IndexMap::new());
+    assert!(m2.matches("on.first"));
+    assert!(!m2.matches("on.second"));
+}
+
+#[test]
+fn test_snapshot_deep_and_parallel_history_roundtrip() {
+    let json = r#"{
+        "id": "parallelDeepHist",
+        "initial": "off",
+        "states": {
+            "off": {
+                "on": {
+                    "SWITCH": "on",
+                    "DEEP_POWER": "on.deepHistory"
+                }
+            },
+            "on": {
+                "type": "parallel",
+                "on": { "POWER": "off" },
+                "states": {
+                    "A": {
+                        "initial": "B",
+                        "states": {
+                            "B": { "on": { "INNER_A": "C" } },
+                            "C": {
+                                "initial": "D",
+                                "states": {
+                                    "D": { "on": { "INNER_A2": "E" } },
+                                    "E": {}
+                                }
+                            }
+                        }
+                    },
+                    "K": {
+                        "initial": "L",
+                        "states": {
+                            "L": { "on": { "INNER_K": "M" } },
+                            "M": {
+                                "initial": "N",
+                                "states": {
+                                    "N": { "on": { "INNER_K2": "O" } },
+                                    "O": {}
+                                }
+                            }
+                        }
+                    },
+                    "deepHistory": {
+                        "history": "deep"
+                    }
+                }
+            }
+        }
+    }"#;
+
+    let mut m = RuntimeMachine::from_json(json).expect("valid machine");
+    m.start(&IndexMap::new(), &IndexMap::new());
+
+    m.transition("SWITCH", &Value::event("SWITCH"), &IndexMap::new(), &IndexMap::new());
+    m.transition("INNER_A", &Value::event("INNER_A"), &IndexMap::new(), &IndexMap::new());
+    m.transition("INNER_A2", &Value::event("INNER_A2"), &IndexMap::new(), &IndexMap::new());
+    m.transition("INNER_K", &Value::event("INNER_K"), &IndexMap::new(), &IndexMap::new());
+    m.transition("INNER_K2", &Value::event("INNER_K2"), &IndexMap::new(), &IndexMap::new());
+    assert!(m.matches("on.A.C.E"));
+    assert!(m.matches("on.K.M.O"));
+
+    m.transition("POWER", &Value::event("POWER"), &IndexMap::new(), &IndexMap::new());
+    assert!(m.matches("off"));
+
+    let snap_json = m.get_persisted_snapshot_json();
+    let mut m2 = RuntimeMachine::from_json(json).expect("valid machine");
+    m2.restore_from_snapshot_json(&snap_json).expect("restore succeeded");
+    m2.start(&IndexMap::new(), &IndexMap::new());
+    assert!(m2.matches("off"));
+
+    m2.transition("DEEP_POWER", &Value::event("DEEP_POWER"), &IndexMap::new(), &IndexMap::new());
+    assert!(m2.matches("on.A.C.E"));
+    assert!(m2.matches("on.K.M.O"));
+}
+
+

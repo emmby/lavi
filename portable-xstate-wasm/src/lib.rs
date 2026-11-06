@@ -1476,66 +1476,112 @@ impl Actor {
          for (id, path) in &machine.definition.id_map {
              if let Some(def) = machine.get_state_definition(path) {
                  if matches!(def.state_type, portable_xstate_rust::StateType::History { .. }) {
+                     let is_deep = def.history == Some(portable_xstate_rust::HistoryType::Deep)
+                         || matches!(def.state_type, portable_xstate_rust::StateType::History { deep: true });
                      let parent_path = if let Some(idx) = path.rfind('.') {
                          &path[0..idx]
                      } else {
                          "" 
                      };
-                     let mut target_to_serialize: Option<String> = None;
-                     let matching_active_path = active_paths.iter().find(|p| {
-                         if parent_path.is_empty() {
-                             !p.is_empty()
-                         } else {
-                             *p == parent_path || p.starts_with(&format!("{}.", parent_path))
-                         }
-                     });
-                     if let Some(active_path) = matching_active_path {
-                          let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
-                          if active_path.len() > prefix_len {
-                               let rest = &active_path[prefix_len..];
-                               if let Some(end) = rest.find('.') {
-                                   let child = &rest[0..end];
-                                   target_to_serialize = Some(if parent_path.is_empty() { child.to_string() } else { format!("{}.{}", parent_path, child) });
-                               } else {
-                                   target_to_serialize = Some(if parent_path.is_empty() { rest.to_string() } else { format!("{}.{}", parent_path, rest) });
-                               }
-                          }
-                     }
-                     if target_to_serialize.is_none() {
+                     let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
+
+                     let mut raw_paths: Vec<String> = active_paths
+                         .iter()
+                         .filter(|p| {
+                             if parent_path.is_empty() {
+                                 !p.is_empty()
+                             } else {
+                                 p.len() > prefix_len
+                                     && p.starts_with(parent_path)
+                                     && p.as_bytes().get(parent_path.len()) == Some(&b'.')
+                             }
+                         })
+                         .cloned()
+                         .collect();
+
+                     if raw_paths.is_empty() {
                          if let Some(stored) = machine.history_value.get(parent_path) {
                              let stored_paths = stored.get_active_paths();
-                             target_to_serialize = stored_paths
+                             let matching_stored: Vec<String> = stored_paths
                                  .iter()
-                                 .find(|p| {
+                                 .filter(|p| {
                                      if parent_path.is_empty() {
                                          !p.is_empty()
                                      } else {
-                                         *p == parent_path || p.starts_with(&format!("{}.", parent_path))
+                                         p.len() > prefix_len
+                                             && p.starts_with(parent_path)
+                                             && p.as_bytes().get(parent_path.len()) == Some(&b'.')
                                      }
                                  })
-                                 .or_else(|| stored_paths.first())
-                                 .cloned();
-                         }
-                     }
-                     if let Some(target) = &target_to_serialize {
-                         if let Some(p_def) = machine.get_state_definition(parent_path) {
-                             if let Some(initial_key) = &p_def.initial {
-                                  let full_initial = if parent_path.is_empty() { initial_key.clone() } else { format!("{}.{}", parent_path, initial_key) };
-                                  if *target == full_initial { target_to_serialize = None; }
+                                 .cloned()
+                                 .collect();
+                             if !matching_stored.is_empty() {
+                                 raw_paths = matching_stored;
+                             } else {
+                                 raw_paths = stored_paths
+                                     .into_iter()
+                                     .filter(|p| !p.is_empty())
+                                     .collect();
                              }
                          }
                      }
-                     if let Some(target_path) = target_to_serialize {
+
+                     let mut targets_to_serialize: Vec<String> = Vec::new();
+                     for raw_path in raw_paths {
+                         let target_path = if is_deep {
+                             raw_path
+                         } else if raw_path.len() > prefix_len {
+                             let rest = &raw_path[prefix_len..];
+                             let child = if let Some(end) = rest.find('.') {
+                                 &rest[..end]
+                             } else {
+                                 rest
+                             };
+                             if parent_path.is_empty() {
+                                 child.to_string()
+                             } else {
+                                 format!("{}.{}", parent_path, child)
+                             }
+                         } else {
+                             raw_path
+                         };
+                         if !targets_to_serialize.contains(&target_path) {
+                             targets_to_serialize.push(target_path);
+                         }
+                     }
+
+                     if !machine.history_value.contains_key(parent_path)
+                         && def.history_target.is_none()
+                     {
+                         if let Some(p_def) = machine.get_state_definition(parent_path) {
+                             if let Some(initial_key) = &p_def.initial {
+                                  let full_initial = if parent_path.is_empty() {
+                                      initial_key.clone()
+                                  } else {
+                                      format!("{}.{}", parent_path, initial_key)
+                                  };
+                                  if targets_to_serialize.len() == 1
+                                      && targets_to_serialize[0] == full_initial
+                                  {
+                                      targets_to_serialize.clear();
+                                  }
+                             }
+                         }
+                     }
+
+                     if !targets_to_serialize.is_empty() {
                           let entry_arr = js_sys::Array::new();
-                          let node = StateNode {
-                              machine: machine.clone(),
-                              path: target_path.clone(),
-                              guards: self.guards.clone(),
-                              actions: self.actions.clone(),
-                              config: self.config.clone(),
-                          };
-                          let node_val: JsValue = node.into();
-                          entry_arr.push(&node_val);
+                          for target_path in targets_to_serialize {
+                              let node = StateNode {
+                                  machine: machine.clone(),
+                                  path: target_path,
+                                  guards: self.guards.clone(),
+                                  actions: self.actions.clone(),
+                                  config: self.config.clone(),
+                              };
+                              let node_val: JsValue = node.into();
+                              entry_arr.push(&node_val);
+                          }
                           let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(id), &entry_arr);
                      }
                  }

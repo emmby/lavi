@@ -362,10 +362,14 @@ int main() {
         assert(snap_m2.matches("active.sub2"));
         assert(!snap_m2.matches("active.sub1"));
 
-        // Error handling validation
+        // Error handling validation: failed restoreSnapshot on unstarted machine must leave it startable
         xstate::PortableXState snap_err(SNAPSHOT_CPP_JSON);
         assert(!snap_err.restoreSnapshot(""));
         assert(!snap_err.restoreSnapshot("{ malformed json ]"));
+        snap_err.start();
+        assert(snap_err.matches("idle"));
+        snap_err.send("INC");
+        assert(snap_err.matches("active.sub1"));
 
         // Snapshot status parity test across active, done, and stopped states
         const char* STATUS_CPP_JSON = R"({
