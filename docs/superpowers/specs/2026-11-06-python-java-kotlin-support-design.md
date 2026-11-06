@@ -37,7 +37,7 @@ The core priorities for these bindings are:
   - Android users depend on a standard `.aar` with 16 KB page-aligned `jniLibs/<abi>/liblavi_jvm.so` compatible with Android 15+ / Google Play requirements.
 - **Single-Host Build & Test Workflow**:
   - Everyday local testing (`npm test`) compiles only for the developer's host machine in seconds and does **not** require the Android SDK (`ANDROID_HOME`) or cross-compilers.
-  - Release packaging cross-compiles all desktop (`gnu` and `musl`) and Android targets from a single macOS build host using `cargo-zigbuild` / `maturin --zig` and `cargo-ndk`.
+  - Release packaging cross-compiles all desktop (`gnu`, `musl`, `apple-darwin`, `windows-gnu`) and Android targets from a single standard **Linux (`ubuntu-latest`)** or **macOS** build host using `cargo-zigbuild` / `maturin --zig` and `cargo-ndk`.
 
 ### Non-Goals (Current Scope)
 - **Programmatic Machine Definition Builders in Python/Java/Kotlin**: Users load declarative XState v5 JSON configs and attach named callbacks rather than constructing state trees via a full programmatic DSL (`createMachine({...})` with inline callbacks).
@@ -156,7 +156,7 @@ Cargo.toml
   - `npm run test:py`: Copies the compiled host library (`liblavi_py.dylib`/`.so` $\rightarrow$ `lavi.abi3.so` on Unix; `lavi_py.dll` $\rightarrow$ `lavi.pyd` on Windows) into `lavi-py/python/lavi/` and runs `pytest lavi-py/tests`—working out of the box without requiring global `maturin`.
   - `npm run test:jvm`: Runs `./gradlew test` in `lavi-jvm` (standard `java-library` + Kotlin JVM plugin; **zero Android SDK dependency**), executing both Java JUnit tests (`JavaMachineTest.java`) and Kotlin JUnit tests (`KotlinMachineTest.kt`) against the host `target/debug/liblavi_jvm.<ext>`.
 - **Single-Host Release Cross-Compilation (`scripts/build-release-natives.mjs`)**:
-  - Uses **macOS** as the canonical single-host release OS (providing the native Apple SDK for Darwin targets alongside `zig` and Android NDK).
+  - Runs on a single cheap **Linux (`ubuntu-latest`)** runner in CI (or locally on macOS). Because `lavi`, `lavi-py`, and `lavi-jvm` are 100% pure Rust with zero Apple Objective-C framework dependencies (`CoreFoundation`, `Security`, etc.), `cargo-zigbuild` links `apple-darwin` targets directly against Zig's built-in `libSystem.tbd` stubs on Linux without needing a macOS runner or external Xcode SDK.
   - Desktop targets via `cargo-zigbuild` / `maturin build --zig`:
     - `aarch64-apple-darwin`, `x86_64-apple-darwin`
     - `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
