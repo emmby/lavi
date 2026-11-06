@@ -351,7 +351,7 @@ public:
      *
      * @return Serialized JSON snapshot, or empty string if machine is uninitialized or serialization fails.
      */
-    std::string get_snapshot() const {
+    std::string getSnapshot() const {
         if (!machine) return "";
         int32_t req = fsm_get_snapshot_json(machine, nullptr, 0);
         if (req <= 1) return "";
@@ -370,7 +370,7 @@ public:
      * @param snapshot_json Serialized JSON snapshot string.
      * @return true if snapshot was successfully restored, false otherwise.
      */
-    bool restore_snapshot(const char* snapshot_json) {
+    bool restoreSnapshot(const char* snapshot_json) {
         if (!snapshot_json) return false;
         if (!machine) {
             machine = fsm_create(m_json);
@@ -382,8 +382,8 @@ public:
         return fsm_restore_snapshot_json(machine, snapshot_json) == 0;
     }
 
-    bool restore_snapshot(const std::string& snapshot_json) {
-        return restore_snapshot(snapshot_json.c_str());
+    bool restoreSnapshot(const std::string& snapshot_json) {
+        return restoreSnapshot(snapshot_json.c_str());
     }
 
     /**

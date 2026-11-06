@@ -141,7 +141,7 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 ## 5. Advanced & Niche (Low Priority)
 
 - [ ] **Deep Persistence** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/json.test.ts) — upstream `json.test.ts` not yet onboarded)
-  - [x] Persisting/Restoring state snapshots (`getPersistedSnapshot()`, `createActor(machine, { snapshot })`, `RuntimeMachine::get_snapshot_json`/`restore_from_snapshot_json`, `fsm_get_snapshot_json`/`fsm_restore_snapshot_json`, `PortableXState::get_snapshot`/`restore_snapshot`) `[Rust | WASM | C/C++]`
+  - [x] Persisting/Restoring state snapshots (`getPersistedSnapshot()`, `createActor(machine, { snapshot })`, `RuntimeMachine::get_snapshot_json`/`restore_from_snapshot_json`, `fsm_get_snapshot_json`/`fsm_restore_snapshot_json`, `PortableXState::getSnapshot`/`restoreSnapshot`) `[Rust | WASM | C/C++]`
   - [x] History value persistence and `StateNode` reference revival `[Rust | WASM | C/C++]`
 - [ ] **Inspection & Telemetry**
   - [x] Basic `inspect` callback (`@xstate.snapshot` and `@xstate.event` emission in `createActor(machine, { inspect })`) `[WASM]`

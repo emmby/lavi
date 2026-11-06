@@ -20,6 +20,25 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Root cause: Root-level history resolution in `RuntimeMachine` currently falls back to `refresh` (the history state node itself) without re-entering `running`. The exit loop executed `def.invoke` when `running` exited, which masked the lack of full re-entry and child actor lifecycle management.
   - Action taken: Retained lines 2213–2217 until the Actor Model (`invoke.test.ts`) is onboarded. Resolving `TD-7` cleanly requires implementing proper child actor lifecycle (`ActorRef` creation on state entry, termination on state exit) rather than simply deleting the exit loop.
 
+### `TD-9`: Consolidate Split-Brain WASM `Actor` State, Dual Reentrant Queues, and `Rc<MachineDefinition>`
+- **Files**: [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs), [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs)
+- **Problem**:
+  1. **Split-Brain State in WASM `Actor` and `SharedActorState`**: To allow JS action callbacks to reentrantly call `actorRef.send(...)` or `actorRef.stop()` without triggering a `wasm-bindgen` recursive `&mut self` borrow panic, `Actor` methods were changed to `&self` using `shared_state: Rc<RefCell<Option<SharedActorState>>>`. However, `Actor` still retains duplicate top-level fields (`machine`, `inspector`, `guards`, `actions`, `is_stopped`, `is_initialized`) alongside `shared_state`, syncing between them via `pull_shared()` and `push_shared()` by cloning the entire `RuntimeMachine` and `IndexMap`s back and forth.
+  2. **Two Separate Reentrant Queues**: `RuntimeMachine` already has an `external_queue` (`VecDeque<(String, Value)>`), and `SharedActorState` in WASM added a second `reentrant_queue` (`VecDeque<(String, Value)>`) because WASM clones `machine` out of the `RefCell` before running a transition step (`is_in_tick`).
+  3. **Deep `MachineDefinition` Clones**: `RuntimeMachine` stores `definition: MachineDefinition` by value rather than `Rc<MachineDefinition>`, causing every `RuntimeMachine::clone()` in WASM (`send()`, `tick()`, `getSnapshot()`, `StateNode` creation) to deep-clone the entire statechart AST.
+- **Required Fix**:
+  - Store only `Rc<RefCell<ActorInner>>` inside WASM `Actor` (eliminating duplicate top-level fields and `pull_shared()`/`push_shared()`), use fine-grained borrows so `RuntimeMachine::external_queue` serves as the single reentrant FIFO queue, and wrap `MachineDefinition` in `Rc<MachineDefinition>` inside `RuntimeMachine`.
+
+### `TD-10`: Decouple `extract_unprocessed_fn_actions` from `__xstate_track` Marker Property
+- **Files**: [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs) (lines 2786–2826), [`tests/utils.ts`](./tests/utils.ts)
+- **Problem**: `extract_unprocessed_fn_actions` in `portable-xstate-wasm` checks for a `__xstate_track` property on JS functions (set by `trackEntries` in `tests/utils.ts`). While this kept `tests/utils.ts` free of monkey-patching `machine.createActor`, coupling the WASM runtime to a test-helper marker property (`__xstate_track`) is a leaky abstraction.
+- **Required Fix**: Update `sync_tracked_entry_exit` / `extract_unprocessed_fn_actions` to bridge *any* unbridged JS function found on `machine.config` `entry`/`exit` arrays (i.e. any JS `Function` that was mutated onto `config` after `createMachine` and does not already have a bridged action `type`), and remove the `__xstate_track` tag from `tests/utils.ts` and `portable-xstate-wasm`.
+
+### `TD-11`: Zero-Allocation Pass-1 Size Query in `fsm_get_snapshot_json`
+- **Files**: [`portable-xstate-c-cpp/src/lib.rs`](./portable-xstate-c-cpp/src/lib.rs) (lines 601–632), [`portable-xstate-rust/src/json.rs`](./portable-xstate-rust/src/json.rs)
+- **Problem**: In C FFI, `fsm_get_snapshot_json` allocates the full serialized JSON `String` on the heap during the pass-1 size query (`buffer == NULL` or `buffer_len == 0`) and serializes/allocates it a second time on pass 2 when copying into the caller's buffer (such as in `PortableXState::getSnapshot()`).
+- **Required Fix**: Implement a streaming or counting length calculation (e.g. a zero-allocation byte-counting visitor over `RuntimeMachine` / `Value`) or write directly into the caller's buffer slice when `buffer != NULL` so pass-1 size queries perform zero heap string allocations.
+
 ---
 
 ## Resolved Cleanup Items
@@ -77,7 +96,7 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Architectural Changes**:
   - Implemented core snapshot persistence in `portable-xstate-rust`: `StateValue::to_value()`, `get_persisted_snapshot_value()`, `get_persisted_snapshot_json()`, `restore_from_snapshot_value_owned()`, and `restore_from_snapshot_json()`.
   - Replaced recursive `#[derive(Clone, PartialEq)]` on `Value` with explicit iterative `impl Clone for Value` and `impl PartialEq for Value` using heap work-stacks, achieving strictly bounded $O(1)$ CPU call-stack footprint tested to depth 500+ in 64 KB and 32 KB stacks.
-  - Exposed buffer-safe C99 FFI (`fsm_get_snapshot_json`, `fsm_restore_snapshot_json`) with two-pass sizing and C++11 RAII methods (`PortableXState::get_snapshot`, `restore_snapshot`).
+  - Exposed buffer-safe C99 FFI (`fsm_get_snapshot_json`, `fsm_restore_snapshot_json`) with two-pass sizing and C++11 RAII methods (`PortableXState::getSnapshot`, `restoreSnapshot`).
   - Replaced ad-hoc WASM hydration with direct delegation to Rust core, purged all 10 raw `console.log` statements from WASM restore logic, and ensured persisted status preserves `"status": "done"`.
   - Promoted state query methods (`can`, `has_tag`, `status`, `is_done`, `stop`) across Rust, C, and C++.
 - **Verification**: Verified via `tests/snapshot_tests.rs` (8 passed), `tests/adversarial_stack_tests.rs` (9 passed), `tests/integration/snapshot_status.test.ts` (4 passed), C unit tests in `c_test.c`, C++ tests in `cpp_test.cpp`, `cargo test --workspace` (pass), `cargo clippy` (0 warnings), and `npm test` (all passed).
