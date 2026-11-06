@@ -21,11 +21,6 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: `tests/actions.test.ts` contains historical `it.skip` additions and minor inline edits that predate `npm run test:conformance-check`.
 - **Resolution**: Restore `tests/actions.test.ts` to match `tests/upstream/actions.test.ts` under strict normalization, register any legitimately unimplemented sub-features in `tests/conformance-manifest.json` `allowed_skips`, and graduate `actions.test.ts` from `"legacy-baseline"` to `"strict"`.
 
-### `TD-3`: Graduate `tests/state.test.ts` and `tests/history.test.ts` to Strict Provenance
-- **Files**: [`tests/state.test.ts`](./tests/state.test.ts), [`tests/history.test.ts`](./tests/history.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json)
-- **Problem**: These suites pass or skip individual tests but contain historical edits relative to `tests/upstream/{state,history}.test.ts` (`tests/machine.test.ts` has already been graduated to `"strict"`).
-- **Resolution**: Diff each file against `tests/upstream/`, remove any non-whitelisted edits, register legitimate skips in `tests/conformance-manifest.json`, and set `"status": "strict"`.
-
 ### `TD-5`: Replace Remaining Recursive Traversal Helpers with Iterative Heap Work-Stacks
 - **Files**: [`portable-xstate-rust/src/lib.rs`](./portable-xstate-rust/src/lib.rs), [`portable-xstate-wasm/src/lib.rs`](./portable-xstate-wasm/src/lib.rs)
 - **Problem**: While `json.rs`, `parser.rs`, `Value::drop`, and `StateDefinition::drop` use bounded $O(1)$ call-stack traversal via explicit heap `Vec` work-stacks, older helpers (`StateValue::collect_paths`, `StateValue::matches`, and `StateNode::events` in WASM) still use CPU call-stack recursion.
@@ -51,4 +46,4 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 ## Resolved Cleanup Items
 
 - **`TD-4`** (Resolved): Removed `fs.appendFileSync('trace.log', ...)`, `fs.appendFileSync('debug.log', ...)`, `console.log` spam, and `machine.createActor` / `machine.provide` monkey-patching from [`tests/utils.ts`](./tests/utils.ts), bridging tracked entry/exit callbacks iteratively in `portable-xstate-wasm`.
-- **`TD-3` (`tests/machine.test.ts`)** (Resolved): Reconciled [`tests/machine.test.ts`](./tests/machine.test.ts) with [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) and graduated `machine.test.ts` from `"legacy-baseline"` to `"strict"` in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json).
+- **`TD-3`** (Resolved): Reconciled [`tests/machine.test.ts`](./tests/machine.test.ts), [`tests/state.test.ts`](./tests/state.test.ts), and [`tests/history.test.ts`](./tests/history.test.ts) with their upstream references in `tests/upstream/` and graduated all three suites from `"legacy-baseline"` to `"strict"` in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json).

@@ -1,8 +1,7 @@
-import { createActor, createMachine, StateNode, setup } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
+import { createActor, createMachine, StateNode } from '../portable-xstate-wasm/pkg-npm/portable_xstate';
 import { describe, it, expect, vi } from 'vitest';
 import { trackEntries } from './utils';
 import { fromCallback } from './stubs';
-
 
 describe('history states', () => {
   it('should go to the most recently visited state (explicit shallow history type)', () => {
@@ -556,7 +555,7 @@ describe('history states', () => {
       }
     });
 
-    const flushTracked = trackEntries(machine, setup);
+    const flushTracked = trackEntries(machine);
 
     const actorRef = createActor(machine).start();
     flushTracked();
@@ -601,7 +600,7 @@ describe('history states', () => {
       }
     });
 
-    const flushTracked = trackEntries(machine, setup);
+    const flushTracked = trackEntries(machine);
 
     const actorRef = createActor(machine).start();
 
@@ -1457,10 +1456,7 @@ describe('revive history states', () => {
       const actorRef = createActor(machine, {
         snapshot: fakeSnapshot
       }).start();
-      const snapshotBefore = actorRef.getPersistedSnapshot();
       actorRef.send({ type: 'POWER' });
-      const snapshotAfter = actorRef.getPersistedSnapshot();
-      console.log('DEBUG TEST: val=', val, 'snapshotAfter.historyValue=', (snapshotAfter as any).historyValue);
 
       expect(actorRef.getSnapshot().value).toEqual({ on: 'first' });
       expect((actorRef.getPersistedSnapshot() as any).historyValue).toEqual({});
