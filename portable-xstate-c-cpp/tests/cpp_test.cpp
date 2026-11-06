@@ -197,6 +197,40 @@ int main() {
         w_catchall.send("UNRECOGNIZED");
         assert(w_catchall.matches("catchAll"));
 
+        // Declarative xstate.assign multi-property context update test in C++
+        const char* ASSIGN_CPP_JSON = R"({
+          "initial": "counting",
+          "context": { "count": 0, "foo": "bar" },
+          "states": {
+            "counting": {
+              "on": {
+                "WIN": {
+                  "target": "won",
+                  "actions": [
+                    { "type": "xstate.assign", "assignment": { "count": 100, "foo": "win" } },
+                    "verifyAssigned"
+                  ]
+                }
+              }
+            },
+            "won": {}
+          }
+        })";
+
+        bool cpp_assign_verified = false;
+        xstate::PortableXState assign_cpp(ASSIGN_CPP_JSON);
+        assign_cpp.registerAction("verifyAssigned", [&](const xstate::Value& context, const xstate::Value&) {
+            double count_val = 0;
+            std::string foo_val;
+            assert(context.getProperty("count").getNumber(count_val) && count_val == 100.0);
+            assert(context.getProperty("foo").getString(foo_val) && foo_val == "win");
+            cpp_assign_verified = true;
+        });
+        assign_cpp.start();
+        assign_cpp.send("WIN");
+        assert(assign_cpp.matches("won"));
+        assert(cpp_assign_verified);
+
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
         return 1;
