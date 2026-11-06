@@ -42,6 +42,21 @@ void my_c_callback(const char* action_name, const fsm_value_t* context, const fs
     c_action_called = true;
 }
 
+void verify_assign_cb(const char* action_name, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
+    (void)action_name;
+    (void)event;
+    bool* verified_flag = (bool*)user_data;
+    const fsm_value_t* count_val = fsm_value_get_property(context, "count");
+    const fsm_value_t* foo_val = fsm_value_get_property(context, "foo");
+    assert(count_val != NULL && fsm_value_is_number(count_val));
+    assert(fsm_value_get_number(count_val) == 100.0);
+    assert(foo_val != NULL && fsm_value_is_string(foo_val));
+    char foo_buf[16];
+    fsm_value_get_string(foo_val, foo_buf, sizeof(foo_buf));
+    assert(strcmp(foo_buf, "win") == 0);
+    *verified_flag = true;
+}
+
 int main() {
     printf("Starting C Integration Test...\n");
 
@@ -155,6 +170,36 @@ int main() {
     fsm_send_event(w3, "OTHER_EVENT");
     assert(fsm_matches(w3, "wild"));
     fsm_free(w3);
+
+    // Declarative xstate.assign multi-property context update test
+    const char* ASSIGN_JSON = "{"
+      "\"initial\": \"counting\","
+      "\"context\": { \"count\": 0, \"foo\": \"bar\" },"
+      "\"states\": {"
+        "\"counting\": {"
+          "\"on\": {"
+            "\"WIN\": {"
+              "\"target\": \"won\","
+              "\"actions\": ["
+                "{ \"type\": \"xstate.assign\", \"assignment\": { \"count\": 100, \"foo\": \"win\" } },"
+                "\"verifyAssigned\""
+              "]"
+            "}"
+          "}"
+        "},"
+        "\"won\": {}"
+      "}"
+    "}";
+
+    bool assign_verified = false;
+    MachineContext* assign_fsm = fsm_create(ASSIGN_JSON);
+    assert(assign_fsm != NULL);
+    fsm_register_action(assign_fsm, "verifyAssigned", verify_assign_cb, &assign_verified);
+    fsm_start(assign_fsm);
+    fsm_send_event(assign_fsm, "WIN");
+    assert(fsm_matches(assign_fsm, "won"));
+    assert(assign_verified == true);
+    fsm_free(assign_fsm);
 
     printf("C Test Passed!\n");
     return 0;

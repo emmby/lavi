@@ -1071,4 +1071,81 @@ entry: vec![],
         assert!(!crate::matches_event_descriptor("eventually.bar.baz", "event*.bar.*"));
         assert!(!crate::matches_event_descriptor("prevent.whatever", "*event.*"));
     }
+
+    #[test]
+    fn test_assign_static_dynamic_and_parameterized_actions() {
+        use alloc::rc::Rc;
+
+        let json = r#"{
+            "initial": "counting",
+            "context": {
+                "count": 1,
+                "foo": "bar"
+            },
+            "entry": {
+                "type": "incBy",
+                "params": { "by": 10 }
+            },
+            "states": {
+                "counting": {
+                    "on": {
+                        "INC": {
+                            "actions": [
+                                {
+                                    "type": "incBy",
+                                    "params": { "by": 5 }
+                                }
+                            ]
+                        },
+                        "WIN": {
+                            "actions": [
+                                {
+                                    "type": "xstate.assign",
+                                    "assignment": {
+                                        "count": 100,
+                                        "foo": "win"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }"#;
+
+        let actions: IndexMap<String, ActionFunction> = indexmap::indexmap! {
+            "incBy".to_string() => Rc::new(|ctx: &mut Value, _evt: &Value, params: &Option<Value>| {
+                let by = params
+                    .as_ref()
+                    .and_then(|p| p.as_object())
+                    .and_then(|m| m.get("by"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                if let Some(ctx_obj) = ctx.as_object_mut() {
+                    let cur = ctx_obj.get("count").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    ctx_obj.insert("count".to_string(), Value::Number(cur + by));
+                }
+            }) as ActionFunction,
+        };
+
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        machine.start(&IndexMap::new(), &actions);
+
+        // Initial parameterized entry action incremented count from 1 -> 11
+        let ctx_map = machine.context.as_object().unwrap();
+        assert_eq!(ctx_map.get("count"), Some(&Value::Number(11.0)));
+        assert_eq!(ctx_map.get("foo"), Some(&Value::String("bar".to_string())));
+
+        // Transition action with params { by: 5 } increments count from 11 -> 16
+        machine.transition("INC", &Value::Null, &IndexMap::new(), &actions);
+        let ctx_map = machine.context.as_object().unwrap();
+        assert_eq!(ctx_map.get("count"), Some(&Value::Number(16.0)));
+        assert_eq!(ctx_map.get("foo"), Some(&Value::String("bar".to_string())));
+
+        // Declarative xstate.assign updates multiple properties
+        machine.transition("WIN", &Value::Null, &IndexMap::new(), &actions);
+        let ctx_map = machine.context.as_object().unwrap();
+        assert_eq!(ctx_map.get("count"), Some(&Value::Number(100.0)));
+        assert_eq!(ctx_map.get("foo"), Some(&Value::String("win".to_string())));
+    }
 }

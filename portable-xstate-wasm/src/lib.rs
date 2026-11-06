@@ -11,6 +11,23 @@ use std::rc::Rc;
 
 pub mod utils;
 
+#[wasm_bindgen(start)]
+pub fn init_wasm_runtime() {
+    let global = js_sys::global();
+    if let Ok(promise_ctor) = js_sys::Reflect::get(&global, &JsValue::from_str("Promise")) {
+        if promise_ctor.is_object() || promise_ctor.is_function() {
+            let key = JsValue::from_str("withResolvers");
+            let existing = js_sys::Reflect::get(&promise_ctor, &key).unwrap_or(JsValue::UNDEFINED);
+            if existing.is_undefined() {
+                let polyfill = js_sys::Function::new_no_args(
+                    "let resolve, reject; const promise = new Promise((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject };",
+                );
+                let _ = js_sys::Reflect::set(&promise_ctor, &key, &polyfill);
+            }
+        }
+    }
+}
+
 pub(crate) struct InternalState {
     pub machine: RuntimeMachine,
     pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
@@ -884,49 +901,18 @@ fn parse_implementations(
              let key_js = keys.get(i);
              let key_str = key_js.as_string().unwrap_or_default();
              let action_item = js_sys::Reflect::get(&actions_map, &key_js).unwrap_or(JsValue::UNDEFINED);
-             // Check for static assignment (xstate 5 assign)
+             // Check for xstate 5 assign (dynamic function or partial object)
              let assign_key = JsValue::from_str("assignment");
              let assign_val = js_sys::Reflect::get(&action_item, &assign_key).unwrap_or(JsValue::UNDEFINED);
-             // Case 1: Dynamic Assignment (assignment is a function)
-             if let Ok(assign_fn) = assign_val.clone().dyn_into::<js_sys::Function>() {
-                 actions_out.insert(key_str, Rc::new(move |ctx_mut, evt, _params| {
-                     let ctx_js = value_to_js(ctx_mut);
-                     let evt_js = value_to_js(evt);
-                     let arg_obj = js_sys::Object::new();
-                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
-                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-
-                     if let Ok(res) = assign_fn.call1(&JsValue::NULL, &arg_obj) {
-                         if res.is_object() {  
-                               let partial_value = js_to_value(&res);
-                               if let Some(partial_obj) = partial_value.as_object() {
-                                   if let Some(ctx_obj) = ctx_mut.as_object_mut() { 
-                                       for (k, v) in partial_obj {
-                                           ctx_obj.insert(k.clone(), v.clone());
-                                       }
-                                   }
-                               }
-                          }
-                     }
-                 }));
+             if !assign_val.is_undefined() {
+                 let assign_val_clone = assign_val.clone();
+                 actions_out.insert(
+                     key_str,
+                     Rc::new(move |ctx_mut, evt, params| {
+                         evaluate_assignment_value(&assign_val_clone, ctx_mut, evt, params);
+                     }),
+                 );
                  continue;
-             }
-
-             // Case 2: Static Assignment (assignment is an object)
-             if assign_val.is_object() {
-                 let partial_value = js_to_value(&assign_val);
-
-                     if let Some(partial_obj) = partial_value.as_object() {
-                         let partial_obj = partial_obj.clone();
-                         actions_out.insert(key_str, Rc::new(move |ctx_mut: &mut Value, _evt: &Value, _params: &Option<Value>| {
-                             if let Some(ctx_obj) = ctx_mut.as_object_mut() { 
-                                 for (k, v) in &partial_obj {
-                                     ctx_obj.insert(k.clone(), v.clone());
-                                 }
-                             }
-                         }));
-                         continue; // handled
-                     }
              }
 
              // Fallback: Treat as function (Generic Action)
@@ -945,9 +931,24 @@ fn parse_implementations(
                      let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
                      let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("params"), &params_js);
 
-                      // Call action with ({ context, event, params })
-                      if let Err(e) = action_fn.call1(&JsValue::NULL, &arg_obj) {
-                          web_sys::console::error_2(&JsValue::from_str("Error executing generic action:"), &e);
+                     // Call action with ({ context, event, params }, params)
+                     match action_fn.call2(&JsValue::NULL, &arg_obj, &params_js) {
+                         Ok(res) => {
+                             if res.is_object() || res.is_function() {
+                                 let type_key = JsValue::from_str("type");
+                                 let type_val = js_sys::Reflect::get(&res, &type_key).unwrap_or(JsValue::UNDEFINED);
+                                 if type_val == JsValue::from_str("xstate.assign") {
+                                     let assign_key = JsValue::from_str("assignment");
+                                     let assignment = js_sys::Reflect::get(&res, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                                     if !assignment.is_undefined() {
+                                         evaluate_assignment_value(&assignment, ctx_mut, evt, params);
+                                     }
+                                 }
+                             }
+                         }
+                         Err(e) => {
+                             web_sys::console::error_2(&JsValue::from_str("Error executing generic action:"), &e);
+                         }
                      }
                  }));
              }
@@ -1123,42 +1124,8 @@ fn convert_inline_action(
              *counter += 1;
              let new_action_name = format!("generated_assign_{}", counter);
              let assign_val_clone = assign_val.clone();
-             actions_out.insert(new_action_name.clone(), Rc::new(move |ctx_mut, evt, _params| {
-                  let ctx_js = value_to_js(ctx_mut);
-                  let evt_js = value_to_js(evt);
-                  let arg_obj = js_sys::Object::new();
-                  let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
-                  let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-                  if let Ok(assign_fn) = assign_val_clone.clone().dyn_into::<js_sys::Function>() {
-                      if let Ok(res) = assign_fn.call1(&JsValue::NULL, &arg_obj) {
-                          if res.is_object() {  
-                               let partial_core = js_to_value(&res);
-                               if let Some(partial_obj) = partial_core.as_object() {
-                                   if let Some(ctx_obj) = ctx_mut.as_object_mut() { 
-                                       for (k, v) in partial_obj { ctx_obj.insert(k.clone(), v.clone()); }
-                                   }
-                               }
-                          }
-                      }
-                  } else if assign_val_clone.is_object() { 
-                      let assign_obj = js_sys::Object::from(assign_val_clone.clone());
-                      let keys = js_sys::Object::keys(&assign_obj);
-                      if let Some(ctx_obj) = ctx_mut.as_object_mut() { 
-                          for i in 0..keys.length() {
-                              let key_js = keys.get(i);
-                              let val_or_fn = js_sys::Reflect::get(&assign_obj, &key_js).unwrap_or(JsValue::UNDEFINED);
-                              let final_val_js = if let Ok(func) = val_or_fn.clone().dyn_into::<js_sys::Function>() {
-                                  match func.call1(&JsValue::NULL, &arg_obj) {
-                                      Ok(v) => v,
-                                      Err(e) => { web_sys::console::log_2(&JsValue::from_str("Error executing assign function:"), &e); JsValue::UNDEFINED }
-                                  }
-                              } else { val_or_fn };
-                              let key_str = key_js.as_string().unwrap_or_default();
-                              let final_val = js_to_value(&final_val_js);
-                              ctx_obj.insert(key_str, final_val);
-                          }
-                      }
-                  }
+             actions_out.insert(new_action_name.clone(), Rc::new(move |ctx_mut, evt, params| {
+                 evaluate_assignment_value(&assign_val_clone, ctx_mut, evt, params);
              }));
              let new_obj = js_sys::Object::new();
              let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&new_action_name));
@@ -1175,21 +1142,23 @@ fn convert_inline_action(
                   let arg_obj = js_sys::Object::new();
                   let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
                   let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-                  if let Some(p) = params {
+                  let params_js = if let Some(p) = params {
                        let p_js = value_to_js(p);
                        let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("params"), &p_js);
-                  }
-                  match func_clone.call1(&JsValue::NULL, &arg_obj) {
+                       p_js
+                  } else {
+                       JsValue::UNDEFINED
+                  };
+                  match func_clone.call2(&JsValue::NULL, &arg_obj, &params_js) {
                       Ok(res) => {
-                           if res.is_object() {  
+                           if res.is_object() || res.is_function() {
                                 let type_key = JsValue::from_str("type");
                                 let type_val = js_sys::Reflect::get(&res, &type_key).unwrap_or(JsValue::UNDEFINED);
-                                if type_val == JsValue::from_str("xstate.assign") {  
+                                if type_val == JsValue::from_str("xstate.assign") {
                                      let assign_key = JsValue::from_str("assignment");
                                      let assignment = js_sys::Reflect::get(&res, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                                     if assignment.is_object() {
-                                          let assign_obj = js_sys::Object::from(assignment);
-                                          evaluate_assignment(&assign_obj, ctx_mut, evt);
+                                     if !assignment.is_undefined() {
+                                          evaluate_assignment_value(&assignment, ctx_mut, evt, params);
                                      }
                                 }
                            }
@@ -2247,29 +2216,53 @@ fn execute_js_action(func: &js_sys::Function, ctx_mut: &mut Value, evt: &Value, 
     }
 }
 
-fn evaluate_assignment(assignment: &js_sys::Object, ctx_mut: &mut Value, evt: &Value) { 
+fn evaluate_assignment_value(
+    assignment: &JsValue,
+    ctx_mut: &mut Value,
+    evt: &Value,
+    params: &Option<Value>,
+) {
     let ctx_js = value_to_js(ctx_mut);
     let evt_js = value_to_js(evt);
+    let params_js = if let Some(p) = params {
+        value_to_js(p)
+    } else {
+        JsValue::UNDEFINED
+    };
     let arg_obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-    let keys = js_sys::Object::keys(assignment);
-    if let Some(ctx_obj_mut) = ctx_mut.as_object_mut() {
-        for k in 0..keys.length() {
-            let key_js = keys.get(k);
-            let key_str = key_js.as_string().unwrap_or_default();
-            let val_js = js_sys::Reflect::get(assignment, &key_js).unwrap_or(JsValue::UNDEFINED);
-            let final_val = if let Ok(func) = val_js.clone().dyn_into::<js_sys::Function>() {
-                if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
-                    res
-                } else {
-                    JsValue::UNDEFINED
+
+    if let Ok(assign_fn) = assignment.clone().dyn_into::<js_sys::Function>() {
+        if let Ok(res) = assign_fn.call2(&JsValue::NULL, &arg_obj, &params_js) {
+            if res.is_object() && !res.is_null() {
+                let partial_value = js_to_value(&res);
+                if let Some(partial_obj) = partial_value.as_object() {
+                    if let Some(ctx_obj) = ctx_mut.as_object_mut() {
+                        for (k, v) in partial_obj {
+                            ctx_obj.insert(k.clone(), v.clone());
+                        }
+                    }
                 }
-            } else {
-                val_js
-            };
-            let val_core = js_to_value(&final_val);
-            ctx_obj_mut.insert(key_str, val_core);
+            }
+        }
+    } else if assignment.is_object() && !assignment.is_null() {
+        let assign_obj = js_sys::Object::from(assignment.clone());
+        let keys = js_sys::Object::keys(&assign_obj);
+        if let Some(ctx_obj_mut) = ctx_mut.as_object_mut() {
+            for k in 0..keys.length() {
+                let key_js = keys.get(k);
+                let key_str = key_js.as_string().unwrap_or_default();
+                let val_js = js_sys::Reflect::get(&assign_obj, &key_js).unwrap_or(JsValue::UNDEFINED);
+                let final_val = if let Ok(func) = val_js.clone().dyn_into::<js_sys::Function>() {
+                    func.call2(&JsValue::NULL, &arg_obj, &params_js)
+                        .unwrap_or(JsValue::UNDEFINED)
+                } else {
+                    val_js
+                };
+                let val_core = js_to_value(&final_val);
+                ctx_obj_mut.insert(key_str, val_core);
+            }
         }
     }
 }
@@ -2302,10 +2295,9 @@ fn process_config(
                       if assignment.is_undefined() {
                            assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
                       }
-                      let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                           if assignment.is_object() {
-                                let assign_obj = js_sys::Object::from(assignment.clone());
-                                evaluate_assignment(&assign_obj, ctx_mut, evt);
+                      let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                           if !assignment.is_undefined() {
+                                evaluate_assignment_value(&assignment, ctx_mut, evt, params);
                            }
                       });
                       actions.insert(id.clone(), closure);
@@ -2314,9 +2306,9 @@ fn process_config(
                       let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_obj);
                       continue;
                  }
-                 let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                      let res = execute_js_action(&func, ctx_mut, evt, _params); 
-                      if res.is_object() { 
+                 let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                      let res = execute_js_action(&func, ctx_mut, evt, params); 
+                      if res.is_object() || res.is_function() { 
                            let type_key = JsValue::from_str("type");
                            let type_val = js_sys::Reflect::get(&res, &type_key).unwrap_or(JsValue::UNDEFINED);
                            if type_val == JsValue::from_str("xstate.assign") { 
@@ -2326,9 +2318,8 @@ fn process_config(
                                      assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED); 
                                 }
 
-                                if assignment.is_object() {
-                                     let assign_obj = js_sys::Object::from(assignment);
-                                     evaluate_assignment(&assign_obj, ctx_mut, evt);
+                                if !assignment.is_undefined() {
+                                     evaluate_assignment_value(&assignment, ctx_mut, evt, params);
                                 }
                            }
                       }
@@ -2356,9 +2347,9 @@ fn process_config(
                          if has_funcs {
                              *counter += 1;
                              let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                             let assignment_clone = assign_obj.clone();
-                             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                                  evaluate_assignment(&assignment_clone, ctx_mut, evt);
+                             let assignment_clone: JsValue = assign_obj.into();
+                             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                                  evaluate_assignment_value(&assignment_clone, ctx_mut, evt, params);
                              });
                              actions.insert(id.clone(), closure);
                              let new_action_obj = js_sys::Object::new();
@@ -2424,10 +2415,9 @@ fn process_config(
                               assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
                          }
                          
-                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                             if assignment.is_object() {
-                                 let assign_obj = js_sys::Object::from(assignment.clone());
-                                 evaluate_assignment(&assign_obj, ctx_mut, evt);
+                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                             if !assignment.is_undefined() {
+                                 evaluate_assignment_value(&assignment, ctx_mut, evt, params);
                              }
                          });
                          actions.insert(id.clone(), closure);
@@ -2440,9 +2430,9 @@ fn process_config(
                          *counter += 1;
                          let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
                          let func: js_sys::Function = value.clone().dyn_into().unwrap();
-                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                              let res = execute_js_action(&func, ctx_mut, evt, _params);
-                              if res.is_object() {
+                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                              let res = execute_js_action(&func, ctx_mut, evt, params);
+                              if res.is_object() || res.is_function() {
                                    let t_key = JsValue::from_str("type");
                                    let t_val = js_sys::Reflect::get(&res, &t_key).unwrap_or(JsValue::UNDEFINED);
                                    if t_val == JsValue::from_str("xstate.assign") {
@@ -2451,9 +2441,8 @@ fn process_config(
                                         if a_val.is_undefined() {
                                              a_val = js_sys::Reflect::get(&func, &a_key).unwrap_or(JsValue::UNDEFINED);
                                         }
-                                        if a_val.is_object() {
-                                             let a_obj = js_sys::Object::from(a_val);
-                                             evaluate_assignment(&a_obj, ctx_mut, evt);
+                                        if !a_val.is_undefined() {
+                                             evaluate_assignment_value(&a_val, ctx_mut, evt, params);
                                         }
                                    }
                               }
@@ -2485,9 +2474,9 @@ fn process_config(
                          if has_funcs {
                              *counter += 1;
                              let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                             let assignment_clone = assign_obj.clone();
-                             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
-                                  evaluate_assignment(&assignment_clone, ctx_mut, evt);
+                             let assignment_clone: JsValue = assign_obj.into();
+                             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                                  evaluate_assignment_value(&assignment_clone, ctx_mut, evt, params);
                              });
                              actions.insert(id.clone(), closure);
                              let new_action_obj = js_sys::Object::new();

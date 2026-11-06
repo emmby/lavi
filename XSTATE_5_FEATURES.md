@@ -20,13 +20,14 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
 | :--- | :--- | :---: | :--- |
 | `actions.test.ts` | `legacy-baseline` (`TD-2`) | 99 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
 | `after.test.ts` | `legacy-baseline` (`TD-1`) | 5 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
+| `assign.test.ts` | `strict` | 0 | [`tests/upstream/assign.test.ts`](./tests/upstream/assign.test.ts) |
 | `eventDescriptors.test.ts` | `strict` | 0 | [`tests/upstream/eventDescriptors.test.ts`](./tests/upstream/eventDescriptors.test.ts) |
 | `history.test.ts` | `strict` | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
 | `machine.test.ts` | `strict` | 1 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
 | `state.test.ts` | `strict` | 1 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
 
 ### Upstream Suites Not Yet Onboarded
-`transition.test.ts`, `parallel.test.ts`, `final.test.ts`, `guards.test.ts`, `assign.test.ts`, `raise.test.ts`, `input.test.ts`, `invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`, `json.test.ts`, `inspect.test.ts`, `meta.test.ts`, `tags.test.ts`.
+`transition.test.ts`, `parallel.test.ts`, `final.test.ts`, `guards.test.ts`, `input.test.ts`, `invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`, `json.test.ts`, `inspect.test.ts`, `meta.test.ts`, `tags.test.ts`.
 
 ---
 
@@ -89,9 +90,9 @@ This document tracks the feature set of `portable-xstate` against the XState 5 (
   - [x] Transition actions `[Rust | WASM | C/C++]`
   - [x] Initial transition actions (`initial: { target, actions }`) `[Rust | WASM | C/C++]`
   - [ ] **Built-in Actions:**
-    - [ ] `assign` (Update context) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts) — upstream `assign.test.ts` not yet onboarded)
+    - [x] `assign` (Update context) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts) — 14/14 passing in `tests/assign.test.ts`)
       - [x] Declarative object-based static assignment (`{ type: 'xstate.assign', assignment: { ... } }`) `[Rust | WASM | C/C++]`
-      - [x] Function-based and inline property assignment functions (`assign(({ context, event }) => ...)` bridged via callbacks) `[Rust | WASM]` (C/C++ `fsm_action_callback_t` currently receives `const fsm_value_t* context` read-only)
+      - [x] Function-based, inline property, and parameterized (`params`) assignment functions (`assign(({ context, event }, params) => ...)` bridged via callbacks) `[Rust | WASM]` (C/C++ `fsm_action_callback_t` currently receives `const fsm_value_t* context` read-only)
       - [x] Assignment in entry/exit/transition actions `[Rust | WASM | C/C++]`
     - [x] `raise` (Self-send internal event queued in `internal_queue`) `[Rust | WASM | C/C++]`
     - [ ] `log` (Logging action)

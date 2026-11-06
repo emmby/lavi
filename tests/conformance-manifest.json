@@ -49,6 +49,10 @@
     "eventDescriptors.test.ts": {
       "status": "strict",
       "allowed_skips": []
+    },
+    "assign.test.ts": {
+      "status": "strict",
+      "allowed_skips": []
     }
   }
 }
