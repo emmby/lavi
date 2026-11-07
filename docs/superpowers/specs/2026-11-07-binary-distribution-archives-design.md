@@ -1,7 +1,7 @@
 # Binary Distribution Archives & Release Pipeline Design
 
 **Date:** 2026-11-07
-**Status:** Draft (Pending User Approval)
+**Status:** Approved
 **Scope:** Multi-language binary packaging and automated tag-triggered publishing for **npm** (`lavi-fsm`), **crates.io** (`lavi`), **PyPI** (`lavi`), and **Maven Central** (`io.github.emmby:lavi`).
 
 ---
@@ -145,5 +145,11 @@ To provide a smooth, idiomatic developer experience across ecosystems, consumers
      - Creates/updates the **GitHub Release** with all binary archives (`.tgz`, `.whl`, `.tar.gz`, `.jar`, `.aar`, `lavi-maven-central-bundle.zip`).
      - Publishes `lavi` to **crates.io** (`CARGO_REGISTRY_TOKEN`).
      - Publishes `lavi-fsm` to **npm** (`NPM_TOKEN` / npm provenance).
-     - Publishes `lavi` wheels + sdist to **PyPI** (`PYPI_API_TOKEN` or PyPI Trusted Publishing OIDC).
+     - Publishes `lavi` wheels + sdist to **PyPI** (PyPI Trusted Publishing OIDC via `pypa/gh-action-pypi-publish`).
      - Uploads `lavi-maven-central-bundle.zip` to **Sonatype Central Portal** (`MAVEN_CENTRAL_USERNAME` + `MAVEN_CENTRAL_TOKEN`).
+     - All four registries are required when `dry_run == false` (no silent skip-if-unconfigured fallback).
+
+### 4.3 Registry Setup Guide & GPG Helper (`RELEASING.md` & `scripts/setup-maven-gpg.sh`)
+- Create `RELEASING.md` documenting one-time account/OIDC/secret setup across crates.io, PyPI, npm, and Sonatype Central Portal, plus how to cut a release (`node scripts/sync-version.mjs <X.Y.Z>` + `git tag v<X.Y.Z>` + `git push origin main --tags`).
+- Create `scripts/setup-maven-gpg.sh` to generate a PGP signing keypair, publish the public key to `keys.openpgp.org` and `keyserver.ubuntu.com`, and export the armored private key for `MAVEN_GPG_PRIVATE_KEY`.
+
