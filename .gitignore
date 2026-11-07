@@ -11,4 +11,6 @@ test-results
 *.pyd
 __pycache__/
 .pytest_cache/
+lavi-jvm/.gradle/
+lavi-jvm/build/
 

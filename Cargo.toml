@@ -4,6 +4,7 @@ members = [
     "lavi-wasm",
     "lavi-c-cpp",
     "lavi-py",
+    "lavi-jvm",
 ]
 resolver = "2"
 
