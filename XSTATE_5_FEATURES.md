@@ -54,6 +54,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
     - [x] History state persistence/revival (`historyValue`) `[Rust | WASM | C/C++]`
 - [ ] **Transitions** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/transition.test.ts) — upstream `transition.test.ts` not yet onboarded)
   - [x] Event Transitions (`on: { EVENT: ... }`) `[Rust | WASM | C/C++]`
+    - **Documented Memory Constraint (Pre-Start Event Dropping)**: Unlike XState 5 in JS (which buffers `actor.send()` calls before `actor.start()` in an unbounded heap array), `lavi` intentionally drops events sent before `start()` to prevent hardware interrupts or sensor polling before initialization from exhausting microcontroller RAM.
   - [x] Eventless Transitions (`always: [...]`) `[Rust | WASM | C/C++]`
   - [x] Targetless Transitions (internal transitions with actions only) `[Rust | WASM | C/C++]`
   - [x] Self-transitions with `reenter: true` `[Rust | WASM | C/C++]` (Partial — deep descendant reentry edge cases in `actions.test.ts` skipped)
