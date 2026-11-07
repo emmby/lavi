@@ -215,7 +215,7 @@ git commit -m "feat(packaging): add crates.io and PyPI metadata and READMEs"
 
 ## Phase 2: Unified npm & Maven Central Packaging [flowos: ba010f3c-a731-4761-b7be-7cc79e086cfc]
 
-### Task 3: Unified `lavi-fsm` npm Package Builder (`scripts/build-npm-package.mjs`) [~] [flowos: 6a9b90c0-7f68-49f6-a1ed-8a3307554c0e]
+### Task 3: Unified `lavi-fsm` npm Package Builder (`scripts/build-npm-package.mjs`) [x] [flowos: 6a9b90c0-7f68-49f6-a1ed-8a3307554c0e]
 
 **Files:**
 - Create: `scripts/build-npm-package.mjs`
@@ -230,7 +230,7 @@ git commit -m "feat(packaging): add crates.io and PyPI metadata and READMEs"
   - `assembleNpmPackageDir(options?: { rootDir?: string, outDir?: string, skipWasmBuild?: boolean }): { outDir: string, manifestPath: string, manifest: any }`
   - `npm run build:npm-dist` script in root `package.json`
 
-- [ ] **Step 1: Write the failing test in `tests/integration/build_npm_package.test.ts`**
+- [x] **Step 1: Write the failing test in `tests/integration/build_npm_package.test.ts`**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -289,21 +289,21 @@ describe('build-npm-package (lavi-fsm)', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/integration/build_npm_package.test.ts`
 Expected: FAIL with cannot find module `../../scripts/build-npm-package.mjs`
 
-- [ ] **Step 3: Implement `scripts/build-npm-package.mjs` and update `lavi-wasm/README.md` & `package.json`**
+- [x] **Step 3: Implement `scripts/build-npm-package.mjs` and update `lavi-wasm/README.md` & `package.json`**
 
 Implement `createNpmPackageManifest` and `assembleNpmPackageDir` in `scripts/build-npm-package.mjs` (running `wasm-pack build --target nodejs|bundler|web` into `dist/npm/{node,bundler,web}` when `skipWasmBuild` is false, removing nested `.gitignore` and `package.json` files, copying `lavi-wasm/README.md` and `LICENSE`, and writing `dist/npm/package.json`). Update `lavi-wasm/README.md` to reference `lavi-fsm` and add `"build:npm-dist": "node scripts/build-npm-package.mjs"` to root `package.json`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/integration/build_npm_package.test.ts`
 Expected: PASS (2 passed)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/build-npm-package.mjs package.json lavi-wasm/README.md tests/integration/build_npm_package.test.ts
@@ -312,7 +312,7 @@ git commit -m "feat(wasm): add unified lavi-fsm npm package builder for node, bu
 
 ---
 
-### Task 4: Maven Central (`io.github.emmby:lavi`) Gradle Publishing & Bundle Task [flowos: dfa00b54-746e-4eea-9c13-b1ccc2fa1506]
+### Task 4: Maven Central (`io.github.emmby:lavi`) Gradle Publishing & Bundle Task [~] [flowos: dfa00b54-746e-4eea-9c13-b1ccc2fa1506]
 
 **Files:**
 - Modify: `lavi-jvm/build.gradle.kts`
