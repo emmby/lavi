@@ -2,9 +2,9 @@
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use lavi::{RuntimeMachine, Value};
+use lavi::{RuntimeMachine, StateType, Value};
 use crate::utils::{js_to_value, value_to_js};
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 // use std::collections::BTreeMap; // Keep BTreeMap for internal maps if not critical, or move them too.
 // Actually Actor uses BTreeMap for guards/actions. XState impls order matters?
 // Probably better to switch guards/actions to IndexMap too for consistency.
@@ -17,6 +17,7 @@ pub(crate) struct InternalState {
     pub machine: RuntimeMachine,
     pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
     pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub action_descriptors: IndexMap<String, JsValue>,
 }
 
 #[wasm_bindgen]
@@ -26,7 +27,9 @@ pub struct StateNode {
     pub(crate) path: String,
     pub(crate) guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
     pub(crate) actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub(crate) action_descriptors: IndexMap<String, JsValue>,
     pub(crate) config: JsValue,
+    pub(crate) logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
 }
 
 #[wasm_bindgen]
@@ -84,6 +87,44 @@ impl StateNode {
         obj.into()
     }
 
+    #[wasm_bindgen(getter)]
+    pub fn description(&self) -> JsValue {
+        if self.path.is_empty() {
+            if let Some(ref d) = self.machine.definition.description {
+                return JsValue::from_str(d);
+            }
+        } else if let Some(def) = self.machine.get_state_definition(&self.path) {
+            if let Some(ref d) = def.description {
+                return JsValue::from_str(d);
+            }
+        }
+        JsValue::UNDEFINED
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn root(&self) -> JsValue {
+        let root_obj = js_sys::Object::new();
+        let on_obj = js_sys::Object::new();
+        for (event, transitions) in &self.machine.definition.on {
+            let t_arr = js_sys::Array::new();
+            for t in transitions {
+                let t_obj = js_sys::Object::new();
+                if let Some(ref desc) = t.description {
+                    let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("description"), &JsValue::from_str(desc));
+                }
+                t_arr.push(&t_obj);
+            }
+            let _ = js_sys::Reflect::set(&on_obj, &JsValue::from_str(event), &t_arr);
+        }
+        let _ = js_sys::Reflect::set(&root_obj, &JsValue::from_str("on"), &on_obj);
+        root_obj.into()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn definition(&self) -> JsValue {
+        serialize_root_machine_definition(&self.machine, &self.config).into()
+    }
+
 
     #[wasm_bindgen(getter)]
     pub fn version(&self) -> Option<String> {
@@ -114,6 +155,7 @@ impl StateNode {
             machine: self.machine.clone(),
             guards: self.guards.clone(),
             actions: self.actions.clone(),
+            action_descriptors: self.action_descriptors.clone(),
         };
         Box::into_raw(Box::new(state)) as usize as f64
     }
@@ -147,7 +189,139 @@ impl StateNode {
         // Do NOT sort. XState definition order.
         events_vec
     }
+}
 
+pub(crate) fn compute_history_value_obj(
+    machine: &RuntimeMachine,
+    guards: &IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    action_descriptors: &IndexMap<String, JsValue>,
+    config: &JsValue,
+    logger_holder: &Rc<RefCell<Option<js_sys::Function>>>,
+) -> JsValue {
+    let history_obj = js_sys::Object::new();
+    let active_paths = machine.current_state.get_active_paths();
+    for (id, path) in &machine.definition.id_map {
+        if let Some(def) = machine.get_state_definition(path) {
+            if matches!(def.state_type, lavi::StateType::History { .. }) {
+                let is_deep = def.history == Some(lavi::HistoryType::Deep)
+                    || matches!(def.state_type, lavi::StateType::History { deep: true });
+                let parent_path = if let Some(idx) = path.rfind('.') {
+                    &path[0..idx]
+                } else {
+                    ""
+                };
+                let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
+
+                let mut raw_paths: Vec<String> = active_paths
+                    .iter()
+                    .filter(|p| {
+                        if parent_path.is_empty() {
+                            !p.is_empty()
+                        } else {
+                            p.len() > prefix_len
+                                && p.starts_with(parent_path)
+                                && p.as_bytes().get(parent_path.len()) == Some(&b'.')
+                        }
+                    })
+                    .cloned()
+                    .collect();
+
+                if raw_paths.is_empty() {
+                    if let Some(stored) = machine.history_value.get(parent_path) {
+                        let stored_paths = stored.get_active_paths();
+                        let matching_stored: Vec<String> = stored_paths
+                            .iter()
+                            .filter(|p| {
+                                if parent_path.is_empty() {
+                                    !p.is_empty()
+                                } else {
+                                    p.len() > prefix_len
+                                        && p.starts_with(parent_path)
+                                        && p.as_bytes().get(parent_path.len()) == Some(&b'.')
+                                }
+                            })
+                            .cloned()
+                            .collect();
+                        if !matching_stored.is_empty() {
+                            raw_paths = matching_stored;
+                        } else {
+                            raw_paths = stored_paths
+                                .into_iter()
+                                .filter(|p| !p.is_empty())
+                                .collect();
+                        }
+                    }
+                }
+
+                let mut targets_to_serialize: Vec<String> = Vec::new();
+                for raw_path in raw_paths {
+                    let target_path = if is_deep {
+                        raw_path
+                    } else if raw_path.len() > prefix_len {
+                        let rest = &raw_path[prefix_len..];
+                        let child = if let Some(end) = rest.find('.') {
+                            &rest[..end]
+                        } else {
+                            rest
+                        };
+                        if parent_path.is_empty() {
+                            child.to_string()
+                        } else {
+                            format!("{}.{}", parent_path, child)
+                        }
+                    } else {
+                        raw_path
+                    };
+                    if !targets_to_serialize.contains(&target_path) {
+                        targets_to_serialize.push(target_path);
+                    }
+                }
+
+                if !machine.history_value.contains_key(parent_path)
+                    && def.history_target.is_none()
+                {
+                    if let Some(p_def) = machine.get_state_definition(parent_path) {
+                        if let Some(initial_key) = &p_def.initial {
+                            let full_initial = if parent_path.is_empty() {
+                                initial_key.clone()
+                            } else {
+                                format!("{}.{}", parent_path, initial_key)
+                            };
+                            if targets_to_serialize.len() == 1
+                                && targets_to_serialize[0] == full_initial
+                            {
+                                targets_to_serialize.clear();
+                            }
+                        }
+                    }
+                }
+
+                if !targets_to_serialize.is_empty() {
+                    let entry_arr = js_sys::Array::new();
+                    for target_path in targets_to_serialize {
+                        let node = StateNode {
+                            machine: machine.clone(),
+                            path: target_path,
+                            guards: guards.clone(),
+                            actions: actions.clone(),
+                            action_descriptors: action_descriptors.clone(),
+                            config: config.clone(),
+                            logger_holder: logger_holder.clone(),
+                        };
+                        let node_val: JsValue = node.into();
+                        entry_arr.push(&node_val);
+                    }
+                    let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(id), &entry_arr);
+                }
+            }
+        }
+    }
+    history_obj.into()
+}
+
+#[wasm_bindgen]
+impl StateNode {
     #[wasm_bindgen(js_name = resolveState)]
     pub fn resolve_state(&self, state_val_obj: JsValue) -> JsValue {
         let value_key = JsValue::from_str("value");
@@ -156,80 +330,80 @@ impl StateNode {
         } else {
             state_val_obj.clone()
         };
-
-        // Determine start state key
-        let start_key = if let Some(s) = val.as_string() {
-            s
+        let context_key = JsValue::from_str("context");
+        let ctx = if state_val_obj.is_object() {
+            js_sys::Reflect::get(&state_val_obj, &context_key).unwrap_or(JsValue::UNDEFINED)
         } else {
-             // If val is not a string, it might be an object (compound value). 
-             // We should inspect it. But for now fallback to initial.
-             self.machine.definition.initial.clone()
+            JsValue::UNDEFINED
         };
 
-        let resolved = self.resolve_state_from_key(&start_key, &self.machine.definition.states);
-        let state_obj = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("value"), &resolved);
-        // Debug
-        // let _ = web_sys::console::log_2(&JsValue::from_str("Resolved Value:"), &resolved);
+        let resolved = if val.is_object() && !val.is_null() && !val.is_string() {
+            let val_obj = js_sys::Object::from(val.clone());
+            if matches!(self.machine.definition.state_type, StateType::Parallel) {
+                let resolved_obj = js_sys::Object::new();
+                for (r_name, r_def) in &self.machine.definition.states {
+                    if matches!(r_def.state_type, StateType::History { .. }) || r_def.history.is_some() {
+                        continue;
+                    }
+                    let r_key = JsValue::from_str(r_name);
+                    let existing = js_sys::Reflect::get(&val_obj, &r_key).unwrap_or(JsValue::UNDEFINED);
+                    if !existing.is_undefined() {
+                        let _ = js_sys::Reflect::set(&resolved_obj, &r_key, &existing);
+                    } else if r_def.states.is_empty() {
+                        let _ = js_sys::Reflect::set(&resolved_obj, &r_key, &js_sys::Object::new());
+                    } else if let Some(init) = &r_def.initial {
+                        let _ = js_sys::Reflect::set(&resolved_obj, &r_key, &JsValue::from_str(init));
+                    }
+                }
+                resolved_obj.into()
+            } else {
+                val.clone()
+            }
+        } else {
+            let start_key = if let Some(s) = val.as_string() {
+                s
+            } else {
+                self.machine.definition.initial.clone()
+            };
+            self.resolve_state_from_key(&start_key, &self.machine.definition.states)
+        };
 
-        // Check if final
-        // To do this, we need the definition of the Resolved state(s).
-        // Since resolved value can be complex, it's hard to map back to single definition.
-        // But for this test, value is "bar", definition "bar" has type "final".
-        let is_done = self.is_state_done(&val, &self.machine.definition.states);
-        if is_done {
-             let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("status"), &JsValue::from_str("done"));
+        let mut final_machine = self.machine.clone();
+        if let Ok(json_str) = js_sys::JSON::stringify(&resolved) {
+            if let Some(s) = json_str.as_string() {
+                let _ = final_machine.restore_from_snapshot_json(&format!(r#"{{"value": {}}}"#, s));
+            }
+        }
+        if ctx.is_object() && !ctx.is_null() {
+            final_machine.context = js_to_value(&ctx);
         }
 
-        // Expose history value for testing? 
-        // Although the test checks `snapshot.historyValue`.
-        // So we should expose it.
-        let history_obj = js_sys::Object::new();
-        for (k, v) in &self.machine.history_value {
-             let path_str = v.get_active_paths().first().cloned().unwrap_or_default();
-             let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(k), &JsValue::from_str(&path_str));
-        }
-        let _ = js_sys::Reflect::set(&state_obj, &JsValue::from_str("historyValue"), &history_obj);
+        let history_obj = compute_history_value_obj(
+            &final_machine,
+            &self.guards,
+            &self.actions,
+            &self.action_descriptors,
+            &self.config,
+            &self.logger_holder,
+        );
 
-        state_obj.into()
-    }
+        let output_val = if final_machine.is_done() {
+            Actor::compute_output_js(&self.config, &final_machine, &if ctx.is_object() && !ctx.is_null() { ctx.clone() } else { js_sys::Object::new().into() })
+        } else {
+            JsValue::UNDEFINED
+        };
 
-    fn is_state_done(&self, val: &JsValue, states: &IndexMap<String, lavi::StateDefinition>) -> bool {
-         if let Some(key) = val.as_string() {
-              if let Some(def) = states.get(&key) {
-                   return def.state_type == lavi::StateType::Final;
-              }
-         } else if val.is_object() {
-              // Compound/Parallel value { key: child_val }
-              let obj = js_sys::Object::from(val.clone());
-              let keys = js_sys::Object::keys(&obj);
-              // If empty object?
-              if keys.length() == 0 { return false; }
-
-              // For Compound state (one key): Parent is done if child is done + matches final state of parent?
-              // No, parent is done if it is in a final substate.
-              // Logic check:
-              //   If resolving state value, we have { foo: 'bar' }.
-              //   Is 'foo' done? 'foo' is compound. Child 'bar' is active.
-              //   If 'bar' is final, then 'foo' is done.
-              //   If Parallel: All regions must be done.
-              let mut all_done = true;
-              for i in 0..keys.length() {
-                  let k = keys.get(i).as_string().unwrap_or_default();
-                  let v = js_sys::Reflect::get(&obj, &JsValue::from_str(&k)).unwrap();
-                  if let Some(def) = states.get(&k) {
-                       // Recurse
-                       if !self.is_state_done(&v, &def.states) {
-                           all_done = false;
-                           break;
-                       }
-                  } else {
-                       all_done = false;
-                  }
-              }
-              return all_done;
-         }
-         false
+        Snapshot {
+            value: resolved,
+            context: if ctx.is_object() && !ctx.is_null() { ctx } else { js_sys::Object::new().into() },
+            status: if final_machine.is_done() { "done".to_string() } else { "active".to_string() },
+            machine_ref: final_machine,
+            guards: self.guards.clone(),
+            history_value: history_obj,
+            config: self.config.clone(),
+            output: output_val,
+            error: JsValue::UNDEFINED,
+        }.into()
     }
 
     fn resolve_state_from_key(&self, key: &str, states: &IndexMap<String, lavi::StateDefinition>) -> JsValue {
@@ -273,7 +447,8 @@ impl StateNode {
     pub fn provide(&self, implementations: JsValue, context: Option<JsValue>) -> Result<StateNode, JsValue> {
          let mut new_machine = self.clone_machine(); 
          // Parse implementations and merge
-         parse_implementations(&implementations, &mut new_machine.guards, &mut new_machine.actions);
+         parse_implementations(&implementations, &mut new_machine.guards, &mut new_machine.actions, &mut new_machine.machine.actions_with_effects);
+         parse_and_register_delays(&implementations, &mut new_machine.machine);
 
          // Handle context override (second argument)
          if let Some(ctx_val) = context {
@@ -290,7 +465,9 @@ impl StateNode {
             path: self.path.clone(),
             guards: self.guards.clone(),
             actions: self.actions.clone(),
+            action_descriptors: self.action_descriptors.clone(),
             config: self.config.clone(),
+            logger_holder: self.logger_holder.clone(),
         }
     }
 
@@ -373,6 +550,9 @@ fn map_state_map(
         let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("key"), &JsValue::from_str(key));
         let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("id"), &JsValue::from_str(&state_id));
         let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("config"), &state_config);
+        if let Some(desc) = &def.description {
+            let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("description"), &JsValue::from_str(desc));
+        }
         // initial
         if let Some(init) = &def.initial {
              let _ = js_sys::Reflect::set(&state_node, &JsValue::from_str("initial"), &JsValue::from_str(init));
@@ -425,6 +605,257 @@ fn map_state_map(
     obj.into()
 }
 
+fn serialize_state_node_definition(
+    key: &str,
+    parent_id: &str,
+    order: usize,
+    def: &lavi::StateDefinition,
+    config: &JsValue,
+) -> js_sys::Object {
+    let obj = js_sys::Object::new();
+    let state_id = if let Some(ref id) = def.id {
+        id.clone()
+    } else if parent_id.is_empty() || parent_id == "(machine)" {
+        if key == "(machine)" {
+            "(machine)".to_string()
+        } else {
+            format!("(machine).{}", key)
+        }
+    } else {
+        format!("{}.{}", parent_id, key)
+    };
+
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_str(&state_id));
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("key"), &JsValue::from_str(key));
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("order"), &JsValue::from_f64(order as f64));
+
+    let type_str = match def.state_type {
+        lavi::StateType::Atomic => "atomic",
+        lavi::StateType::Compound => "compound",
+        lavi::StateType::Parallel => "parallel",
+        lavi::StateType::Final => "final",
+        lavi::StateType::History { .. } => "history",
+    };
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str(type_str));
+
+    if let Some(ref d) = def.description {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("description"), &JsValue::from_str(d));
+    }
+
+    // invoke
+    if config.is_object() {
+        let inv_val = js_sys::Reflect::get(config, &JsValue::from_str("invoke")).unwrap_or(JsValue::UNDEFINED);
+        if !inv_val.is_undefined() {
+            let inv_arr = js_sys::Array::new();
+            if js_sys::Array::is_array(&inv_val) {
+                let raw_arr = js_sys::Array::from(&inv_val);
+                for i in 0..raw_arr.length() {
+                    let item = raw_arr.get(i);
+                    if item.is_object() {
+                        let inv_obj = js_sys::Object::new();
+                        let src = js_sys::Reflect::get(&item, &JsValue::from_str("src")).unwrap_or(JsValue::UNDEFINED);
+                        let id = js_sys::Reflect::get(&item, &JsValue::from_str("id")).unwrap_or(JsValue::UNDEFINED);
+                        let t = js_sys::Reflect::get(&item, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
+                        let t_final = if t.is_string() { t } else { JsValue::from_str("xstate.invoke") };
+                        let _ = js_sys::Reflect::set(&inv_obj, &JsValue::from_str("type"), &t_final);
+                        let _ = js_sys::Reflect::set(&inv_obj, &JsValue::from_str("id"), &id);
+                        let _ = js_sys::Reflect::set(&inv_obj, &JsValue::from_str("src"), &src);
+                        inv_arr.push(&inv_obj);
+                    }
+                }
+            } else if inv_val.is_object() {
+                let inv_obj = js_sys::Object::new();
+                let src = js_sys::Reflect::get(&inv_val, &JsValue::from_str("src")).unwrap_or(JsValue::UNDEFINED);
+                let id = js_sys::Reflect::get(&inv_val, &JsValue::from_str("id")).unwrap_or(JsValue::UNDEFINED);
+                let _ = js_sys::Reflect::set(&inv_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.invoke"));
+                let _ = js_sys::Reflect::set(&inv_obj, &JsValue::from_str("id"), &id);
+                let _ = js_sys::Reflect::set(&inv_obj, &JsValue::from_str("src"), &src);
+                inv_arr.push(&inv_obj);
+            }
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("invoke"), &inv_arr);
+        }
+    }
+
+    // entry & exit
+    for action_key in &["entry", "exit"] {
+        if config.is_object() {
+            let act_val = js_sys::Reflect::get(config, &JsValue::from_str(action_key)).unwrap_or(JsValue::UNDEFINED);
+            if !act_val.is_undefined() {
+                let act_arr = js_sys::Array::new();
+                let raw_items = if js_sys::Array::is_array(&act_val) {
+                    js_sys::Array::from(&act_val)
+                } else {
+                    let a = js_sys::Array::new();
+                    a.push(&act_val);
+                    a
+                };
+                for i in 0..raw_items.length() {
+                    let item = raw_items.get(i);
+                    let a_obj = js_sys::Object::new();
+                    if item.is_string() {
+                        let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &item);
+                    } else if item.is_function() {
+                        let func = js_sys::Function::from(item);
+                        let fn_name: String = func.name().into();
+                        let t_name = if fn_name.is_empty() { "(anonymous)" } else { &fn_name };
+                        let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &JsValue::from_str(t_name));
+                    } else if item.is_object() {
+                        let t = js_sys::Reflect::get(&item, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
+                        let t_final = if t.is_string() { t } else { JsValue::from_str("xstate.action") };
+                        let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &t_final);
+                    }
+                    act_arr.push(&a_obj);
+                }
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(action_key), &act_arr);
+            }
+        }
+    }
+
+    // on transitions
+    let on_obj = js_sys::Object::new();
+    if config.is_object() {
+        let config_on = js_sys::Reflect::get(config, &JsValue::from_str("on")).unwrap_or(JsValue::UNDEFINED);
+        if config_on.is_object() {
+            let keys = js_sys::Object::keys(&js_sys::Object::from(config_on.clone()));
+            for i in 0..keys.length() {
+                let ev = keys.get(i);
+                let tr_val = js_sys::Reflect::get(&config_on, &ev).unwrap_or(JsValue::UNDEFINED);
+                let tr_arr = js_sys::Array::new();
+                let raw_trs = if js_sys::Array::is_array(&tr_val) {
+                    js_sys::Array::from(&tr_val)
+                } else {
+                    let a = js_sys::Array::new();
+                    a.push(&tr_val);
+                    a
+                };
+                for j in 0..raw_trs.length() {
+                    let raw_t = raw_trs.get(j);
+                    let t_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("eventType"), &ev);
+                    let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("source"), &JsValue::from_str(&state_id));
+                    let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("actions"), &js_sys::Array::new());
+                    let target_arr = js_sys::Array::new();
+                    if raw_t.is_string() {
+                        let t_str = raw_t.as_string().unwrap_or_default();
+                        target_arr.push(&JsValue::from_str(&format!("(machine).{}", t_str)));
+                    } else if raw_t.is_object() {
+                        let t_target = js_sys::Reflect::get(&raw_t, &JsValue::from_str("target")).unwrap_or(JsValue::UNDEFINED);
+                        if t_target.is_string() {
+                            let t_str = t_target.as_string().unwrap_or_default();
+                            target_arr.push(&JsValue::from_str(&format!("(machine).{}", t_str)));
+                        } else if js_sys::Array::is_array(&t_target) {
+                            let arr = js_sys::Array::from(&t_target);
+                            for k in 0..arr.length() {
+                                let el = arr.get(k);
+                                if let Some(s) = el.as_string() {
+                                    target_arr.push(&JsValue::from_str(&format!("(machine).{}", s)));
+                                }
+                            }
+                        }
+                    }
+                    let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("target"), &target_arr);
+                    tr_arr.push(&t_obj);
+                }
+                let _ = js_sys::Reflect::set(&on_obj, &ev, &tr_arr);
+            }
+        }
+    }
+    // Schema requires "on" for atomic states!
+    if type_str == "atomic" || js_sys::Object::keys(&on_obj).length() > 0 {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("on"), &on_obj);
+    }
+
+    // Compound or Parallel: states
+    if matches!(def.state_type, lavi::StateType::Compound | lavi::StateType::Parallel) || !def.states.is_empty() {
+        let states_obj = js_sys::Object::new();
+        let child_config_map = if config.is_object() {
+            js_sys::Reflect::get(config, &JsValue::from_str("states")).unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        };
+        for (i, (c_key, c_def)) in def.states.iter().enumerate() {
+            let c_config = if child_config_map.is_object() {
+                js_sys::Reflect::get(&child_config_map, &JsValue::from_str(c_key)).unwrap_or(JsValue::UNDEFINED)
+            } else {
+                JsValue::UNDEFINED
+            };
+            let c_node_obj = serialize_state_node_definition(c_key, &state_id, i, c_def, &c_config);
+            let _ = js_sys::Reflect::set(&states_obj, &JsValue::from_str(c_key), &c_node_obj);
+        }
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("states"), &states_obj);
+
+        if let Some(ref init_str) = def.initial {
+            let init_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&init_obj, &JsValue::from_str("actions"), &js_sys::Array::new());
+            let _ = js_sys::Reflect::set(&init_obj, &JsValue::from_str("source"), &JsValue::from_str(&state_id));
+            let targets = js_sys::Array::new();
+            targets.push(&JsValue::from_str(&format!("{}.{}", state_id, init_str)));
+            let _ = js_sys::Reflect::set(&init_obj, &JsValue::from_str("target"), &targets);
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("initial"), &init_obj);
+        }
+    }
+
+    // History
+    if matches!(def.state_type, lavi::StateType::History { .. }) || def.history.is_some() {
+        let hist_type = match def.history {
+            Some(lavi::HistoryType::Deep) => "deep",
+            _ => "shallow",
+        };
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("history"), &JsValue::from_str(hist_type));
+    }
+
+    // Final: data
+    if matches!(def.state_type, lavi::StateType::Final) && config.is_object() {
+        let data_val = js_sys::Reflect::get(config, &JsValue::from_str("data")).unwrap_or(JsValue::UNDEFINED);
+        if data_val.is_object() {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("data"), &data_val);
+        }
+    }
+
+
+    obj
+}
+
+fn serialize_root_machine_definition(
+    machine: &lavi::RuntimeMachine,
+    config: &JsValue,
+) -> js_sys::Object {
+    let machine_id = if machine.definition.id.is_empty() {
+        "(machine)".to_string()
+    } else {
+        machine.definition.id.clone()
+    };
+    let mut root_after = IndexMap::new();
+    for (d, t) in &machine.definition.after {
+        if let lavi::Delay::Literal(m) = d {
+            root_after.insert(*m, t.clone());
+        }
+    }
+    let mut root_def = lavi::StateDefinition::default();
+    root_def.state_type = machine.definition.state_type.clone();
+    root_def.initial = if machine.definition.initial.is_empty() { None } else { Some(machine.definition.initial.clone()) };
+    root_def.states = machine.definition.states.clone();
+    root_def.on = machine.definition.on.clone();
+    root_def.after = root_after;
+    root_def.entry = machine.definition.entry.clone();
+    root_def.exit = machine.definition.exit.clone();
+    root_def.description = machine.definition.description.clone();
+    root_def.meta = machine.definition.meta.clone();
+    root_def.output = machine.definition.output.clone();
+    let obj = serialize_state_node_definition(&machine_id, "", 0, &root_def, config);
+    if config.is_object() {
+        let ver = js_sys::Reflect::get(config, &JsValue::from_str("version")).unwrap_or(JsValue::UNDEFINED);
+        if !ver.is_undefined() {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("version"), &ver);
+        }
+        let ctx = js_sys::Reflect::get(config, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
+        if ctx.is_object() {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("context"), &ctx);
+        }
+    }
+    obj
+}
+
 #[wasm_bindgen]
 pub struct SetupObject {
     config: JsValue,
@@ -447,19 +878,22 @@ impl SetupObject {
                  runtime_machine.definition.types = Some(schemas);
              }
          }
-         let machine = runtime_machine;
 
          let mut guards = runner.guards.clone();
          let mut actions = runner.actions.clone();
          // Parse config
-         parse_implementations(&self.config, &mut guards, &mut actions);
+         parse_implementations(&self.config, &mut guards, &mut actions, &mut runtime_machine.actions_with_effects);
+         parse_and_register_delays(&self.config, &mut runtime_machine);
+         let machine = runtime_machine;
 
          Ok(StateNode {
              machine,
              path: "".to_string(),
              guards,
              actions,
+             action_descriptors: runner.action_descriptors.clone(),
              config: val,
+             logger_holder: runner.logger_holder.clone(),
          })
     }
 }
@@ -527,22 +961,93 @@ pub fn assign(assignment: JsValue) -> JsValue {
 }
 
 #[wasm_bindgen]
+pub fn and(guards: JsValue) -> JsValue {
+    let func = js_sys::Function::new_no_args("throw new Error(\"This isn't supposed to be called\");");
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.and"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("guards"), &guards);
+    func.into()
+}
+
+#[wasm_bindgen]
+pub fn or(guards: JsValue) -> JsValue {
+    let func = js_sys::Function::new_no_args("throw new Error(\"This isn't supposed to be called\");");
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.or"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("guards"), &guards);
+    func.into()
+}
+
+#[wasm_bindgen]
+pub fn not(guard: JsValue) -> JsValue {
+    let func = js_sys::Function::new_no_args("throw new Error(\"This isn't supposed to be called\");");
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.not"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("guard"), &guard);
+    let arr = js_sys::Array::new();
+    arr.push(&guard);
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("guards"), &arr);
+    func.into()
+}
+
+#[wasm_bindgen(js_name = stateIn)]
+pub fn state_in(state_value: JsValue) -> JsValue {
+    let func = js_sys::Function::new_no_args("throw new Error(\"This isn't supposed to be called\");");
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.stateIn"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("stateValue"), &state_value);
+    func.into()
+}
+
+#[wasm_bindgen]
+pub fn cancel(id: String) -> JsValue {
+    let func = js_sys::Function::new_no_args("return undefined;");
+    let params_obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("sendId"), &JsValue::from_str(&id));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.cancel"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("sendId"), &JsValue::from_str(&id));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("params"), &params_obj);
+    func.into()
+}
+
+#[wasm_bindgen]
+pub fn log(value_or_expr: JsValue, label: Option<String>) -> JsValue {
+    let func = js_sys::Function::new_no_args("return undefined;");
+    let params_obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("value"), &value_or_expr);
+    if let Some(ref l) = label {
+        let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("label"), &JsValue::from_str(l));
+        let _ = js_sys::Reflect::set(&func, &JsValue::from_str("label"), &JsValue::from_str(l));
+    }
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.log"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("value"), &value_or_expr);
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("params"), &params_obj);
+    func.into()
+}
+
+#[wasm_bindgen(js_name = enqueueActions)]
+pub fn enqueue_actions(collect: js_sys::Function) -> JsValue {
+    let func = js_sys::Function::new_no_args("return undefined;");
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.enqueueActions"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("collect"), &collect);
+    func.into()
+}
+
+#[wasm_bindgen]
 pub fn raise(event: JsValue, options: Option<JsValue>) -> JsValue {
+    if event.is_string() {
+        let str_val = event.as_string().unwrap_or_default();
+        let func = js_sys::Function::new_no_args("return undefined;");
+        let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise.invalid"));
+        let err_msg = format!("Only event objects may be used with raise; use raise({{ type: \"{}\" }}) instead", str_val);
+        let _ = js_sys::Reflect::set(&func, &JsValue::from_str("error"), &JsValue::from_str(&err_msg));
+        return func.into();
+    }
     let obj = js_sys::Object::new();
     let type_key = JsValue::from_str("type");
     let params_key = JsValue::from_str("params");
 
-    let mut has_delay = false;
     let params_obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &event);
     if let Some(opts) = options {
         if opts.is_object() && !opts.is_null() {
             let opts_obj = js_sys::Object::from(opts);
-            let delay_key = JsValue::from_str("delay");
-            let delay_val = js_sys::Reflect::get(&opts_obj, &delay_key).unwrap_or(JsValue::UNDEFINED);
-            if !delay_val.is_undefined() {
-                has_delay = true;
-            }
             let keys = js_sys::Object::keys(&opts_obj);
             for i in 0..keys.length() {
                 let k = keys.get(i);
@@ -554,13 +1059,54 @@ pub fn raise(event: JsValue, options: Option<JsValue>) -> JsValue {
     }
     let _ = js_sys::Reflect::set(&obj, &params_key, &params_obj);
 
-    if has_delay {
-        let _ = js_sys::Reflect::set(&obj, &type_key, &JsValue::from_str("xstate.raise.delayed"));
-    } else {
-        let _ = js_sys::Reflect::set(&obj, &type_key, &JsValue::from_str("xstate.raise"));
-    }
+    let _ = js_sys::Reflect::set(&obj, &type_key, &JsValue::from_str("xstate.raise"));
 
     obj.into()
+}
+
+#[wasm_bindgen]
+pub fn emit(event_expr: JsValue) -> JsValue {
+    let func = js_sys::Function::new_no_args("return undefined;");
+    let params_obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &event_expr);
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("type"), &JsValue::from_str("xstate.emit"));
+    let _ = js_sys::Reflect::set(&func, &JsValue::from_str("params"), &params_obj);
+    func.into()
+}
+
+fn check_initial_entry_guards(runner: &Actor) {
+    if runner.guards.is_empty() {
+        return;
+    }
+    let init_event = Value::Object(lavi::indexmap! { "type".to_string() => Value::String("xstate.init".to_string()) });
+    for action in &runner.machine.definition.entry {
+        let name = match action {
+            lavi::Action::Named(s) => s.as_str(),
+            lavi::Action::Generic(g) => g.action_type.as_str(),
+            _ => "",
+        };
+        if name.starts_with("auto_action_enqueue_root_") {
+            if let Some(f) = runner.machine.actions_with_effects.get(name) {
+                let mut dummy_ctx = runner.machine.context.clone();
+                let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
+                snapshot_actions.insert(
+                    "__lavi_snapshot_mode__".to_string(),
+                    Rc::new(|_, _, _| {}),
+                );
+                let mut dummy_effects = lavi::ActionEffects::new();
+                f(
+                    &mut dummy_ctx,
+                    &init_event,
+                    &None,
+                    &snapshot_actions,
+                    &runner.guards,
+                    &runner.machine.delays,
+                    &runner.machine.current_state,
+                    &mut dummy_effects,
+                );
+            }
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -578,6 +1124,11 @@ impl StateNode {
             is_initialized: false,
             shared_state: Rc::new(RefCell::new(None)),
             tick_override: tick_override.clone(),
+            logger: None,
+            logger_holder: self.logger_holder.clone(),
+            input_js: None,
+            initialization_error: None,
+            action_descriptors: self.action_descriptors.clone(),
         };
         runner.sync_tracked_entry_exit(&self.config);
 
@@ -589,6 +1140,40 @@ impl StateNode {
             web_sys::console::warn_1(&JsValue::from_str(msg));
         }));
 
+        configure_logger(&options, &mut runner);
+        parse_and_register_delays(&options, &mut runner.machine);
+
+        let input_val = if options.is_object() {
+            js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        };
+        if !input_val.is_undefined() {
+            runner.input_js = Some(input_val.clone());
+            runner.machine.input = Some(js_to_value(&input_val));
+        }
+
+        if self.config.is_object() {
+             let context_key = JsValue::from_str("context");
+             let context_val = js_sys::Reflect::get(&self.config, &context_key).unwrap_or(JsValue::UNDEFINED);
+             if context_val.is_function() {
+                 if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+                     let arg_obj = js_sys::Object::new();
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &input_val);
+                     let self_obj = js_sys::Object::new();
+                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
+                     match func.call1(&JsValue::NULL, &arg_obj) {
+                         Ok(res) => {
+                             runner.machine.context = js_to_value(&res);
+                         }
+                         Err(err) => {
+                             runner.initialization_error = Some(err);
+                         }
+                     }
+                 }
+             }
+        }
+
         // Apply options
         if options.is_object() {
              let inspect_key = JsValue::from_str("inspect");
@@ -597,11 +1182,16 @@ impl StateNode {
                   let func: js_sys::Function = inspect_val.dyn_into().unwrap();
                   runner.set_inspector(func);
              }
+             let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
+             if !context_opt.is_undefined() {
+                 runner.machine.context = js_to_value(&context_opt);
+             }
              runner.restore_snapshot_option(&options)?;
-             parse_implementations(&options, &mut runner.guards, &mut runner.actions);
+             parse_implementations(&options, &mut runner.guards, &mut runner.actions, &mut runner.machine.actions_with_effects);
              runner.apply_clock_option(&options);
         }
 
+        check_initial_entry_guards(&runner);
         runner.push_shared();
         Ok(runner)
     }
@@ -760,6 +1350,13 @@ pub(crate) struct SharedActorState {
     pub host_clock: Option<JsValue>,
     pub is_simulated_clock: bool,
     pub active_timeout: Option<ActiveTimeout>,
+    pub cached_output: Option<JsValue>,
+    pub is_completed_emitted: bool,
+    pub logger: Option<js_sys::Function>,
+    pub logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
+    pub input_js: Option<JsValue>,
+    pub initialization_error: Option<JsValue>,
+    pub action_descriptors: IndexMap<String, JsValue>,
 }
 
 fn resolve_host_clock(custom_clock: Option<&JsValue>) -> Option<(js_sys::Function, js_sys::Function)> {
@@ -789,11 +1386,183 @@ pub struct Actor {
     pub(crate) inspector: Option<js_sys::Function>,
     pub(crate) guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
     pub(crate) actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub(crate) action_descriptors: IndexMap<String, JsValue>,
     pub(crate) config: JsValue,
     pub is_stopped: bool,
     pub(crate) is_initialized: bool,
     pub(crate) shared_state: Rc<RefCell<Option<SharedActorState>>>,
     pub(crate) tick_override: Rc<core::cell::Cell<Option<u64>>>,
+    pub(crate) logger: Option<js_sys::Function>,
+    pub(crate) logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
+    pub(crate) input_js: Option<JsValue>,
+    pub(crate) initialization_error: Option<JsValue>,
+}
+
+fn evaluate_guard_entry(
+    guard_item: &JsValue,
+    guards_map: &js_sys::Object,
+    arg_obj: &JsValue,
+    params_js: &JsValue,
+    depth: usize,
+) -> Result<bool, String> {
+    if depth > 50 {
+        return Ok(false);
+    }
+    if guard_item.is_string() {
+        let name = guard_item.as_string().unwrap();
+        let target = js_sys::Reflect::get(guards_map, &JsValue::from_str(&name)).unwrap_or(JsValue::UNDEFINED);
+        if target.is_undefined() {
+            return Err(name);
+        }
+        return evaluate_guard_entry(&target, guards_map, arg_obj, &JsValue::UNDEFINED, depth + 1);
+    }
+    let type_key = JsValue::from_str("type");
+    let guard_type = js_sys::Reflect::get(guard_item, &type_key)
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+
+    if guard_type == "xstate.and" {
+        let guards_key = JsValue::from_str("guards");
+        let children = js_sys::Reflect::get(guard_item, &guards_key).unwrap_or(JsValue::UNDEFINED);
+        if js_sys::Array::is_array(&children) {
+            let arr = js_sys::Array::from(&children);
+            for i in 0..arr.length() {
+                let child = arr.get(i);
+                match evaluate_guard_entry(&child, guards_map, arg_obj, &JsValue::UNDEFINED, depth + 1) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(false),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        return Ok(true);
+    }
+
+    if guard_type == "xstate.or" {
+        let guards_key = JsValue::from_str("guards");
+        let children = js_sys::Reflect::get(guard_item, &guards_key).unwrap_or(JsValue::UNDEFINED);
+        if js_sys::Array::is_array(&children) {
+            let arr = js_sys::Array::from(&children);
+            for i in 0..arr.length() {
+                let child = arr.get(i);
+                match evaluate_guard_entry(&child, guards_map, arg_obj, &JsValue::UNDEFINED, depth + 1) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        return Ok(false);
+    }
+
+    if guard_type == "xstate.not" {
+        let guard_key = JsValue::from_str("guard");
+        let mut inner = js_sys::Reflect::get(guard_item, &guard_key).unwrap_or(JsValue::UNDEFINED);
+        if inner.is_undefined() {
+            let guards_key = JsValue::from_str("guards");
+            if let Ok(g_val) = js_sys::Reflect::get(guard_item, &guards_key) {
+                if js_sys::Array::is_array(&g_val) {
+                    let arr = js_sys::Array::from(&g_val);
+                    if arr.length() > 0 { inner = arr.get(0); }
+                }
+            }
+        }
+        match evaluate_guard_entry(&inner, guards_map, arg_obj, &JsValue::UNDEFINED, depth + 1) {
+            Ok(b) => return Ok(!b),
+            Err(e) => return Err(e),
+        }
+    }
+
+    if guard_item.is_object() && !guard_item.is_null() && !guard_item.is_function() && !guard_type.is_empty() {
+        let params_key = JsValue::from_str("params");
+        let mut obj_params = js_sys::Reflect::get(guard_item, &params_key).unwrap_or(JsValue::UNDEFINED);
+        if obj_params.is_function() {
+            let func: js_sys::Function = obj_params.dyn_into().unwrap();
+            obj_params = func.call1(&JsValue::NULL, arg_obj).unwrap_or(JsValue::UNDEFINED);
+        }
+        let target = js_sys::Reflect::get(guards_map, &JsValue::from_str(&guard_type)).unwrap_or(JsValue::UNDEFINED);
+        if target.is_undefined() {
+            return Err(guard_type);
+        }
+        return evaluate_guard_entry(&target, guards_map, arg_obj, &obj_params, depth + 1);
+    }
+
+    if let Ok(func) = guard_item.clone().dyn_into::<js_sys::Function>() {
+        let res = func.call2(&JsValue::NULL, arg_obj, params_js).unwrap_or(JsValue::FALSE);
+        return Ok(res.as_bool().unwrap_or(false));
+    }
+
+    Ok(false)
+}
+
+fn parse_and_register_delays(options: &JsValue, machine: &mut RuntimeMachine) {
+    if !options.is_object() || options.is_null() {
+        return;
+    }
+    let delays_key = JsValue::from_str("delays");
+    let delays_val = js_sys::Reflect::get(options, &delays_key).unwrap_or(JsValue::UNDEFINED);
+    if !delays_val.is_object() || delays_val.is_null() {
+        return;
+    }
+    let delays_obj = js_sys::Object::from(delays_val);
+    let keys = js_sys::Object::keys(&delays_obj);
+    for i in 0..keys.length() {
+        let k = keys.get(i);
+        let k_str = k.as_string().unwrap_or_default();
+        let d_val = js_sys::Reflect::get(&delays_obj, &k).unwrap_or(JsValue::UNDEFINED);
+        if let Ok(f) = d_val.clone().dyn_into::<js_sys::Function>() {
+            let func_rc = Rc::new(f);
+            let delay_fn: lavi::DelayFunction = Rc::new(move |ctx: &Value, evt: &Value| {
+                let arg_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &value_to_js(ctx));
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &Actor::event_to_js(evt));
+                if let Ok(res) = func_rc.call1(&JsValue::NULL, &arg_obj) {
+                    if let Some(n) = res.as_f64() {
+                        return n.max(0.0) as u64;
+                    }
+                }
+                0
+            });
+            machine.register_delay(&k_str, delay_fn);
+        } else if let Some(n) = d_val.as_f64() {
+            let n_u64 = n.max(0.0) as u64;
+            let delay_fn: lavi::DelayFunction = Rc::new(move |_ctx: &Value, _evt: &Value| n_u64);
+            machine.register_delay(&k_str, delay_fn);
+        } else if let Some(s) = d_val.as_string() {
+            if let Ok(n_u64) = s.parse::<u64>() {
+                let delay_fn: lavi::DelayFunction = Rc::new(move |_ctx: &Value, _evt: &Value| n_u64);
+                machine.register_delay(&k_str, delay_fn);
+            }
+        }
+    }
+}
+
+fn configure_logger(options: &JsValue, runner: &mut Actor) {
+    let custom_logger = if options.is_object() && !options.is_null() {
+        let l_key = JsValue::from_str("logger");
+        let l_val = js_sys::Reflect::get(options, &l_key).unwrap_or(JsValue::UNDEFINED);
+        l_val.dyn_into::<js_sys::Function>().ok()
+    } else {
+        None
+    };
+    runner.logger = custom_logger.clone();
+    *runner.logger_holder.borrow_mut() = custom_logger.clone();
+    let logger_cb = Rc::new(move |label: &Option<String>, val: &Value| {
+        let val_js = value_to_js(val);
+        if let Some(ref l_fn) = custom_logger {
+            if let Some(lbl) = label {
+                let _ = l_fn.call2(&JsValue::NULL, &JsValue::from_str(lbl), &val_js);
+            } else {
+                let _ = l_fn.call1(&JsValue::NULL, &val_js);
+            }
+        } else if let Some(lbl) = label {
+            web_sys::console::log_2(&JsValue::from_str(lbl), &val_js);
+        } else {
+            web_sys::console::log_1(&val_js);
+        }
+    });
+    runner.machine.register_logger(logger_cb);
 }
 
 // Helper to parse "guards" and "actions" from a JS object (either implementations object or options object)
@@ -801,6 +1570,7 @@ fn parse_implementations(
     impl_obj: &JsValue,
     guards_out: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
     actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_with_effects_out: &mut IndexMap<String, lavi::ActionWithEffectsFunction>,
 ) {
     if !impl_obj.is_object() {
         return;
@@ -810,30 +1580,28 @@ fn parse_implementations(
     // --- Guards ---
     let guards_key = JsValue::from_str("guards");
     let guards_val = js_sys::Reflect::get(&obj, &guards_key).unwrap_or(JsValue::UNDEFINED);
-    if guards_val.is_object() {
+    if guards_val.is_object() && !guards_val.is_null() {
          let guards_map = js_sys::Object::from(guards_val);
          let keys = js_sys::Object::keys(&guards_map);
          for i in 0..keys.length() {
              let key_js = keys.get(i);
              let key_str = key_js.as_string().unwrap_or_default();
-             let guard_fn_js = js_sys::Reflect::get(&guards_map, &key_js).unwrap_or(JsValue::UNDEFINED);
-             if let Ok(guard_fn) = guard_fn_js.dyn_into::<js_sys::Function>() {
-                 let _id = key_str.clone();
-                 guards_out.insert(key_str.clone(), Rc::new(move |ctx, evt, params| {
-                     let ctx_js = value_to_js(ctx);
-                     let evt_js = value_to_js(evt);
-                     let params_js = if let Some(p) = params {
-                         value_to_js(p)
-                     } else {
-                         JsValue::UNDEFINED
-                     };
-                     let arg_obj = js_sys::Object::new();
-                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
-                     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-                      let res = guard_fn.call2(&JsValue::NULL, &arg_obj, &params_js).unwrap_or(JsValue::FALSE);
-                      res.as_bool().unwrap_or(false)
-                  }));
-             }
+             let guard_item_js = js_sys::Reflect::get(&guards_map, &key_js).unwrap_or(JsValue::UNDEFINED);
+             let guards_map_clone = guards_map.clone();
+             let guard_item_clone = guard_item_js.clone();
+             guards_out.insert(key_str.clone(), Rc::new(move |ctx, evt, params| {
+                 let ctx_js = value_to_js(ctx);
+                 let evt_js = Actor::event_to_js(evt);
+                 let params_js = if let Some(p) = params {
+                     value_to_js(p)
+                 } else {
+                     JsValue::UNDEFINED
+                 };
+                 let arg_obj = js_sys::Object::new();
+                 let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                 let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                 evaluate_guard_entry(&guard_item_clone, &guards_map_clone, &arg_obj, &params_js, 0).unwrap_or(false)
+             }));
          }
     }
     // --- Actions ---
@@ -846,6 +1614,22 @@ fn parse_implementations(
              let key_js = keys.get(i);
              let key_str = key_js.as_string().unwrap_or_default();
              let action_item = js_sys::Reflect::get(&actions_map, &key_js).unwrap_or(JsValue::UNDEFINED);
+
+             let type_key = JsValue::from_str("type");
+             let type_val = js_sys::Reflect::get(&action_item, &type_key).unwrap_or(JsValue::UNDEFINED);
+             if type_val == JsValue::from_str("xstate.enqueueActions") {
+                 let collect_val = js_sys::Reflect::get(&action_item, &JsValue::from_str("collect")).unwrap_or(JsValue::UNDEFINED);
+                 if let Ok(collect_fn) = collect_val.dyn_into::<js_sys::Function>() {
+                     actions_with_effects_out.insert(
+                         key_str.clone(),
+                         Rc::new(move |ctx, evt, _params, actions_map, guards_map, delays_map, current_state, effects| {
+                             execute_enqueue_actions_collect(&collect_fn, ctx, evt, actions_map, guards_map, delays_map, current_state, effects);
+                         }),
+                     );
+                 }
+                 continue;
+             }
+
              // Check for xstate 5 assign (dynamic function or partial object)
              let assign_key = JsValue::from_str("assignment");
              let assign_val = js_sys::Reflect::get(&action_item, &assign_key).unwrap_or(JsValue::UNDEFINED);
@@ -864,7 +1648,7 @@ fn parse_implementations(
              if let Ok(action_fn) = action_item.dyn_into::<js_sys::Function>() {
                  actions_out.insert(key_str, Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
                      let ctx_js = value_to_js(ctx_mut);
-                     let evt_js = value_to_js(evt);
+                     let evt_js = Actor::event_to_js(evt);
                      let params_js = if let Some(p) = params {
                          value_to_js(p)
                      } else {
@@ -916,7 +1700,9 @@ fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, IndexMap<String
     let context_val = js_sys::Reflect::get(&definition, &context_key).unwrap_or(JsValue::UNDEFINED);
     if context_val.is_function() {
         if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
-             if let Ok(res) = func.call0(&JsValue::NULL) {
+             let arg_obj = js_sys::Object::new();
+             let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &JsValue::UNDEFINED);
+             if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
                  let _ = js_sys::Reflect::set(&definition, &context_key, &res);
              }
         }
@@ -1062,6 +1848,9 @@ fn convert_inline_action(
      let type_key = JsValue::from_str("type");
      let type_val = js_sys::Reflect::get(action_item, &type_key).unwrap_or(JsValue::UNDEFINED);
      let type_str = type_val.as_string().unwrap_or_default();
+     if type_str == "xstate.enqueueActions" || type_str.starts_with("auto_action_") {
+         return None;
+     }
      if type_str == "xstate.assign" {
          let assign_key = JsValue::from_str("assignment");
          let assign_val = js_sys::Reflect::get(action_item, &assign_key).unwrap_or(JsValue::UNDEFINED);
@@ -1083,7 +1872,7 @@ fn convert_inline_action(
              let func_clone = func.clone();
              actions_out.insert(new_action_name.clone(), Rc::new(move |ctx_mut, evt, params| {
                   let ctx_js = value_to_js(ctx_mut);
-                  let evt_js = value_to_js(evt);
+                  let evt_js = Actor::event_to_js(evt);
                   let arg_obj = js_sys::Object::new();
                   let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
                   let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
@@ -1125,8 +1914,10 @@ impl Actor {
     pub fn new(val: JsValue, options: JsValue) -> Result<Actor, JsValue> {
         let mut guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = IndexMap::new();
         let mut actions = IndexMap::new();
+        let mut actions_with_effects = IndexMap::new();
+        let mut action_descriptors = IndexMap::new();
 
-        parse_implementations(&options, &mut guards, &mut actions);
+        parse_implementations(&options, &mut guards, &mut actions, &mut actions_with_effects);
 
         let machine_data: Option<InternalState> = if val.is_object() {
              let ptr_key = JsValue::from_str("__wbg_ptr");
@@ -1141,6 +1932,7 @@ impl Actor {
                                  machine: wasm_machine_ref.machine.clone(),
                                  guards: wasm_machine_ref.guards.clone(),
                                  actions: wasm_machine_ref.actions.clone(),
+                                 action_descriptors: wasm_machine_ref.action_descriptors.clone(),
                              };
                              Some(state)
                          }
@@ -1154,29 +1946,46 @@ impl Actor {
              guards = internal_state.guards;
              internal_state.actions.extend(actions);
              actions = internal_state.actions;
-             internal_state.machine
+             action_descriptors = internal_state.action_descriptors;
+             let mut m = internal_state.machine;
+             m.actions_with_effects.extend(actions_with_effects);
+             m
         } else if val.is_string() {
              let json_definition = val.as_string().unwrap();
              let def = lavi::create_machine(&json_definition)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
-             RuntimeMachine::from_definition(def).map_err(|e| JsValue::from_str(&e))?
+             let mut m = RuntimeMachine::from_definition(def).map_err(|e| JsValue::from_str(&e))?;
+             m.actions_with_effects.extend(actions_with_effects);
+             m
         } else {
              let normalized_val = normalize_undefined(&val, 0);
              let (cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
              let mut dummy_guards = IndexMap::new();
              let mut dummy_actions = IndexMap::new();
+             let mut dummy_actions_with_effects = IndexMap::new();
+             let mut dummy_action_descriptors = IndexMap::new();
              let mut counter = 0;
-             process_config(&cleaned_val, &mut dummy_guards, &mut dummy_actions, 0, &mut counter, "");
+             let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
+             let dummy_logger_holder = Rc::new(RefCell::new(None));
+             process_config(&cleaned_val, &mut dummy_guards, &mut dummy_actions, &mut dummy_actions_with_effects, &mut dummy_action_descriptors, 0, &mut counter, "", &guards_holder, &dummy_logger_holder);
+             guards.extend(dummy_guards);
+             guards_holder.borrow_mut().extend(guards.clone());
              actions.extend(dummy_actions);
              actions.extend(extra_actions);
+             action_descriptors.extend(dummy_action_descriptors);
 
              let json_string = js_sys::JSON::stringify(&cleaned_val)
                 .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
                 .as_string().unwrap_or_default();
              let machine_def = lavi::create_machine(&json_string)
                 .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
-             RuntimeMachine::from_definition(machine_def).map_err(|e| JsValue::from_str(&e))?
+             let mut m = RuntimeMachine::from_definition(machine_def).map_err(|e| JsValue::from_str(&e))?;
+             m.actions_with_effects.extend(dummy_actions_with_effects);
+             m.actions_with_effects.extend(actions_with_effects);
+             m
         };
+
+        parse_and_register_delays(&options, &mut machine);
 
         let tick_override = Rc::new(core::cell::Cell::new(None));
         let override_cell = tick_override.clone();
@@ -1187,17 +1996,44 @@ impl Actor {
             web_sys::console::warn_1(&JsValue::from_str(msg));
         }));
 
+        let mut output_funcs = IndexMap::new();
+        if val.is_object() {
+            collect_output_resolvers(&val, "", &mut output_funcs);
+        }
+        for (p, func) in output_funcs {
+            let f = func.clone();
+            let resolver: lavi::OutputResolver = Rc::new(move |ctx: &Value, evt: &Value| {
+                let ctx_js = value_to_js(ctx);
+                let evt_js = value_to_js(evt);
+                let arg_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                if let Ok(res) = f.call1(&JsValue::NULL, &arg_obj) {
+                    crate::utils::js_to_value(&res)
+                } else {
+                    Value::Null
+                }
+            });
+            machine.register_output_resolver(&p, resolver);
+        }
+
         let mut actor = Actor { 
             machine, 
             inspector: None,
             guards,
             actions,
+            action_descriptors,
             is_stopped: false,
             config: val.clone(),
             is_initialized: false,
             shared_state: Rc::new(RefCell::new(None)),
             tick_override,
+            logger: None,
+            logger_holder: Rc::new(RefCell::new(None)),
+            input_js: None,
+            initialization_error: None,
         };
+        configure_logger(&options, &mut actor);
         actor.restore_snapshot_option(&options)?;
         actor.sync_tracked_entry_exit(&actor.config.clone());
         actor.apply_clock_option(&options);
@@ -1338,6 +2174,13 @@ impl Actor {
             shared.actions = self.actions.clone();
             shared.is_stopped = self.is_stopped;
             shared.is_initialized = self.is_initialized;
+            shared.logger = self.logger.clone();
+            shared.logger_holder = self.logger_holder.clone();
+            shared.action_descriptors = self.action_descriptors.clone();
+            if !shared.machine.is_done() && shared.machine.status != lavi::MachineStatus::Done {
+                shared.cached_output = None;
+                shared.is_completed_emitted = false;
+            }
         } else {
             *borrow = Some(SharedActorState {
                 machine: self.machine.clone(),
@@ -1353,7 +2196,29 @@ impl Actor {
                 host_clock: None,
                 is_simulated_clock: false,
                 active_timeout: None,
+                cached_output: None,
+                is_completed_emitted: false,
+                logger: self.logger.clone(),
+                logger_holder: self.logger_holder.clone(),
+                input_js: self.input_js.clone(),
+                initialization_error: self.initialization_error.clone(),
+                action_descriptors: self.action_descriptors.clone(),
             });
+        }
+    }
+
+    pub(crate) fn emit_error(&self, err_val: &JsValue) {
+        let subscribers = {
+            let borrow = self.shared_state.borrow();
+            borrow
+                .as_ref()
+                .map(|s| s.subscribers.clone())
+                .unwrap_or_default()
+        };
+        for (_, sub) in &subscribers {
+            if let Subscriber::Observer { error: Some(ref err_fn), .. } = sub {
+                let _ = err_fn.call1(&JsValue::NULL, err_val);
+            }
         }
     }
 
@@ -1471,171 +2336,65 @@ impl Actor {
 
 
     fn get_history_value_obj(&self, machine: &RuntimeMachine) -> JsValue {
-         let history_obj = js_sys::Object::new();
-         let active_paths = machine.current_state.get_active_paths();
-         for (id, path) in &machine.definition.id_map {
-             if let Some(def) = machine.get_state_definition(path) {
-                 if matches!(def.state_type, lavi::StateType::History { .. }) {
-                     let is_deep = def.history == Some(lavi::HistoryType::Deep)
-                         || matches!(def.state_type, lavi::StateType::History { deep: true });
-                     let parent_path = if let Some(idx) = path.rfind('.') {
-                         &path[0..idx]
-                     } else {
-                         "" 
-                     };
-                     let prefix_len = if parent_path.is_empty() { 0 } else { parent_path.len() + 1 };
-
-                     let mut raw_paths: Vec<String> = active_paths
-                         .iter()
-                         .filter(|p| {
-                             if parent_path.is_empty() {
-                                 !p.is_empty()
-                             } else {
-                                 p.len() > prefix_len
-                                     && p.starts_with(parent_path)
-                                     && p.as_bytes().get(parent_path.len()) == Some(&b'.')
-                             }
-                         })
-                         .cloned()
-                         .collect();
-
-                     if raw_paths.is_empty() {
-                         if let Some(stored) = machine.history_value.get(parent_path) {
-                             let stored_paths = stored.get_active_paths();
-                             let matching_stored: Vec<String> = stored_paths
-                                 .iter()
-                                 .filter(|p| {
-                                     if parent_path.is_empty() {
-                                         !p.is_empty()
-                                     } else {
-                                         p.len() > prefix_len
-                                             && p.starts_with(parent_path)
-                                             && p.as_bytes().get(parent_path.len()) == Some(&b'.')
-                                     }
-                                 })
-                                 .cloned()
-                                 .collect();
-                             if !matching_stored.is_empty() {
-                                 raw_paths = matching_stored;
-                             } else {
-                                 raw_paths = stored_paths
-                                     .into_iter()
-                                     .filter(|p| !p.is_empty())
-                                     .collect();
-                             }
-                         }
-                     }
-
-                     let mut targets_to_serialize: Vec<String> = Vec::new();
-                     for raw_path in raw_paths {
-                         let target_path = if is_deep {
-                             raw_path
-                         } else if raw_path.len() > prefix_len {
-                             let rest = &raw_path[prefix_len..];
-                             let child = if let Some(end) = rest.find('.') {
-                                 &rest[..end]
-                             } else {
-                                 rest
-                             };
-                             if parent_path.is_empty() {
-                                 child.to_string()
-                             } else {
-                                 format!("{}.{}", parent_path, child)
-                             }
-                         } else {
-                             raw_path
-                         };
-                         if !targets_to_serialize.contains(&target_path) {
-                             targets_to_serialize.push(target_path);
-                         }
-                     }
-
-                     if !machine.history_value.contains_key(parent_path)
-                         && def.history_target.is_none()
-                     {
-                         if let Some(p_def) = machine.get_state_definition(parent_path) {
-                             if let Some(initial_key) = &p_def.initial {
-                                  let full_initial = if parent_path.is_empty() {
-                                      initial_key.clone()
-                                  } else {
-                                      format!("{}.{}", parent_path, initial_key)
-                                  };
-                                  if targets_to_serialize.len() == 1
-                                      && targets_to_serialize[0] == full_initial
-                                  {
-                                      targets_to_serialize.clear();
-                                  }
-                             }
-                         }
-                     }
-
-                     if !targets_to_serialize.is_empty() {
-                          let entry_arr = js_sys::Array::new();
-                          for target_path in targets_to_serialize {
-                              let node = StateNode {
-                                  machine: machine.clone(),
-                                  path: target_path,
-                                  guards: self.guards.clone(),
-                                  actions: self.actions.clone(),
-                                  config: self.config.clone(),
-                              };
-                              let node_val: JsValue = node.into();
-                              entry_arr.push(&node_val);
-                          }
-                          let _ = js_sys::Reflect::set(&history_obj, &JsValue::from_str(id), &entry_arr);
-                     }
-                 }
-             }
-         }
-         history_obj.into()
+        compute_history_value_obj(
+            machine,
+            &self.guards,
+            &self.actions,
+            &self.action_descriptors,
+            &self.config,
+            &self.logger_holder,
+        )
     }
 
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> Snapshot {
-        let shared_borrow = self.shared_state.borrow();
-        let active_machine = shared_borrow
-            .as_ref()
-            .map(|s| &s.machine)
-            .unwrap_or(&self.machine);
-        let is_stopped = shared_borrow
-            .as_ref()
-            .map(|s| s.is_stopped)
-            .unwrap_or(self.is_stopped);
-        let is_initialized = shared_borrow
-            .as_ref()
-            .map(|s| s.is_initialized)
-            .unwrap_or(self.is_initialized);
-        let preview;
-        let machine_ref = if !active_machine.is_started && !is_initialized {
-            let mut m = active_machine.clone();
-            m.start(&self.guards, &IndexMap::new());
-            preview = m;
-            &preview
-        } else {
-            active_machine
+        let init_err = {
+            let borrow = self.shared_state.borrow();
+            borrow
+                .as_ref()
+                .and_then(|s| s.initialization_error.clone())
+                .or_else(|| self.initialization_error.clone())
         };
+        if let Some(err) = init_err {
+            return Snapshot {
+                value: JsValue::UNDEFINED,
+                context: JsValue::UNDEFINED,
+                status: "error".to_string(),
+                machine_ref: self.machine.clone(),
+                guards: self.guards.clone(),
+                history_value: js_sys::Object::new().into(),
+                config: self.config.clone(),
+                output: JsValue::UNDEFINED,
+                error: err,
+            };
+        }
+
+        let (mut active_machine, is_stopped, is_initialized, cached_out, guards) = {
+            let shared_borrow = self.shared_state.borrow();
+            if let Some(s) = shared_borrow.as_ref() {
+                (s.machine.clone(), s.is_stopped, s.is_initialized, s.cached_output.clone(), s.guards.clone())
+            } else {
+                (self.machine.clone(), self.is_stopped, self.is_initialized, None, self.guards.clone())
+            }
+        };
+        if !active_machine.is_started && !is_initialized {
+            let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
+            snapshot_actions.insert(
+                "__lavi_snapshot_mode__".to_string(),
+                Rc::new(|_, _, _| {}),
+            );
+            active_machine.start(&guards, &snapshot_actions);
+        }
+        let machine_ref = &active_machine;
 
         let active_paths = machine_ref.current_state.get_active_paths();
-        let value_val = if active_paths.is_empty() && machine_ref.definition.states.is_empty() {
-            js_sys::Object::new().into()
-        } else if active_paths.len() == 1 {
-            self.path_to_value_object(&active_paths[0])
-        } else {
-            // Parallel states: build and merge multiple paths
-            let root_obj = js_sys::Object::new();
-            for path in &active_paths {
-                self.merge_path_into_obj(&root_obj, path);
-            }
-            root_obj.into()
-        };
+        let value_val = Self::build_snapshot_state_value(machine_ref, &active_paths);
         let ctx_val = match &machine_ref.context {
             Value::Null => js_sys::Object::new().into(),
             other => value_to_js(other),
         };
         let history_obj = self.get_history_value_obj(machine_ref);
-        let status = if machine_ref.is_done()
-            || machine_ref.status() == lavi::MachineStatus::Done
-        {
+        let status = if machine_ref.is_done() {
             "done".to_string()
         } else if is_stopped
             || machine_ref.status() == lavi::MachineStatus::Stopped
@@ -1647,11 +2406,24 @@ impl Actor {
         let mut final_machine = machine_ref.clone();
         if is_stopped
             && !final_machine.is_done()
-            && final_machine.status != lavi::MachineStatus::Done
             && final_machine.status != lavi::MachineStatus::Stopped
         {
             final_machine.stop();
         }
+
+        let output_val = if status == "done" {
+            if let Some(c) = cached_out {
+                c
+            } else {
+                let evaluated = Self::compute_output_js(&self.config, machine_ref, &ctx_val);
+                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
+                    shared.cached_output = Some(evaluated.clone());
+                }
+                evaluated
+            }
+        } else {
+            JsValue::UNDEFINED
+        };
 
         Snapshot {
             value: value_val,
@@ -1661,61 +2433,153 @@ impl Actor {
             guards: self.guards.clone(),
             history_value: history_obj,
             config: self.config.clone(),
+            output: output_val,
+            error: JsValue::UNDEFINED,
         }
     }
 
-    fn merge_path_into_obj(&self, obj: &js_sys::Object, path: &str) {
-        let parts: Vec<&str> = path.split('.').collect();
-        self.recursive_merge(obj, &parts);
-    }
+    pub(crate) fn compute_output_js(config: &JsValue, machine_ref: &RuntimeMachine, ctx_val: &JsValue) -> JsValue {
+        if config.is_object() {
+            let output_key = JsValue::from_str("output");
+            let output_prop = js_sys::Reflect::get(config, &output_key).unwrap_or(JsValue::UNDEFINED);
+            if !output_prop.is_undefined() {
+                if let Ok(func) = output_prop.clone().dyn_into::<js_sys::Function>() {
+                    let arg_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), ctx_val);
+                    let done_evt = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(
+                        &done_evt,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str(&format!("xstate.done.state.{}", machine_ref.definition.id)),
+                    );
+                    let leaf_out = machine_ref.get_output();
+                    let out_js = match leaf_out {
+                        Some(val) => value_to_js(&val),
+                        None => JsValue::UNDEFINED,
+                    };
+                    let _ = js_sys::Reflect::set(&done_evt, &JsValue::from_str("output"), &out_js);
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &done_evt);
+                    let self_obj = js_sys::Object::new();
+                    let send_fn = js_sys::Function::new_no_args("");
+                    let _ = js_sys::Reflect::set(&self_obj, &JsValue::from_str("send"), &send_fn);
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
 
-    fn recursive_merge(&self, parent: &js_sys::Object, parts: &[&str]) {
-        if parts.is_empty() { return; }
-        let key = parts[0];
-        if parts.len() == 2 {
-            let _ = js_sys::Reflect::set(parent, &JsValue::from_str(key), &JsValue::from_str(parts[1]));
-            return;
+                    if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+                        return res;
+                    } else {
+                        return JsValue::UNDEFINED;
+                    }
+                } else {
+                    return output_prop;
+                }
+            }
         }
-        if parts.len() == 1 {
-            let _ = js_sys::Reflect::set(parent, &JsValue::from_str(key), &JsValue::from_str(key));
-            return;
-        }
-
-        let existing = js_sys::Reflect::get(parent, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED);
-        let target_obj = if existing.is_object() && !existing.is_null() && !existing.is_string() {
-            js_sys::Object::from(existing)
+        if let Some(out) = machine_ref.get_output() {
+            value_to_js(&out)
         } else {
-            let new_obj = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(parent, &JsValue::from_str(key), &new_obj);
-            new_obj
+            JsValue::UNDEFINED
+        }
+    }
+
+    pub(crate) fn event_to_js(evt: &Value) -> JsValue {
+        let evt_js = value_to_js(evt);
+        if let Value::Object(map) = evt {
+            if let Some(Value::String(t)) = map.get("type") {
+                if t.starts_with("xstate.done.state.") && !map.contains_key("output") {
+                    let _ = js_sys::Reflect::set(&evt_js, &JsValue::from_str("output"), &JsValue::UNDEFINED);
+                }
+            }
+        }
+        evt_js
+    }
+
+    pub(crate) fn build_snapshot_state_value(machine: &RuntimeMachine, active_paths: &[String]) -> JsValue {
+        if machine.definition.states.is_empty() {
+            return js_sys::Object::new().into();
+        }
+        Self::build_state_value_for_node(machine, "", active_paths)
+    }
+
+    fn build_state_value_for_node(machine: &RuntimeMachine, state_path: &str, active_paths: &[String]) -> JsValue {
+        let (is_parallel, states) = if state_path.is_empty() {
+            (
+                matches!(machine.definition.state_type, StateType::Parallel),
+                &machine.definition.states,
+            )
+        } else if let Some(def) = machine.get_state_definition(state_path) {
+            (
+                matches!(def.state_type, StateType::Parallel),
+                &def.states,
+            )
+        } else {
+            return JsValue::NULL;
         };
 
-        self.recursive_merge(&target_obj, &parts[1..]);
-    }
-
-    fn path_to_value_object(&self, path: &str) -> JsValue {
-        if !path.contains('.') {
-            return JsValue::from_str(path);
+        if is_parallel {
+            let obj = js_sys::Object::new();
+            for (r_name, r_def) in states {
+                if matches!(r_def.state_type, StateType::History { .. }) || r_def.history.is_some() {
+                    continue;
+                }
+                let child_path = if state_path.is_empty() {
+                    r_name.clone()
+                } else {
+                    format!("{}.{}", state_path, r_name)
+                };
+                if r_def.states.is_empty() {
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(r_name), &js_sys::Object::new());
+                } else {
+                    let child_val = Self::build_state_value_for_node(machine, &child_path, active_paths);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(r_name), &child_val);
+                }
+            }
+            obj.into()
+        } else {
+            let prefix = if state_path.is_empty() {
+                "".to_string()
+            } else {
+                format!("{}.", state_path)
+            };
+            for path in active_paths {
+                let direct_child = if prefix.is_empty() {
+                    path.split('.').next().unwrap_or("")
+                } else if let Some(rest) = path.strip_prefix(&prefix) {
+                    rest.split('.').next().unwrap_or("")
+                } else {
+                    continue;
+                };
+                if direct_child.is_empty() {
+                    continue;
+                }
+                if let Some(child_def) = states.get(direct_child) {
+                    let child_path = if prefix.is_empty() {
+                        direct_child.to_string()
+                    } else {
+                        format!("{}{}", prefix, direct_child)
+                    };
+                    if child_def.states.is_empty() {
+                        return JsValue::from_str(direct_child);
+                    } else {
+                        let sub_val = Self::build_state_value_for_node(machine, &child_path, active_paths);
+                        let obj = js_sys::Object::new();
+                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(direct_child), &sub_val);
+                        return obj.into();
+                    }
+                }
+            }
+            JsValue::NULL
         }
-        // "active.one" -> { active: "one" }
-        // "active.nested.three" -> { active: { nested: "three" } }
-        let parts: Vec<&str> = path.split('.').collect();
-        self.recursive_build_obj(&parts)
-    }
-
-    fn recursive_build_obj(&self, parts: &[&str]) -> JsValue {
-        if parts.len() == 1 {
-            return JsValue::from_str(parts[0]);
-        }
-        let obj = js_sys::Object::new();
-        let key = parts[0];
-        let val = self.recursive_build_obj(&parts[1..]);
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), &val);
-        obj.into()
     }
 
     #[wasm_bindgen]
     pub fn start(&self) -> Actor {
+        if self.initialization_error.is_some() || {
+            let borrow = self.shared_state.borrow();
+            borrow.as_ref().and_then(|s| s.initialization_error.as_ref()).is_some()
+        } {
+            return self.clone();
+        }
+
         let (mut machine, guards, actions, is_started, is_initialized) = {
             let borrow = self.shared_state.borrow();
             if let Some(shared) = borrow.as_ref() {
@@ -1796,6 +2660,15 @@ impl Actor {
             }
         }
 
+        let last_err = {
+            let mut borrow = self.shared_state.borrow_mut();
+            borrow.as_mut().and_then(|s| s.machine.last_error.take())
+        };
+        if let Some(err_msg) = last_err {
+            let js_err = js_sys::Error::new(&err_msg);
+            self.emit_error(&js_err.into());
+        }
+
         // Emit initial snapshot
         self.emit_snapshot();
 
@@ -1808,9 +2681,22 @@ impl Actor {
     fn emit_snapshot(&self) {
         let snapshot = self.get_snapshot();
         let status_str = snapshot.status();
-        let is_completed = status_str == "done"
-            || self.machine.is_done()
-            || self.machine.status == lavi::MachineStatus::Done;
+        let should_complete = status_str == "done";
+        let is_completed = if should_complete {
+            let mut borrow = self.shared_state.borrow_mut();
+            if let Some(shared) = borrow.as_mut() {
+                if !shared.is_completed_emitted {
+                    shared.is_completed_emitted = true;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            }
+        } else {
+            false
+        };
         let obj: JsValue = snapshot.into();
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str(&status_str));
@@ -1851,7 +2737,7 @@ impl Actor {
     pub fn send(&self, event: JsValue) -> Result<JsValue, JsValue> {
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
-            let payload = Value::Object(IndexMap::from([("type".to_string(), Value::String(s.clone()))]));
+            let payload = Value::Object(lavi::indexmap! { "type".to_string() => Value::String(s.clone()) });
             (s, payload)
         } else {
              // Assume object
@@ -1879,14 +2765,14 @@ impl Actor {
                 (
                     shared.machine.is_started,
                     shared.is_stopped || shared.machine.status == lavi::MachineStatus::Stopped,
-                    shared.machine.status == lavi::MachineStatus::Done || shared.machine.is_done(),
+                    shared.machine.is_done(),
                     shared.is_in_tick,
                 )
             } else {
                 (
                     self.machine.is_started,
                     self.is_stopped || self.machine.status == lavi::MachineStatus::Stopped,
-                    self.machine.status == lavi::MachineStatus::Done || self.machine.is_done(),
+                    self.machine.is_done(),
                     false,
                 )
             }
@@ -1929,7 +2815,7 @@ impl Actor {
                 }
                 break;
             }
-            if machine.is_done() || machine.status == lavi::MachineStatus::Done {
+            if machine.is_done() {
                 if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
                     shared.reentrant_queue.clear();
                 }
@@ -1951,6 +2837,15 @@ impl Actor {
                 shared.machine = machine;
                 shared.is_in_tick = false;
             }
+        }
+
+        let last_err = {
+            let mut borrow = self.shared_state.borrow_mut();
+            borrow.as_mut().and_then(|s| s.machine.last_error.take())
+        };
+        if let Some(err_msg) = last_err {
+            let js_err = js_sys::Error::new(&err_msg);
+            self.emit_error(&js_err.into());
         }
 
         // 2. Inspect Snapshot
@@ -2258,6 +3153,11 @@ impl Actor {
                 is_initialized: shared.is_initialized,
                 shared_state: shared_rc.clone(),
                 tick_override: shared.tick_override.clone(),
+                logger: shared.logger.clone(),
+                logger_holder: shared.logger_holder.clone(),
+                input_js: shared.input_js.clone(),
+                initialization_error: shared.initialization_error.clone(),
+                action_descriptors: shared.action_descriptors.clone(),
             }
         };
 
@@ -2270,6 +3170,15 @@ impl Actor {
         }
 
         let _ = temp_actor.tick();
+
+        let last_err = {
+            let mut borrow = shared_rc.borrow_mut();
+            borrow.as_mut().and_then(|s| s.machine.last_error.take())
+        };
+        if let Some(err_msg) = last_err {
+            let js_err = js_sys::Error::new(&err_msg);
+            temp_actor.emit_error(&js_err.into());
+        }
 
         // Step 3: Reschedule for next deadline if any
         Actor::reschedule_host_timer(shared_rc);
@@ -2312,6 +3221,8 @@ pub struct Snapshot {
     history_value: JsValue,
     #[allow(dead_code)]
     pub(crate) config: JsValue,
+    pub(crate) output: JsValue,
+    pub(crate) error: JsValue,
 }
 
 #[wasm_bindgen]
@@ -2337,6 +3248,9 @@ impl Snapshot {
 
     #[wasm_bindgen]
     pub fn matches(&self, test_value: JsValue) -> bool {
+        if self.status == "error" {
+            return false;
+        }
         if let Some(path) = test_value.as_string() {
             self.machine_ref.current_state.matches(&path)
         } else if is_valid_state_value_js(&test_value) {
@@ -2350,12 +3264,14 @@ impl Snapshot {
 
     #[wasm_bindgen]
     pub fn can(&self, event: JsValue) -> bool {
+        if self.status == "error" {
+            return false;
+        }
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
-            let payload = Value::Object(IndexMap::from([(
-                "type".to_string(),
-                Value::String(s.clone()),
-            )]));
+            let payload = Value::Object(lavi::indexmap! {
+                "type".to_string() => Value::String(s.clone()),
+            });
             (s, payload)
         } else {
             let payload = js_to_value(&event);
@@ -2372,8 +3288,40 @@ impl Snapshot {
     }
     #[wasm_bindgen(js_name = hasTag)]
     pub fn has_tag(&self, tag: &str) -> bool {
+        if self.status == "error" {
+            return false;
+        }
         self.machine_ref.has_tag(tag)
     }
+
+    #[wasm_bindgen(getter)]
+    pub fn tags(&self) -> js_sys::Set {
+        if self.status == "error" {
+            return js_sys::Set::new(&JsValue::UNDEFINED);
+        }
+        let set = js_sys::Set::new(&JsValue::UNDEFINED);
+        for tag in self.machine_ref.get_tags() {
+            set.add(&JsValue::from_str(&tag));
+        }
+        set
+    }
+
+    #[wasm_bindgen(js_name = getMeta)]
+    pub fn get_meta(&self) -> JsValue {
+        let meta_val = self.machine_ref.get_meta();
+        value_to_js(&meta_val)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> JsValue {
+        self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn output(&self) -> JsValue {
+        self.output.clone()
+    }
+
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> JsValue {
         let json_str = self.machine_ref.get_persisted_snapshot_json();
@@ -2381,6 +3329,736 @@ impl Snapshot {
     }
 }
 
+
+fn evaluate_guard_in_check(
+    guard_arg: &JsValue,
+    ctx: &Value,
+    event: &Value,
+    guards: &IndexMap<String, lavi::GuardFunction>,
+    current_state: &lavi::StateValue,
+    depth: usize,
+) -> bool {
+    if depth > 50 {
+        return false;
+    }
+
+    if guard_arg.is_string() {
+        let name = guard_arg.as_string().unwrap_or_default();
+        return guards.get(&name).map(|f| f(ctx, event, &None)).unwrap_or(false);
+    }
+
+    let t_val = if (guard_arg.is_object() && !guard_arg.is_null()) || guard_arg.is_function() {
+        js_sys::Reflect::get(guard_arg, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED)
+    } else {
+        JsValue::UNDEFINED
+    };
+    let t_str = t_val.as_string().unwrap_or_default();
+
+    if t_str == "xstate.not" {
+        let inner = js_sys::Reflect::get(guard_arg, &JsValue::from_str("guard"))
+            .unwrap_or(JsValue::UNDEFINED);
+        let inner = if inner.is_undefined() {
+            let g_val = js_sys::Reflect::get(guard_arg, &JsValue::from_str("guards")).unwrap_or(JsValue::UNDEFINED);
+            if js_sys::Array::is_array(&g_val) {
+                let arr = js_sys::Array::from(&g_val);
+                if arr.length() > 0 { arr.get(0) } else { JsValue::UNDEFINED }
+            } else {
+                JsValue::UNDEFINED
+            }
+        } else {
+            inner
+        };
+        return !evaluate_guard_in_check(&inner, ctx, event, guards, current_state, depth + 1);
+    }
+
+    if t_str == "xstate.and" {
+        let children = js_sys::Reflect::get(guard_arg, &JsValue::from_str("guards")).unwrap_or(JsValue::UNDEFINED);
+        if js_sys::Array::is_array(&children) {
+            let arr = js_sys::Array::from(&children);
+            for i in 0..arr.length() {
+                if !evaluate_guard_in_check(&arr.get(i), ctx, event, guards, current_state, depth + 1) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    if t_str == "xstate.or" {
+        let children = js_sys::Reflect::get(guard_arg, &JsValue::from_str("guards")).unwrap_or(JsValue::UNDEFINED);
+        if js_sys::Array::is_array(&children) {
+            let arr = js_sys::Array::from(&children);
+            for i in 0..arr.length() {
+                if evaluate_guard_in_check(&arr.get(i), ctx, event, guards, current_state, depth + 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    if t_str == "xstate.stateIn" {
+        let sv = js_sys::Reflect::get(guard_arg, &JsValue::from_str("stateValue")).unwrap_or(JsValue::UNDEFINED);
+        if sv.is_string() {
+            let s = sv.as_string().unwrap_or_default();
+            return current_state.matches(&s);
+        } else if sv.is_object() && !sv.is_null() {
+            let val = js_to_value(&sv);
+            let st_val = lavi::value_to_state_value(val);
+            return current_state.matches_state_value(&st_val);
+        }
+        return false;
+    }
+
+    if !t_str.is_empty() {
+        if let Some(g_fn) = guards.get(&t_str) {
+            let p_val = js_sys::Reflect::get(guard_arg, &JsValue::from_str("params")).ok();
+            let p_val_resolved = if let Some(p_js) = p_val {
+                if p_js.is_function() {
+                    let p_fn: js_sys::Function = p_js.unchecked_into();
+                    let arg = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg, &JsValue::from_str("context"), &value_to_js(ctx));
+                    let _ = js_sys::Reflect::set(&arg, &JsValue::from_str("event"), &Actor::event_to_js(event));
+                    p_fn.call1(&JsValue::NULL, &arg).ok().map(|v| js_to_value(&v))
+                } else if !p_js.is_undefined() {
+                    Some(js_to_value(&p_js))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            return g_fn(ctx, event, &p_val_resolved);
+        }
+        return false;
+    }
+
+    if guard_arg.is_function() {
+        let func: js_sys::Function = guard_arg.clone().unchecked_into();
+        let arg_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &value_to_js(ctx));
+        let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &Actor::event_to_js(event));
+        return func.call1(&JsValue::NULL, &arg_obj).ok().and_then(|v| v.as_bool()).unwrap_or(false);
+    }
+
+    false
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_enqueue_actions_collect(
+    collect: &js_sys::Function,
+    ctx: &mut Value,
+    event: &Value,
+    actions_map: &IndexMap<String, lavi::ActionFunction>,
+    guards_map: &IndexMap<String, lavi::GuardFunction>,
+    delays_map: &IndexMap<String, lavi::DelayFunction>,
+    current_state: &lavi::StateValue,
+    effects: &mut lavi::ActionEffects,
+) {
+    let ctx_rc = Rc::new(RefCell::new(ctx.clone()));
+    let effects_rc = Rc::new(RefCell::new(Vec::<Value>::new()));
+    let cancel_rc = Rc::new(RefCell::new(Vec::<String>::new()));
+    let delayed_events_rc = Rc::new(RefCell::new(Vec::<lavi::DelayedEvent>::new()));
+
+    let is_snapshot_mode = actions_map.contains_key("__lavi_snapshot_mode__");
+    let actions_map_rc = Rc::new(actions_map.clone());
+    let guards_map_rc = Rc::new(guards_map.clone());
+    let delays_map_rc = Rc::new(delays_map.clone());
+    let event_val = event.clone();
+
+    let ctx_for_enqueue = ctx_rc.clone();
+    let effects_for_enqueue = effects_rc.clone();
+    let actions_for_enqueue = actions_map_rc.clone();
+    let delays_for_enqueue = delays_map_rc.clone();
+    let event_for_enqueue = event_val.clone();
+    let cancel_for_enqueue = cancel_rc.clone();
+    let delayed_for_enqueue = delayed_events_rc.clone();
+
+    let enqueue_closure = Closure::wrap(Box::new(move |action_arg: JsValue| {
+        let t_val = if action_arg.is_function() || (action_arg.is_object() && !action_arg.is_null()) {
+            js_sys::Reflect::get(&action_arg, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        };
+        let t_str = t_val.as_string().unwrap_or_default();
+
+        if t_str == "xstate.assign" {
+            let assign_key = JsValue::from_str("assignment");
+            let mut assign_val = js_sys::Reflect::get(&action_arg, &assign_key).unwrap_or(JsValue::UNDEFINED);
+            if assign_val.is_undefined() {
+                let params = js_sys::Reflect::get(&action_arg, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+                if params.is_object() {
+                    assign_val = js_sys::Reflect::get(&params, &assign_key).unwrap_or(JsValue::UNDEFINED);
+                }
+            }
+            if !assign_val.is_undefined() {
+                let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
+                evaluate_assignment_value(&assign_val, &mut ctx_borrow, &event_for_enqueue, &None);
+            }
+        } else if t_str == "xstate.raise" || t_str == "xstate.raise.delayed" {
+            if !is_snapshot_mode {
+                let params = js_sys::Reflect::get(&action_arg, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+                let evt_val = if params.is_object() && !params.is_null() {
+                    let p_obj = js_sys::Object::from(params.clone());
+                    js_sys::Reflect::get(&p_obj, &JsValue::from_str("event")).unwrap_or(action_arg.clone())
+                } else {
+                    action_arg.clone()
+                };
+                let delay_val = if params.is_object() && !params.is_null() {
+                    let p_obj = js_sys::Object::from(params.clone());
+                    js_sys::Reflect::get(&p_obj, &JsValue::from_str("delay")).unwrap_or(JsValue::UNDEFINED)
+                } else {
+                    JsValue::UNDEFINED
+                };
+                let id_val = if params.is_object() && !params.is_null() {
+                    let p_obj = js_sys::Object::from(params);
+                    js_sys::Reflect::get(&p_obj, &JsValue::from_str("id")).ok().and_then(|v| v.as_string())
+                } else {
+                    None
+                };
+                let is_delayed = t_str == "xstate.raise.delayed" || !delay_val.is_undefined();
+                let arg_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &value_to_js(&ctx_for_enqueue.borrow()));
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &Actor::event_to_js(&event_for_enqueue));
+                let evt_to_raise = if evt_val.is_function() {
+                    let func: js_sys::Function = evt_val.unchecked_into();
+                    func.call1(&JsValue::NULL, &arg_obj).unwrap_or(JsValue::UNDEFINED)
+                } else {
+                    evt_val
+                };
+                let raised_val = js_to_value(&evt_to_raise);
+                if is_delayed {
+                    let delay_ms = if delay_val.is_function() {
+                        let d_fn: js_sys::Function = delay_val.unchecked_into();
+                        d_fn.call1(&JsValue::NULL, &arg_obj).ok().and_then(|v| {
+                            if let Some(n) = v.as_f64() {
+                                Some(n.max(0.0) as u64)
+                            } else if let Some(s) = v.as_string() {
+                                s.parse::<u64>().ok()
+                            } else {
+                                None
+                            }
+                        }).unwrap_or(0)
+                    } else if delay_val.is_string() {
+                        let name = delay_val.as_string().unwrap_or_default();
+                        if let Some(d_fn) = delays_for_enqueue.get(&name) {
+                            d_fn(&ctx_for_enqueue.borrow(), &event_for_enqueue)
+                        } else {
+                            name.parse::<u64>().unwrap_or(0)
+                        }
+                    } else if let Some(n) = delay_val.as_f64() {
+                        n.max(0.0) as u64
+                    } else {
+                        0
+                    };
+                    delayed_for_enqueue.borrow_mut().push(lavi::DelayedEvent {
+                        id: id_val,
+                        deadline: delay_ms,
+                        event: raised_val,
+                    });
+                } else {
+                    effects_for_enqueue.borrow_mut().push(raised_val);
+                }
+            }
+        } else if t_str == "xstate.cancel" {
+            if !is_snapshot_mode {
+                let send_id = js_sys::Reflect::get(&action_arg, &JsValue::from_str("sendId"))
+                    .or_else(|_| {
+                        let params = js_sys::Reflect::get(&action_arg, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+                        js_sys::Reflect::get(&params, &JsValue::from_str("sendId"))
+                    })
+                    .ok()
+                    .and_then(|v| v.as_string())
+                    .unwrap_or_default();
+                if !send_id.is_empty() {
+                    cancel_for_enqueue.borrow_mut().push(send_id);
+                }
+            }
+        } else if let Some(act) = actions_for_enqueue.get(&t_str) {
+            if !is_snapshot_mode {
+                let params_val = js_sys::Reflect::get(&action_arg, &JsValue::from_str("params")).ok().map(|p| js_to_value(&p));
+                let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
+                act(&mut ctx_borrow, &event_for_enqueue, &params_val);
+            }
+        } else if action_arg.is_string() && !is_snapshot_mode {
+            let name = action_arg.as_string().unwrap_or_default();
+            if let Some(act) = actions_for_enqueue.get(&name) {
+                let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
+                act(&mut ctx_borrow, &event_for_enqueue, &None);
+            }
+        } else if action_arg.is_function() && !is_snapshot_mode {
+            let func: js_sys::Function = action_arg.unchecked_into();
+            let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
+            let res = execute_js_action(&func, &mut ctx_borrow, &event_for_enqueue, &None);
+            if res.is_object() || res.is_function() {
+                let t_val = js_sys::Reflect::get(&res, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
+                if t_val == JsValue::from_str("xstate.assign") {
+                    let a_val = js_sys::Reflect::get(&res, &JsValue::from_str("assignment")).unwrap_or(JsValue::UNDEFINED);
+                    if !a_val.is_undefined() {
+                        evaluate_assignment_value(&a_val, &mut ctx_borrow, &event_for_enqueue, &None);
+                    }
+                }
+            }
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+
+    let enqueue_js_fn = enqueue_closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+
+    let ctx_for_assign = ctx_rc.clone();
+    let event_for_assign = event_val.clone();
+    let assign_closure = Closure::wrap(Box::new(move |assignment: JsValue| {
+        let mut ctx_borrow = ctx_for_assign.borrow_mut();
+        evaluate_assignment_value(&assignment, &mut ctx_borrow, &event_for_assign, &None);
+    }) as Box<dyn FnMut(JsValue)>);
+    let _ = js_sys::Reflect::set(&enqueue_js_fn, &JsValue::from_str("assign"), assign_closure.as_ref().unchecked_ref());
+
+    let effects_for_raise = effects_rc.clone();
+    let raise_closure = Closure::wrap(Box::new(move |evt_arg: JsValue| {
+        if !is_snapshot_mode {
+            effects_for_raise.borrow_mut().push(js_to_value(&evt_arg));
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+    let _ = js_sys::Reflect::set(&enqueue_js_fn, &JsValue::from_str("raise"), raise_closure.as_ref().unchecked_ref());
+
+    let ctx_for_check = ctx_rc.clone();
+    let guards_for_check = guards_map_rc.clone();
+    let event_for_check = event_val.clone();
+    let state_for_check = current_state.clone();
+    let check_closure = Closure::wrap(Box::new(move |guard_arg: JsValue| -> bool {
+        let ctx_borrow = ctx_for_check.borrow();
+        evaluate_guard_in_check(&guard_arg, &ctx_borrow, &event_for_check, &guards_for_check, &state_for_check, 0)
+    }) as Box<dyn FnMut(JsValue) -> bool>);
+
+    let arg_obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("enqueue"), &enqueue_js_fn);
+    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("check"), check_closure.as_ref().unchecked_ref());
+    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &value_to_js(&ctx_rc.borrow()));
+    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &Actor::event_to_js(&event_val));
+    
+    let self_obj = js_sys::Object::new();
+    let send_dummy = js_sys::Function::new_no_args("return undefined;");
+    let _ = js_sys::Reflect::set(&self_obj, &JsValue::from_str("send"), &send_dummy);
+    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
+
+    let _ = collect.call1(&JsValue::NULL, &arg_obj);
+
+    *ctx = ctx_rc.borrow().clone();
+    for raised in effects_rc.borrow().iter() {
+        effects.raised.push_back(raised.clone());
+    }
+    for id in cancel_rc.borrow().iter() {
+        effects.cancel_ids.push(id.clone());
+    }
+    for delayed in delayed_events_rc.borrow().iter() {
+        effects.delayed_events.push(delayed.clone());
+    }
+}
+
+fn process_action_item(
+    item: &JsValue,
+    actions: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_with_effects: &mut IndexMap<String, lavi::ActionWithEffectsFunction>,
+    action_descriptors: &mut IndexMap<String, JsValue>,
+    counter: &mut u32,
+    path: &str,
+    logger_holder: &Rc<RefCell<Option<js_sys::Function>>>,
+) -> JsValue {
+    if item.is_string() {
+        let s = item.as_string().unwrap_or_default();
+        let act_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), item);
+        action_descriptors.insert(s, act_obj.into());
+        return item.clone();
+    }
+    if item.is_function() || (item.is_object() && !item.is_null()) {
+        let type_key = JsValue::from_str("type");
+        let type_val = js_sys::Reflect::get(item, &type_key).unwrap_or(JsValue::UNDEFINED);
+        let type_str = type_val.as_string().unwrap_or_default();
+
+        if type_str == "xstate.enqueueActions" {
+            *counter += 1;
+            let id = format!("auto_action_enqueue_{}_{}", if path.is_empty() { "root" } else { path }, counter);
+            let collect_val = js_sys::Reflect::get(item, &JsValue::from_str("collect")).unwrap_or(JsValue::UNDEFINED);
+            if let Ok(collect_fn) = collect_val.clone().dyn_into::<js_sys::Function>() {
+                actions_with_effects.insert(
+                    id.clone(),
+                    Rc::new(move |ctx, evt, _params, actions_map, guards_map, delays_map, current_state, effects| {
+                        execute_enqueue_actions_collect(&collect_fn, ctx, evt, actions_map, guards_map, delays_map, current_state, effects);
+                    }),
+                );
+            }
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.enqueueActions"));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("collect"), &collect_val);
+            action_descriptors.insert(id.clone(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+
+        if type_str == "xstate.assign" {
+            *counter += 1;
+            let id = format!("auto_action_assign_{}_{}", if path.is_empty() { "root" } else { path }, counter);
+            let assign_key = JsValue::from_str("assignment");
+            let mut assignment = js_sys::Reflect::get(item, &assign_key).unwrap_or(JsValue::UNDEFINED);
+            if assignment.is_undefined() && item.is_function() {
+                let func: js_sys::Function = item.clone().unchecked_into();
+                assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
+            }
+            let assignment_clone = assignment.clone();
+            let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                if !assignment_clone.is_undefined() {
+                    evaluate_assignment_value(&assignment_clone, ctx_mut, evt, params);
+                }
+            });
+            actions.insert(id.clone(), closure);
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.assign"));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("assignment"), &assignment);
+            let params_val = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            if !params_val.is_undefined() {
+                let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_val);
+            }
+            action_descriptors.insert(id.clone(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+        if type_str == "xstate.cancel" {
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.cancel"));
+            let send_id_val = js_sys::Reflect::get(item, &JsValue::from_str("sendId"))
+                .or_else(|_| {
+                    let params = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+                    js_sys::Reflect::get(&params, &JsValue::from_str("sendId"))
+                })
+                .unwrap_or(JsValue::UNDEFINED);
+            let params_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("sendId"), &send_id_val);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_obj);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("sendId"), &send_id_val);
+            action_descriptors.insert("xstate.cancel".to_string(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+        if type_str == "xstate.raise.invalid" {
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise.invalid"));
+            let err_val = js_sys::Reflect::get(item, &JsValue::from_str("error")).unwrap_or(JsValue::UNDEFINED);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("error"), &err_val);
+            action_descriptors.insert("xstate.raise.invalid".to_string(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+        if type_str == "xstate.raise" || type_str == "xstate.raise.delayed" {
+            let params = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            let event_val = if params.is_object() && !params.is_null() {
+                js_sys::Reflect::get(&params, &JsValue::from_str("event")).unwrap_or(JsValue::UNDEFINED)
+            } else {
+                JsValue::UNDEFINED
+            };
+            let delay_val = if params.is_object() && !params.is_null() {
+                js_sys::Reflect::get(&params, &JsValue::from_str("delay")).unwrap_or(JsValue::UNDEFINED)
+            } else {
+                JsValue::UNDEFINED
+            };
+            let is_dynamic_event = event_val.is_function();
+            let is_dynamic_delay = delay_val.is_function();
+            if is_dynamic_event || is_dynamic_delay {
+                *counter += 1;
+                let id = format!("auto_action_raise_expr_{}_{}", if path.is_empty() { "root" } else { path }, counter);
+                let is_delayed = type_str == "xstate.raise.delayed" || !delay_val.is_undefined();
+                let id_val = if params.is_object() && !params.is_null() {
+                    js_sys::Reflect::get(&params, &JsValue::from_str("id")).ok().and_then(|v| v.as_string())
+                } else {
+                    None
+                };
+                actions_with_effects.insert(
+                    id.clone(),
+                    Rc::new(move |ctx, evt, _params, _actions_map, _guards_map, delays_map, _current_state, effects| {
+                        let arg_obj = js_sys::Object::new();
+                        let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &value_to_js(ctx));
+                        let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &Actor::event_to_js(evt));
+                        let raised_val = if is_dynamic_event {
+                            let func: js_sys::Function = event_val.clone().unchecked_into();
+                            if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+                                js_to_value(&res)
+                            } else {
+                                Value::Null
+                            }
+                        } else {
+                            js_to_value(&event_val)
+                        };
+                        if is_delayed {
+                            let delay_ms = if delay_val.is_function() {
+                                let d_fn: js_sys::Function = delay_val.clone().unchecked_into();
+                                d_fn.call1(&JsValue::NULL, &arg_obj).ok().and_then(|v| {
+                                    if let Some(n) = v.as_f64() {
+                                        Some(n.max(0.0) as u64)
+                                    } else if let Some(s) = v.as_string() {
+                                        s.parse::<u64>().ok()
+                                    } else {
+                                        None
+                                    }
+                                }).unwrap_or(0)
+                            } else if delay_val.is_string() {
+                                let name = delay_val.as_string().unwrap_or_default();
+                                if let Some(d_fn) = delays_map.get(&name) {
+                                    d_fn(ctx, evt)
+                                } else {
+                                    name.parse::<u64>().unwrap_or(0)
+                                }
+                            } else if let Some(n) = delay_val.as_f64() {
+                                n.max(0.0) as u64
+                            } else {
+                                0
+                            };
+                            effects.delayed_events.push(lavi::DelayedEvent {
+                                id: id_val.clone(),
+                                deadline: delay_ms,
+                                event: raised_val,
+                            });
+                        } else {
+                            effects.raised.push_back(raised_val);
+                        }
+                    }),
+                );
+                let new_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                action_descriptors.insert(id.clone(), new_obj.clone().into());
+                return new_obj.into();
+            }
+            action_descriptors.insert("xstate.raise".to_string(), item.clone());
+            return item.clone();
+        }
+
+        if type_str == "xstate.log" {
+            *counter += 1;
+            let id = format!("auto_action_log_{}_{}", if path.is_empty() { "root" } else { path }, counter);
+            let val_or_expr = js_sys::Reflect::get(item, &JsValue::from_str("value"))
+                .or_else(|_| {
+                    let params = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+                    js_sys::Reflect::get(&params, &JsValue::from_str("value"))
+                })
+                .unwrap_or(JsValue::UNDEFINED);
+            let label = js_sys::Reflect::get(item, &JsValue::from_str("label"))
+                .or_else(|_| {
+                    let params = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+                    js_sys::Reflect::get(&params, &JsValue::from_str("label"))
+                })
+                .ok()
+                .and_then(|v| v.as_string());
+            let log_holder = logger_holder.clone();
+            let val_for_closure = val_or_expr.clone();
+            let label_for_closure = label.clone();
+            let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, _params: &Option<Value>| {
+                let resolved_val = if val_for_closure.is_function() {
+                    let func: js_sys::Function = val_for_closure.clone().unchecked_into();
+                    let arg_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &value_to_js(ctx_mut));
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &Actor::event_to_js(evt));
+                    func.call1(&JsValue::NULL, &arg_obj).unwrap_or(JsValue::UNDEFINED)
+                } else {
+                    val_for_closure.clone()
+                };
+                if let Some(ref l_fn) = *log_holder.borrow() {
+                    if let Some(ref lbl) = label_for_closure {
+                        let _ = l_fn.call2(&JsValue::NULL, &JsValue::from_str(lbl), &resolved_val);
+                    } else {
+                        let _ = l_fn.call1(&JsValue::NULL, &resolved_val);
+                    }
+                } else if let Some(ref lbl) = label_for_closure {
+                    web_sys::console::log_2(&JsValue::from_str(lbl), &resolved_val);
+                } else {
+                    web_sys::console::log_1(&resolved_val);
+                }
+            });
+            actions.insert(id.clone(), closure);
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.log"));
+            let params_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("value"), &val_or_expr);
+            if let Some(ref lbl) = label {
+                let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("label"), &JsValue::from_str(lbl));
+            }
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_obj);
+            action_descriptors.insert(id.clone(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+        if type_str == "xstate.emit" {
+            *counter += 1;
+            let id = format!("auto_action_emit_{}_{}", if path.is_empty() { "root" } else { path }, counter);
+            let params_val = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.emit"));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_val);
+            action_descriptors.insert(id.clone(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+
+        if item.is_function() {
+            *counter += 1;
+            let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
+            let func: js_sys::Function = item.clone().unchecked_into();
+            let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
+                let res = execute_js_action(&func, ctx_mut, evt, params);
+                if res.is_object() || res.is_function() {
+                    let t_val = js_sys::Reflect::get(&res, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
+                    if t_val == JsValue::from_str("xstate.assign") {
+                        let a_val = js_sys::Reflect::get(&res, &JsValue::from_str("assignment")).unwrap_or(JsValue::UNDEFINED);
+                        if !a_val.is_undefined() {
+                            evaluate_assignment_value(&a_val, ctx_mut, evt, params);
+                        }
+                    }
+                }
+            });
+            actions.insert(id.clone(), closure);
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            action_descriptors.insert(id.clone(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+        let params_val = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+        if !type_str.is_empty() && params_val.is_function() && !type_str.starts_with("auto_action_") {
+            *counter += 1;
+            let id = format!("auto_action_{}_{}_{}", type_str, if path.is_empty() { "root" } else { path }, counter);
+            let new_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str(&type_str));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_val);
+            action_descriptors.insert(id.clone(), new_obj.clone().into());
+            return new_obj.into();
+        }
+
+        if !type_str.is_empty() {
+            action_descriptors.insert(type_str.clone(), item.clone());
+        }
+    }
+    item.clone()
+}
+
+fn process_guard_value(
+    guard_val: &JsValue,
+    guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    counter: &mut u32,
+    guards_holder: &Rc<RefCell<IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>>>,
+) -> JsValue {
+    if !guard_val.is_object() && !guard_val.is_function() || guard_val.is_null() {
+        return guard_val.clone();
+    }
+    let guard_type = {
+        let type_key = JsValue::from_str("type");
+        js_sys::Reflect::get(guard_val, &type_key)
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default()
+    };
+
+    if guard_type == "xstate.and" || guard_type == "xstate.or" {
+        let guards_key = JsValue::from_str("guards");
+        let children = js_sys::Reflect::get(guard_val, &guards_key).unwrap_or(JsValue::UNDEFINED);
+        let new_arr = js_sys::Array::new();
+        if js_sys::Array::is_array(&children) {
+            let arr = js_sys::Array::from(&children);
+            for i in 0..arr.length() {
+                let child = arr.get(i);
+                let processed_child = process_guard_value(&child, guards, counter, guards_holder);
+                new_arr.push(&processed_child);
+            }
+        }
+        let out_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&out_obj, &JsValue::from_str("type"), &JsValue::from_str(&guard_type));
+        let _ = js_sys::Reflect::set(&out_obj, &guards_key, &new_arr);
+        return out_obj.into();
+    }
+
+    if guard_type == "xstate.not" {
+        let guard_key = JsValue::from_str("guard");
+        let inner = js_sys::Reflect::get(guard_val, &guard_key).unwrap_or(JsValue::UNDEFINED);
+        let processed_inner = if !inner.is_undefined() {
+            process_guard_value(&inner, guards, counter, guards_holder)
+        } else {
+            let guards_key = JsValue::from_str("guards");
+            let g_val = js_sys::Reflect::get(guard_val, &guards_key).unwrap_or(JsValue::UNDEFINED);
+            if js_sys::Array::is_array(&g_val) {
+                let arr = js_sys::Array::from(&g_val);
+                if arr.length() > 0 {
+                    let child = arr.get(0);
+                    process_guard_value(&child, guards, counter, guards_holder)
+                } else {
+                    JsValue::UNDEFINED
+                }
+            } else {
+                JsValue::UNDEFINED
+            }
+        };
+        let out_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&out_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.not"));
+        let _ = js_sys::Reflect::set(&out_obj, &guard_key, &processed_inner);
+        return out_obj.into();
+    }
+
+    if guard_type == "xstate.stateIn" {
+        let state_val_key = JsValue::from_str("stateValue");
+        let sv = js_sys::Reflect::get(guard_val, &state_val_key).unwrap_or(JsValue::UNDEFINED);
+        let out_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&out_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.stateIn"));
+        let _ = js_sys::Reflect::set(&out_obj, &state_val_key, &sv);
+        return out_obj.into();
+    }
+
+    // Check if params is a dynamic function:
+    let params_key = JsValue::from_str("params");
+    let params_val = js_sys::Reflect::get(guard_val, &params_key).unwrap_or(JsValue::UNDEFINED);
+    if params_val.is_function() && !guard_type.is_empty() {
+        *counter += 1;
+        let id = format!("auto_dynamic_guard_{}", counter);
+        let params_fn: js_sys::Function = params_val.unchecked_into();
+        let gh = guards_holder.clone();
+        let target_name = guard_type.clone();
+        let closure = Rc::new(move |context: &Value, event: &Value, _guard_params: &Option<Value>| -> bool {
+            let ctx_js = value_to_js(context);
+            let evt_js = Actor::event_to_js(event);
+            let arg_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+            let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+            let p_res = params_fn.call1(&JsValue::NULL, &arg_obj).unwrap_or(JsValue::UNDEFINED);
+            let resolved_p = js_to_value(&p_res);
+            let borrowed = gh.borrow();
+            if let Some(target_guard) = borrowed.get(&target_name) {
+                target_guard(context, event, &Some(resolved_p))
+            } else {
+                false
+            }
+        });
+        guards.insert(id.clone(), closure.clone());
+        guards_holder.borrow_mut().insert(id.clone(), closure);
+        let replace_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&replace_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+        return replace_obj.into();
+    }
+
+    if guard_val.is_function() {
+        *counter += 1;
+        let id = format!("auto_guard_{}", counter);
+        let func: js_sys::Function = guard_val.clone().unchecked_into();
+        let closure = Rc::new(move |context: &Value, event: &Value, guard_params: &Option<Value>| -> bool {
+            evaluate_js_guard(&func, context, event, guard_params)
+        });
+        guards.insert(id.clone(), closure.clone());
+        guards_holder.borrow_mut().insert(id.clone(), closure);
+        let replace_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&replace_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+        return replace_obj.into();
+    }
+
+    guard_val.clone()
+}
 
 #[wasm_bindgen(js_name = createActor)]
 pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
@@ -2397,15 +4075,66 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
     }
 
     // 2. Treat as Machine Config Object (POJO)
-    // Process config to extract inline guards and remove undefineds
     let config = machine_def.clone();
     let mut inline_guards = IndexMap::new();
     let mut inline_actions = IndexMap::new();
+    let mut inline_actions_with_effects = IndexMap::new();
+    let mut inline_action_descriptors = IndexMap::new();
     let mut counter = 0;
-    process_config(&config, &mut inline_guards, &mut inline_actions, 0, &mut counter, "");
-    let mut runner = Actor::new(config, options.clone())?;
+    let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
+    let logger_holder = Rc::new(RefCell::new(None));
+    process_config(
+        &config,
+        &mut inline_guards,
+        &mut inline_actions,
+        &mut inline_actions_with_effects,
+        &mut inline_action_descriptors,
+        0,
+        &mut counter,
+        "",
+        &guards_holder,
+        &logger_holder,
+    );
+    let mut runner = Actor::new(config.clone(), options.clone())?;
+    runner.logger_holder = logger_holder.clone();
     runner.guards.extend(inline_guards);
     runner.actions.extend(inline_actions);
+    runner.action_descriptors.extend(inline_action_descriptors);
+    runner.machine.actions_with_effects.extend(inline_actions_with_effects);
+
+    configure_logger(&options, &mut runner);
+    parse_and_register_delays(&options, &mut runner.machine);
+
+    let input_val = if options.is_object() {
+        js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
+    } else {
+        JsValue::UNDEFINED
+    };
+    if !input_val.is_undefined() {
+        runner.input_js = Some(input_val.clone());
+        runner.machine.input = Some(js_to_value(&input_val));
+    }
+
+    if config.is_object() {
+        let context_key = JsValue::from_str("context");
+        let context_val = js_sys::Reflect::get(&config, &context_key).unwrap_or(JsValue::UNDEFINED);
+        if context_val.is_function() {
+            if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+                let arg_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &input_val);
+                let self_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
+                match func.call1(&JsValue::NULL, &arg_obj) {
+                    Ok(res) => {
+                        runner.machine.context = js_to_value(&res);
+                    }
+                    Err(err) => {
+                        runner.initialization_error = Some(err);
+                    }
+                }
+            }
+        }
+    }
 
     // Apply common options (inspect, implementations, snapshot)
     if options.is_object() {
@@ -2416,9 +4145,17 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
              runner.set_inspector(func);
         }
 
-        parse_implementations(&options, &mut runner.guards, &mut runner.actions);
+        let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
+        if !context_opt.is_undefined() {
+            runner.machine.context = js_to_value(&context_opt);
+        }
+
+        parse_implementations(&options, &mut runner.guards, &mut runner.actions, &mut runner.machine.actions_with_effects);
     }
 
+    guards_holder.borrow_mut().extend(runner.guards.clone());
+
+    check_initial_entry_guards(&runner);
     runner.push_shared();
 
     Ok(runner.into())
@@ -2430,26 +4167,59 @@ pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<State
     let config_processed = config.clone();
     let mut inline_guards = IndexMap::new();
     let mut inline_actions = IndexMap::new();
+    let mut inline_actions_with_effects = IndexMap::new();
+    let mut inline_action_descriptors = IndexMap::new();
     let mut counter = 0;
-    process_config(&config_processed, &mut inline_guards, &mut inline_actions, 0, &mut counter, "");
-    let mut runner = Actor::new(config_processed, options_val)?;
+    let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
+    let logger_holder = Rc::new(RefCell::new(None));
+    process_config(
+        &config_processed,
+        &mut inline_guards,
+        &mut inline_actions,
+        &mut inline_actions_with_effects,
+        &mut inline_action_descriptors,
+        0,
+        &mut counter,
+        "",
+        &guards_holder,
+        &logger_holder,
+    );
+    let mut runner = Actor::new(config_processed, options_val.clone())?;
+    runner.logger_holder = logger_holder.clone();
     runner.guards.extend(inline_guards);
     runner.actions.extend(inline_actions);
+    runner.action_descriptors.extend(inline_action_descriptors.clone());
+    runner.machine.actions_with_effects.extend(inline_actions_with_effects);
+
+    configure_logger(&options_val, &mut runner);
+    parse_and_register_delays(&options_val, &mut runner.machine);
+    parse_implementations(&options_val, &mut runner.guards, &mut runner.actions, &mut runner.machine.actions_with_effects);
+
+    guards_holder.borrow_mut().extend(runner.guards.clone());
+
     Ok(StateNode {
         machine: runner.machine,
         path: "".to_string(),
         guards: runner.guards,
         actions: runner.actions,
+        action_descriptors: inline_action_descriptors,
         config: config.clone(),
+        logger_holder: logger_holder.clone(),
     })
 }
-fn evaluate_js_guard(func: &js_sys::Function, context: &Value, event: &Value, _guard_params: &Option<Value>) -> bool {
+
+fn evaluate_js_guard(func: &js_sys::Function, context: &Value, event: &Value, guard_params: &Option<Value>) -> bool {
     let ctx_js = value_to_js(context);
-    let evt_js = value_to_js(event);
+    let evt_js = Actor::event_to_js(event);
     let arg_obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-    if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+    let params_js = if let Some(p) = guard_params {
+        value_to_js(p)
+    } else {
+        JsValue::UNDEFINED
+    };
+    if let Ok(res) = func.call2(&JsValue::NULL, &arg_obj, &params_js) {
         res.as_bool().unwrap_or(false)
     } else {
         false
@@ -2458,15 +4228,18 @@ fn evaluate_js_guard(func: &js_sys::Function, context: &Value, event: &Value, _g
 
 fn execute_js_action(func: &js_sys::Function, ctx_mut: &mut Value, evt: &Value, params: &Option<Value>) -> JsValue {
     let ctx_js = value_to_js(ctx_mut);
-    let evt_js = value_to_js(evt);
+    let evt_js = Actor::event_to_js(evt);
     let arg_obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
     let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-    if let Some(p) = params {
+    let params_js = if let Some(p) = params {
         let p_js = value_to_js(p);
         let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("params"), &p_js);
-    }
-    match func.call1(&JsValue::NULL, &arg_obj) {
+        p_js
+    } else {
+        JsValue::UNDEFINED
+    };
+    match func.call2(&JsValue::NULL, &arg_obj, &params_js) {
         Ok(v) => v,
         Err(e) => {
             web_sys::console::log_2(&JsValue::from_str("Error executing JS action:"), &e);
@@ -2482,7 +4255,7 @@ fn evaluate_assignment_value(
     params: &Option<Value>,
 ) {
     let ctx_js = value_to_js(ctx_mut);
-    let evt_js = value_to_js(evt);
+    let evt_js = Actor::event_to_js(evt);
     let params_js = if let Some(p) = params {
         value_to_js(p)
     } else {
@@ -2526,102 +4299,34 @@ fn evaluate_assignment_value(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_config(
     val: &JsValue, 
     guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>, 
     actions: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    actions_with_effects: &mut IndexMap<String, lavi::ActionWithEffectsFunction>,
+    action_descriptors: &mut IndexMap<String, JsValue>,
     depth: usize,
     counter: &mut u32,
-    path: &str
+    path: &str,
+    guards_holder: &Rc<RefCell<IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>>>,
+    logger_holder: &Rc<RefCell<Option<js_sys::Function>>>,
 ) {
     if depth > 100 { return; }
-
-    // Removed inject_tracking_action
 
     if js_sys::Array::is_array(val) {
         let arr: &js_sys::Array = val.unchecked_ref();
         for i in 0..arr.length() {
             let item = arr.get(i);
-            if item.is_function() {
-                 *counter += 1;
-                 let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                 let func: js_sys::Function = item.clone().dyn_into().unwrap();
-                 let type_key = JsValue::from_str("type");
-                 let func_type_val = js_sys::Reflect::get(&item, &type_key).unwrap_or(JsValue::UNDEFINED);
-                 if func_type_val == JsValue::from_str("xstate.assign") {
-                      let assign_key = JsValue::from_str("assignment");
-                      let mut assignment = js_sys::Reflect::get(&item, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                      if assignment.is_undefined() {
-                           assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                      }
-                      let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
-                           if !assignment.is_undefined() {
-                                evaluate_assignment_value(&assignment, ctx_mut, evt, params);
-                           }
-                      });
-                      actions.insert(id.clone(), closure);
-                      let new_obj = js_sys::Object::new();
-                      let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                      let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_obj);
-                      continue;
-                 }
-                 let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
-                      let res = execute_js_action(&func, ctx_mut, evt, params); 
-                      if res.is_object() || res.is_function() { 
-                           let type_key = JsValue::from_str("type");
-                           let type_val = js_sys::Reflect::get(&res, &type_key).unwrap_or(JsValue::UNDEFINED);
-                           if type_val == JsValue::from_str("xstate.assign") { 
-                                let assign_key = JsValue::from_str("assignment");
-                                let mut assignment = js_sys::Reflect::get(&res, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                                 if assignment.is_undefined() {
-                                     assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED); 
-                                }
-
-                                if !assignment.is_undefined() {
-                                     evaluate_assignment_value(&assignment, ctx_mut, evt, params);
-                                }
-                           }
-                      }
-                 });
-                 actions.insert(id.clone(), closure);
-                 let new_obj = js_sys::Object::new();
-                 let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                 let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_obj);
-            } else if item.is_object() && !item.is_null() {
-                // Check if it's an assign action
-                let type_key = JsValue::from_str("type");
-                let type_val = js_sys::Reflect::get(&item, &type_key).unwrap_or(JsValue::UNDEFINED);
-                if type_val == JsValue::from_str("xstate.assign") {    
-                     let assign_key = JsValue::from_str("assignment");
-                     let assignment = js_sys::Reflect::get(&item, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                     if assignment.is_object() && !assignment.is_function() {
-                         let assign_obj = js_sys::Object::from(assignment.clone());
-                         let keys = js_sys::Object::keys(&assign_obj);
-                         let mut has_funcs = false;
-                         for k in 0..keys.length() {
-                             let k_key = keys.get(k);
-                             let k_val = js_sys::Reflect::get(&assign_obj, &k_key).unwrap_or(JsValue::UNDEFINED);
-                             if k_val.is_function() { has_funcs = true; break; }
-                         }
-                         if has_funcs {
-                             *counter += 1;
-                             let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                             let assignment_clone: JsValue = assign_obj.into();
-                             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
-                                  evaluate_assignment_value(&assignment_clone, ctx_mut, evt, params);
-                             });
-                             actions.insert(id.clone(), closure);
-                             let new_action_obj = js_sys::Object::new();
-                             let _ = js_sys::Reflect::set(&new_action_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                             let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &new_action_obj);
-                             continue;
-                         }
-                     }
+            if item.is_function() || (item.is_object() && !item.is_null()) {
+                let processed = process_action_item(&item, actions, actions_with_effects, action_descriptors, counter, path, logger_holder);
+                let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(i as f64), &processed);
+                if processed.is_object() && !processed.is_null() {
+                    process_config(&processed, guards, actions, actions_with_effects, action_descriptors, depth + 1, counter, "", guards_holder, logger_holder);
                 }
-                process_config(&item, guards, actions, depth + 1, counter, "");
             }
         }
-    } else if (val.is_object() || val.is_function()) && !val.is_null() {
+    } else if val.is_object() && !val.is_null() && !val.is_function() {
         let obj = js_sys::Object::from(val.clone());
         let keys = js_sys::Object::keys(&obj);
         for i in 0..keys.length() {
@@ -2634,120 +4339,40 @@ fn process_config(
             let key_str = key.as_string().unwrap_or_default();
             if key_str == "invoke" {
                 process_invoke_list(&obj, actions, counter);
+                continue;
             }
-            if (key_str == "guard" || key_str == "cond") && value.is_function() {
-                 let id = format!("auto_guard_{}", guards.len());
-                 let func: js_sys::Function = value.dyn_into().unwrap();
-                 let closure = Rc::new(move |context: &Value, event: &Value, _guard_params: &Option<Value>| -> bool {
-                      evaluate_js_guard(&func, context, event, _guard_params)
-                 });
-                 guards.insert(id.clone(), closure);
-                 let replace_obj = js_sys::Object::new();
-                 let _ = js_sys::Reflect::set(&replace_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                 let _ = js_sys::Reflect::set(&obj, &key, &replace_obj);
+            if key_str == "context" || key_str == "output" || key_str == "input" || key_str == "types" {
+                continue;
+            }
+            if key_str == "guard" || key_str == "cond" {
+                let processed = process_guard_value(&value, guards, counter, guards_holder);
+                let _ = js_sys::Reflect::set(&obj, &key, &processed);
+            } else if key_str == "entry" || key_str == "exit" || key_str == "actions" {
+                if js_sys::Array::is_array(&value) {
+                    let arr: &js_sys::Array = value.unchecked_ref();
+                    for j in 0..arr.length() {
+                        let it = arr.get(j);
+                        let processed = process_action_item(&it, actions, actions_with_effects, action_descriptors, counter, path, logger_holder);
+                        let _ = js_sys::Reflect::set(arr, &JsValue::from_f64(j as f64), &processed);
+                    }
+                } else {
+                    let processed = process_action_item(&value, actions, actions_with_effects, action_descriptors, counter, path, logger_holder);
+                    let _ = js_sys::Reflect::set(&obj, &key, &processed);
+                }
             } else if key_str == "states" && value.is_object() && !value.is_null() {
-                 let states_obj = js_sys::Object::from(value.clone());
-                 let child_keys = js_sys::Object::keys(&states_obj);
-                 for j in 0..child_keys.length() {
-                     let child_key = child_keys.get(j);
-                     let child_key_str = child_key.as_string().unwrap_or_default();
-                     let child_val = js_sys::Reflect::get(&states_obj, &child_key).unwrap_or(JsValue::UNDEFINED);
-                     if child_val.is_object() && !child_val.is_null() {
-                         let child_path = if path.is_empty() { child_key_str.clone() } else { format!("{}.{}", path, child_key_str) };
-                         process_config(&child_val, guards, actions, depth + 1, counter, &child_path);
-                     }
-                 }
-            } else if value.is_object() && !value.is_null() {
-                // Check if it's a function that should be an auto_action
-                if value.is_function() {
-                    let type_key = JsValue::from_str("type");
-                    let type_val = js_sys::Reflect::get(&value, &type_key).unwrap_or(JsValue::UNDEFINED);
-                    
-                    if type_val == JsValue::from_str("xstate.assign") {
-                         // It's a function-object from assign()
-                         *counter += 1;
-                         let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                         let func: js_sys::Function = value.clone().dyn_into().unwrap();
-                         let assign_key = JsValue::from_str("assignment");
-                         let mut assignment = js_sys::Reflect::get(&value, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                         if assignment.is_undefined() {
-                              assignment = js_sys::Reflect::get(&func, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                         }
-                         
-                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
-                             if !assignment.is_undefined() {
-                                 evaluate_assignment_value(&assignment, ctx_mut, evt, params);
-                             }
-                         });
-                         actions.insert(id.clone(), closure);
-                         let new_obj = js_sys::Object::new();
-                         let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                         let _ = js_sys::Reflect::set(&obj, &key, &new_obj);
-                         continue;
-                    } else if key_str != "guard" && key_str != "cond" {
-                         // It's a plain function used as an action (not a guard)
-                         *counter += 1;
-                         let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                         let func: js_sys::Function = value.clone().dyn_into().unwrap();
-                         let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
-                              let res = execute_js_action(&func, ctx_mut, evt, params);
-                              if res.is_object() || res.is_function() {
-                                   let t_key = JsValue::from_str("type");
-                                   let t_val = js_sys::Reflect::get(&res, &t_key).unwrap_or(JsValue::UNDEFINED);
-                                   if t_val == JsValue::from_str("xstate.assign") {
-                                        let a_key = JsValue::from_str("assignment");
-                                        let mut a_val = js_sys::Reflect::get(&res, &a_key).unwrap_or(JsValue::UNDEFINED);
-                                        if a_val.is_undefined() {
-                                             a_val = js_sys::Reflect::get(&func, &a_key).unwrap_or(JsValue::UNDEFINED);
-                                        }
-                                        if !a_val.is_undefined() {
-                                             evaluate_assignment_value(&a_val, ctx_mut, evt, params);
-                                        }
-                                   }
-                              }
-                         });
-                         actions.insert(id.clone(), closure);
-                         let new_obj = js_sys::Object::new();
-                         let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                         let _ = js_sys::Reflect::set(&obj, &key, &new_obj);
-                         continue;
+                let states_obj = js_sys::Object::from(value.clone());
+                let child_keys = js_sys::Object::keys(&states_obj);
+                for j in 0..child_keys.length() {
+                    let child_key = child_keys.get(j);
+                    let child_key_str = child_key.as_string().unwrap_or_default();
+                    let child_val = js_sys::Reflect::get(&states_obj, &child_key).unwrap_or(JsValue::UNDEFINED);
+                    if child_val.is_object() && !child_val.is_null() {
+                        let child_path = if path.is_empty() { child_key_str.clone() } else { format!("{}.{}", path, child_key_str) };
+                        process_config(&child_val, guards, actions, actions_with_effects, action_descriptors, depth + 1, counter, &child_path, guards_holder, logger_holder);
                     }
                 }
-
-                // Check if it's an assign action object
-                let type_key = JsValue::from_str("type");
-                let type_val = js_sys::Reflect::get(&value, &type_key).unwrap_or(JsValue::UNDEFINED);
-                let mut processed = false;
-                if type_val == JsValue::from_str("xstate.assign") {    
-                     let assign_key = JsValue::from_str("assignment");
-                     let assignment = js_sys::Reflect::get(&value, &assign_key).unwrap_or(JsValue::UNDEFINED);
-                     if assignment.is_object() && !assignment.is_function() {
-                         let assign_obj = js_sys::Object::from(assignment.clone());
-                         let keys = js_sys::Object::keys(&assign_obj);
-                         let mut has_funcs = false;
-                         for k in 0..keys.length() {
-                             let k_key = keys.get(k);
-                             let k_val = js_sys::Reflect::get(&assign_obj, &k_key).unwrap_or(JsValue::UNDEFINED);
-                             if k_val.is_function() { has_funcs = true; break; }
-                         }
-                         if has_funcs {
-                             *counter += 1;
-                             let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
-                             let assignment_clone: JsValue = assign_obj.into();
-                             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
-                                  evaluate_assignment_value(&assignment_clone, ctx_mut, evt, params);
-                             });
-                             actions.insert(id.clone(), closure);
-                             let new_action_obj = js_sys::Object::new();
-                             let _ = js_sys::Reflect::set(&new_action_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
-                             let _ = js_sys::Reflect::set(&obj, &key, &new_action_obj);
-                             processed = true;
-                         }
-                     }
-                }
-                if !processed {
-                    process_config(&value, guards, actions, depth + 1, counter, "");
-                }
+            } else if (value.is_object() || js_sys::Array::is_array(&value)) && !value.is_null() && !value.is_function() {
+                process_config(&value, guards, actions, actions_with_effects, action_descriptors, depth + 1, counter, path, guards_holder, logger_holder);
             }
         }
     }
@@ -2900,4 +4525,575 @@ fn normalize_undefined(val: &JsValue, depth: usize) -> JsValue {
         return res_obj.into();
     }
     val.clone()
+}
+
+fn collect_output_resolvers(val: &JsValue, path: &str, resolvers: &mut IndexMap<String, js_sys::Function>) {
+    if !val.is_object() || val.is_null() {
+        return;
+    }
+    let obj = js_sys::Object::from(val.clone());
+    let output_key = JsValue::from_str("output");
+    let out_val = js_sys::Reflect::get(&obj, &output_key).unwrap_or(JsValue::UNDEFINED);
+    if !path.is_empty() {
+        if let Ok(func) = out_val.dyn_into::<js_sys::Function>() {
+            resolvers.insert(path.to_string(), func);
+        }
+    }
+    let states_key = JsValue::from_str("states");
+    let states_val = js_sys::Reflect::get(&obj, &states_key).unwrap_or(JsValue::UNDEFINED);
+    if states_val.is_object() && !states_val.is_null() {
+        let states_obj = js_sys::Object::from(states_val);
+        let keys = js_sys::Object::keys(&states_obj);
+        for i in 0..keys.length() {
+            let k = keys.get(i);
+            let k_str = k.as_string().unwrap_or_default();
+            let child_val = js_sys::Reflect::get(&states_obj, &k).unwrap_or(JsValue::UNDEFINED);
+            let child_path = if path.is_empty() { k_str } else { format!("{}.{}", path, k_str) };
+            collect_output_resolvers(&child_val, &child_path, resolvers);
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = getNextSnapshot)]
+pub fn get_next_snapshot(machine: JsValue, snapshot: JsValue, event: JsValue) -> Result<JsValue, JsValue> {
+    let options = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&options, &JsValue::from_str("snapshot"), &snapshot);
+    let actor_val = create_actor(machine, Some(options.into()))?;
+    let actor_obj = js_sys::Object::from(actor_val);
+    let start_fn = js_sys::Reflect::get(&actor_obj, &JsValue::from_str("start"))?;
+    if let Ok(func) = start_fn.dyn_into::<js_sys::Function>() {
+        let _ = func.call0(&actor_obj)?;
+    }
+    let send_fn = js_sys::Reflect::get(&actor_obj, &JsValue::from_str("send"))?;
+    if let Ok(func) = send_fn.dyn_into::<js_sys::Function>() {
+        let _ = func.call1(&actor_obj, &event)?;
+    }
+    let get_snapshot_fn = js_sys::Reflect::get(&actor_obj, &JsValue::from_str("getSnapshot"))?;
+    if let Ok(func) = get_snapshot_fn.dyn_into::<js_sys::Function>() {
+        func.call0(&actor_obj)
+    } else {
+        Ok(JsValue::UNDEFINED)
+    }
+}
+
+fn resolve_pure_actions(
+    raw_actions_val: &JsValue,
+    ctx_val: &mut JsValue,
+    evt_val: &JsValue,
+    collected: &mut Vec<JsValue>,
+) {
+    if raw_actions_val.is_undefined() || raw_actions_val.is_null() {
+        return;
+    }
+    let items = if js_sys::Array::is_array(raw_actions_val) {
+        js_sys::Array::from(raw_actions_val)
+    } else {
+        let arr = js_sys::Array::new();
+        arr.push(raw_actions_val);
+        arr
+    };
+
+    for i in 0..items.length() {
+        let item = items.get(i);
+        if item.is_string() {
+            let act_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), &item);
+            collected.push(act_obj.into());
+            continue;
+        }
+
+        let type_prop = js_sys::Reflect::get(&item, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
+        let act_type_prop = js_sys::Reflect::get(&item, &JsValue::from_str("actionType")).unwrap_or(JsValue::UNDEFINED);
+        let type_str = type_prop.as_string().unwrap_or_default();
+        let act_type_str = act_type_prop.as_string().unwrap_or_default();
+
+        let effective_type = if !act_type_str.is_empty() {
+            act_type_str
+        } else if type_str.starts_with("auto_action_enqueue_") {
+            "xstate.enqueueActions".to_string()
+        } else if type_str.starts_with("auto_action_emit_") {
+            "xstate.emit".to_string()
+        } else if type_str.starts_with("auto_action_log_") {
+            "xstate.log".to_string()
+        } else {
+            type_str.clone()
+        };
+
+        if effective_type == "xstate.assign" {
+            let assign_prop = js_sys::Reflect::get(&item, &JsValue::from_str("assignment")).unwrap_or(JsValue::UNDEFINED);
+            let mut ctx_value = js_to_value(ctx_val);
+            let evt_value = js_to_value(evt_val);
+            evaluate_assignment_value(&assign_prop, &mut ctx_value, &evt_value, &None);
+            *ctx_val = value_to_js(&ctx_value);
+        } else if effective_type == "xstate.enqueueActions" {
+            let collect_fn = js_sys::Reflect::get(&item, &JsValue::from_str("collect")).unwrap_or(JsValue::UNDEFINED);
+            if let Ok(func) = collect_fn.dyn_into::<js_sys::Function>() {
+                let enqueued_items = Rc::new(RefCell::new(Vec::new()));
+                let enq_clone = enqueued_items.clone();
+                let enq_closure = Closure::wrap(Box::new(move |act: JsValue| {
+                    enq_clone.borrow_mut().push(act);
+                }) as Box<dyn FnMut(JsValue)>);
+                let helper_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&helper_obj, &JsValue::from_str("context"), ctx_val);
+                let _ = js_sys::Reflect::set(&helper_obj, &JsValue::from_str("event"), evt_val);
+                let _ = js_sys::Reflect::set(&helper_obj, &JsValue::from_str("enqueue"), enq_closure.as_ref().unchecked_ref());
+                let self_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&helper_obj, &JsValue::from_str("self"), &self_obj);
+                let _ = func.call1(&JsValue::NULL, &helper_obj);
+                for enq_act in enqueued_items.borrow().iter() {
+                    resolve_pure_actions(enq_act, ctx_val, evt_val, collected);
+                }
+            }
+        } else if effective_type == "xstate.cancel" {
+            let params_prop = js_sys::Reflect::get(&item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            let act_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.cancel"));
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("params"), &params_prop);
+            collected.push(act_obj.into());
+        } else if effective_type == "xstate.log" {
+            let params_prop = js_sys::Reflect::get(&item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            let resolved_params = js_sys::Object::new();
+            if params_prop.is_object() {
+                let val_expr = js_sys::Reflect::get(&params_prop, &JsValue::from_str("value")).unwrap_or(JsValue::UNDEFINED);
+                let final_val = if val_expr.is_function() {
+                    let fn_val = js_sys::Function::from(val_expr);
+                    let arg_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), ctx_val);
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), evt_val);
+                    fn_val.call1(&JsValue::NULL, &arg_obj).unwrap_or(JsValue::UNDEFINED)
+                } else {
+                    val_expr
+                };
+                let _ = js_sys::Reflect::set(&resolved_params, &JsValue::from_str("value"), &final_val);
+            }
+            let act_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.log"));
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("params"), &resolved_params);
+            collected.push(act_obj.into());
+        } else if effective_type == "xstate.emit" {
+            let params_prop = js_sys::Reflect::get(&item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            let resolved_params = js_sys::Object::new();
+            if params_prop.is_object() {
+                let evt_expr = js_sys::Reflect::get(&params_prop, &JsValue::from_str("event")).unwrap_or(JsValue::UNDEFINED);
+                let final_evt = if evt_expr.is_function() {
+                    let fn_val = js_sys::Function::from(evt_expr);
+                    let arg_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), ctx_val);
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), evt_val);
+                    fn_val.call1(&JsValue::NULL, &arg_obj).unwrap_or(JsValue::UNDEFINED)
+                } else {
+                    evt_expr
+                };
+                let _ = js_sys::Reflect::set(&resolved_params, &JsValue::from_str("event"), &final_evt);
+            }
+            let act_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.emit"));
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("params"), &resolved_params);
+            collected.push(act_obj.into());
+        } else if effective_type == "xstate.raise" {
+            collected.push(item.clone());
+        } else if !type_str.is_empty() {
+            let act_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), &JsValue::from_str(&effective_type));
+            let params_prop = js_sys::Reflect::get(&item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
+            if !params_prop.is_undefined() {
+                if params_prop.is_function() {
+                    let fn_params = js_sys::Function::from(params_prop);
+                    let arg_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), ctx_val);
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), evt_val);
+                    if let Ok(evaluated) = fn_params.call1(&JsValue::NULL, &arg_obj) {
+                        let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("params"), &evaluated);
+                    }
+                } else {
+                    let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("params"), &params_prop);
+                }
+            }
+            collected.push(act_obj.into());
+        }
+    }
+}
+
+pub(crate) struct MachineSession {
+    pub machine: RuntimeMachine,
+    pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    #[allow(dead_code)]
+    pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub action_descriptors: IndexMap<String, JsValue>,
+    pub config: JsValue,
+}
+
+fn extract_machine_session(val: &JsValue) -> Result<MachineSession, JsValue> {
+    if val.is_object() {
+        if let Ok(func_val) = js_sys::Reflect::get(val, &JsValue::from_str("_get_internal_state")) {
+            if func_val.is_function() {
+                let func = func_val.dyn_into::<js_sys::Function>()?;
+                let ptr_num_val = func.call0(val)?;
+                let num = js_sys::Number::from(ptr_num_val);
+                let ptr = num.value_of() as usize;
+                if ptr != 0 {
+                    let mut internal = unsafe { Box::from_raw(ptr as *mut InternalState) };
+                    internal.machine.guards.extend(internal.guards.clone());
+                    internal.machine.actions.extend(internal.actions.clone());
+                    let config = js_sys::Reflect::get(val, &JsValue::from_str("config")).unwrap_or(JsValue::UNDEFINED);
+                    return Ok(MachineSession {
+                        machine: internal.machine,
+                        guards: internal.guards,
+                        actions: internal.actions,
+                        action_descriptors: internal.action_descriptors,
+                        config,
+                    });
+                }
+            }
+        }
+    }
+    let node = create_machine(val.clone(), None)?;
+    let mut m = node.machine.clone();
+    m.guards.extend(node.guards.clone());
+    m.actions.extend(node.actions.clone());
+    Ok(MachineSession {
+        machine: m,
+        guards: node.guards.clone(),
+        actions: node.actions.clone(),
+        action_descriptors: node.action_descriptors.clone(),
+        config: node.config.clone(),
+    })
+}
+
+fn format_and_resolve_action(
+    act: &lavi::Action,
+    action_descriptors: &IndexMap<String, JsValue>,
+    ctx_val: &mut JsValue,
+    evt_val: &JsValue,
+    collected: &mut Vec<JsValue>,
+) {
+    match act {
+        lavi::Action::DelayedRaise(dra) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise"));
+            let params_obj = js_sys::Object::new();
+            let delay_val = match &dra.delay {
+                lavi::Delay::Literal(ms) => JsValue::from_f64(*ms as f64),
+                lavi::Delay::Named(s) => JsValue::from_str(s),
+            };
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("delay"), &delay_val);
+            let evt_val_inner = value_to_js(&dra.event);
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &evt_val_inner);
+            if let Some(ref id) = dra.id {
+                let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("id"), &JsValue::from_str(id));
+            }
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("params"), &params_obj);
+            collected.push(obj.into());
+        }
+        lavi::Action::Raise(payload) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise"));
+            let params_obj = js_sys::Object::new();
+            let evt_val_inner = value_to_js(payload);
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &evt_val_inner);
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("params"), &params_obj);
+            collected.push(obj.into());
+        }
+        lavi::Action::Cancel(ca) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.cancel"));
+            let params_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("sendId"), &JsValue::from_str(&ca.send_id));
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("params"), &params_obj);
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sendId"), &JsValue::from_str(&ca.send_id));
+            collected.push(obj.into());
+        }
+        lavi::Action::Log(la) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.log"));
+            let params_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("value"), &value_to_js(&la.value));
+            if let Some(ref lbl) = la.label {
+                let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("label"), &JsValue::from_str(lbl));
+            }
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("params"), &params_obj);
+            collected.push(obj.into());
+        }
+        lavi::Action::Assign(_) => {
+            // Assignments modify context directly and are not emitted in actions array.
+        }
+        lavi::Action::Named(name) => {
+            if let Some(desc) = action_descriptors.get(name) {
+                resolve_pure_actions(desc, ctx_val, evt_val, collected);
+            } else {
+                let obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str(name));
+                collected.push(obj.into());
+            }
+        }
+        lavi::Action::Generic(ga) => {
+            if let Some(desc) = action_descriptors.get(&ga.action_type) {
+                resolve_pure_actions(desc, ctx_val, evt_val, collected);
+            } else {
+                let obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str(&ga.action_type));
+                if let Some(ref p) = ga.params {
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("params"), &value_to_js(p));
+                }
+                collected.push(obj.into());
+            }
+        }
+        lavi::Action::RaiseInvalid(msg) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise.invalid"));
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("error"), &JsValue::from_str(msg));
+            collected.push(obj.into());
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = initialTransition)]
+pub fn initial_transition(machine_val: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
+    let options = options.unwrap_or(JsValue::UNDEFINED);
+    let session = extract_machine_session(&machine_val)?;
+
+    let input_js = if options.is_object() {
+        js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
+    } else {
+        JsValue::UNDEFINED
+    };
+    let input_val = if !input_js.is_undefined() {
+        Some(js_to_value(&input_js))
+    } else {
+        None
+    };
+
+    let mut machine_to_run = session.machine.clone();
+    if session.config.is_object() {
+        let context_key = JsValue::from_str("context");
+        let context_val = js_sys::Reflect::get(&session.config, &context_key).unwrap_or(JsValue::UNDEFINED);
+        if context_val.is_function() {
+            if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+                let arg_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &input_js);
+                let self_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
+                if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+                    machine_to_run.context = js_to_value(&res);
+                }
+            }
+        }
+    }
+
+    let (next_state_val, next_ctx, actions_vec) = machine_to_run.initial_transition_pure(input_val.as_ref());
+
+    let mut ctx_js = value_to_js(&next_ctx);
+    let mut actions_js = Vec::new();
+    let init_evt = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&init_evt, &JsValue::from_str("type"), &JsValue::from_str("xstate.init"));
+    let init_evt_js: JsValue = init_evt.into();
+
+    for act in &actions_vec {
+        format_and_resolve_action(
+            act,
+            &session.action_descriptors,
+            &mut ctx_js,
+            &init_evt_js,
+            &mut actions_js,
+        );
+    }
+
+    let mut final_machine = machine_to_run;
+    final_machine.current_state = next_state_val.clone();
+    final_machine.context = js_to_value(&ctx_js);
+    final_machine.refresh_status();
+
+    let dummy_logger = Rc::new(RefCell::new(None));
+    let history_obj = compute_history_value_obj(
+        &final_machine,
+        &session.guards,
+        &session.actions,
+        &session.action_descriptors,
+        &session.config,
+        &dummy_logger,
+    );
+
+    let output_val = if final_machine.is_done() {
+        Actor::compute_output_js(&session.config, &final_machine, &ctx_js)
+    } else {
+        JsValue::UNDEFINED
+    };
+
+    let active_paths = final_machine.current_state.get_active_paths();
+    let state_val_js = Actor::build_snapshot_state_value(&final_machine, &active_paths);
+
+    let snapshot = Snapshot {
+        value: state_val_js,
+        context: ctx_js,
+        status: if final_machine.is_done() { "done".to_string() } else { "active".to_string() },
+        machine_ref: final_machine,
+        guards: session.guards.clone(),
+        history_value: history_obj,
+        config: session.config.clone(),
+        output: output_val,
+        error: JsValue::UNDEFINED,
+    };
+
+    let result = js_sys::Array::new();
+    result.push(&snapshot.into());
+    let actions_arr = js_sys::Array::new();
+    for a in actions_js {
+        actions_arr.push(&a);
+    }
+    result.push(&actions_arr);
+    Ok(result.into())
+}
+
+#[wasm_bindgen]
+pub fn transition(machine_val: JsValue, state_val: JsValue, event_val: JsValue) -> Result<JsValue, JsValue> {
+    let session = extract_machine_session(&machine_val)?;
+
+    let (current_state_val, current_ctx_val, incoming_history) = if state_val.is_object() {
+        let val_prop = js_sys::Reflect::get(&state_val, &JsValue::from_str("value")).unwrap_or(JsValue::UNDEFINED);
+        let ctx_prop = js_sys::Reflect::get(&state_val, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
+        let hist_prop = js_sys::Reflect::get(&state_val, &JsValue::from_str("historyValue"))
+            .ok()
+            .filter(|v| !v.is_undefined() && !v.is_null())
+            .or_else(|| {
+                js_sys::Reflect::get(&state_val, &JsValue::from_str("history"))
+                    .ok()
+                    .filter(|v| !v.is_undefined() && !v.is_null())
+            })
+            .unwrap_or(JsValue::UNDEFINED);
+
+        let st_val = if val_prop.is_string() {
+            let s = val_prop.as_string().unwrap_or_default();
+            lavi::value_to_state_value(Value::String(s))
+        } else if val_prop.is_object() {
+            let v = js_to_value(&val_prop);
+            let parsed = lavi::value_to_state_value(v);
+            if matches!(session.machine.definition.state_type, StateType::Parallel) {
+                match &parsed {
+                    lavi::StateValue::Parallel(_) => parsed,
+                    lavi::StateValue::Compound(k, v) => {
+                        let mut m = IndexMap::new();
+                        m.insert(k.clone(), lavi::StateValue::Compound(k.clone(), v.clone()));
+                        lavi::StateValue::Parallel(m)
+                    }
+                    lavi::StateValue::Atomic(k) => {
+                        let mut m = IndexMap::new();
+                        m.insert(k.clone(), lavi::StateValue::Atomic(k.clone()));
+                        lavi::StateValue::Parallel(m)
+                    }
+                }
+            } else {
+                parsed
+            }
+        } else {
+            session.machine.current_state.clone()
+        };
+        let c_val = if ctx_prop.is_object() && !ctx_prop.is_null() {
+            js_to_value(&ctx_prop)
+        } else {
+            session.machine.context.clone()
+        };
+
+        let hist_val = if hist_prop.is_object() && !hist_prop.is_null() {
+            if let Ok(json_js) = js_sys::JSON::stringify(&hist_prop) {
+                if let Some(json_str) = json_js.as_string() {
+                    lavi::Value::from_json(&json_str).unwrap_or(Value::Null)
+                } else {
+                    js_to_value(&hist_prop)
+                }
+            } else {
+                js_to_value(&hist_prop)
+            }
+        } else {
+            Value::Null
+        };
+        let parsed_history = session.machine.parse_history_value(&hist_val);
+
+        (st_val, c_val, parsed_history)
+    } else if let Some(s) = state_val.as_string() {
+        (lavi::value_to_state_value(Value::String(s)), session.machine.context.clone(), IndexMap::new())
+    } else {
+        (session.machine.current_state.clone(), session.machine.context.clone(), IndexMap::new())
+    };
+
+    let (evt_type, evt_payload) = if event_val.is_string() {
+        let s = event_val.as_string().unwrap_or_default();
+        let mut map = IndexMap::new();
+        map.insert("type".to_string(), Value::String(s.clone()));
+        (s, Value::Object(map))
+    } else if event_val.is_object() {
+        let t_prop = js_sys::Reflect::get(&event_val, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
+        let s = t_prop.as_string().unwrap_or_default();
+        let payload = js_to_value(&event_val);
+        (s, payload)
+    } else {
+        (String::new(), Value::Object(IndexMap::new()))
+    };
+
+    let (next_state_val, next_ctx, actions_vec, updated_history) = session.machine.transition_pure_with_context_and_history(
+        &current_state_val,
+        &current_ctx_val,
+        Some(&incoming_history),
+        &evt_type,
+        &evt_payload,
+    );
+
+    let mut ctx_js = value_to_js(&next_ctx);
+    let mut actions_js = Vec::new();
+    let evt_js = value_to_js(&evt_payload);
+
+    for act in &actions_vec {
+        format_and_resolve_action(
+            act,
+            &session.action_descriptors,
+            &mut ctx_js,
+            &evt_js,
+            &mut actions_js,
+        );
+    }
+
+    let mut final_machine = session.machine.clone();
+    final_machine.current_state = next_state_val.clone();
+    final_machine.context = js_to_value(&ctx_js);
+    final_machine.history_value = updated_history;
+    final_machine.refresh_status();
+
+    let dummy_logger = Rc::new(RefCell::new(None));
+    let history_obj = compute_history_value_obj(
+        &final_machine,
+        &session.guards,
+        &session.actions,
+        &session.action_descriptors,
+        &session.config,
+        &dummy_logger,
+    );
+
+    let output_val = if final_machine.is_done() {
+        Actor::compute_output_js(&session.config, &final_machine, &ctx_js)
+    } else {
+        JsValue::UNDEFINED
+    };
+
+    let active_paths = final_machine.current_state.get_active_paths();
+    let state_val_js = Actor::build_snapshot_state_value(&final_machine, &active_paths);
+
+    let snapshot = Snapshot {
+        value: state_val_js,
+        context: ctx_js,
+        status: if final_machine.is_done() { "done".to_string() } else { "active".to_string() },
+        machine_ref: final_machine,
+        guards: session.guards.clone(),
+        history_value: history_obj,
+        config: session.config.clone(),
+        output: output_val,
+        error: JsValue::UNDEFINED,
+    };
+
+    let result = js_sys::Array::new();
+    result.push(&snapshot.into());
+    let actions_arr = js_sys::Array::new();
+    for a in actions_js {
+        actions_arr.push(&a);
+    }
+    result.push(&actions_arr);
+    Ok(result.into())
 }

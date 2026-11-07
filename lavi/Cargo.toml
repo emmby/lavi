@@ -8,4 +8,4 @@ repository = "https://github.com/emmby/lavi"
 
 [dependencies]
 # We don't want to have any dependencies in this package, except basic data structures
-indexmap = { version = "2.7" }
+indexmap = { version = "2.7", default-features = false }

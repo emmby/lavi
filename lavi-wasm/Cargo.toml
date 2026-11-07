@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 wasm-bindgen = { workspace = true }
 lavi = { workspace = true }
-indexmap = "2.7"
+indexmap = { version = "2.7", default-features = false }
 js-sys = "0.3"
 web-sys = { version = "0.3.83", features = ["console"] }
 

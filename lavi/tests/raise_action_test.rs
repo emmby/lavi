@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 use lavi::{from_json_str, RuntimeMachine, Value};
 
 #[test]

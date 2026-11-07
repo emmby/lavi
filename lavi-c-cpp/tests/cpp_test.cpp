@@ -440,7 +440,350 @@ int main() {
         std::string stop_res_snap = cpp_stop_res.getSnapshot();
         assert(stop_res_snap.find("\"status\":\"stopped\"") != std::string::npos);
 
+        // Milestone 3: Dynamic named delay and guard with params in C++
+        const char* M3_CPP_JSON = R"({
+          "id": "m3CppFsm",
+          "initial": "initial",
+          "context": { "score": 10 },
+          "states": {
+            "initial": {
+              "after": { "customDelay": "timedOut" },
+              "on": {
+                "TEST": [
+                  {
+                    "target": "passed",
+                    "guard": { "type": "minScore", "params": { "threshold": 5 } }
+                  }
+                ]
+              }
+            },
+            "timedOut": {},
+            "passed": {}
+          }
+        })";
+
+        lavi::SimulatedClock m3_clock(0);
+        lavi::Machine m3_fsm(M3_CPP_JSON, m3_clock);
+        bool m3_delay_called = false;
+        bool m3_guard_called = false;
+
+        m3_fsm.registerDelay("customDelay", [&](const lavi::Value&, const lavi::Value&) -> uint64_t {
+            m3_delay_called = true;
+            return 1200;
+        });
+
+        m3_fsm.registerGuardWithParams("minScore", [&](const lavi::Value& ctx, const lavi::Value&, const lavi::Value& params) -> bool {
+            m3_guard_called = true;
+            double score = 0, threshold = 0;
+            assert(ctx.getProperty("score").getNumber(score));
+            assert(params.getProperty("threshold").getNumber(threshold));
+            return score >= threshold;
+        });
+
+        m3_fsm.start();
+        assert(m3_fsm.matches("initial"));
+        uint64_t m3_dl = 0;
+        assert(m3_fsm.getNextDeadline(m3_dl) && m3_dl == 1200);
+        assert(m3_delay_called);
+
+        // Guard evaluation
+        assert(m3_fsm.can("TEST"));
+        m3_fsm.send("TEST");
+        assert(m3_fsm.matches("passed"));
+        assert(m3_guard_called);
+
+        // ==========================================
+        // Milestone 5: Machine Construction with Input JSON
+        // ==========================================
+        const char* INPUT_CPP_JSON = R"({
+          "id": "inputCppFsm",
+          "initial": "init",
+          "context": { "cycles": 0 },
+          "states": {
+            "init": {
+              "entry": ["verifyInput"],
+              "on": { "GO": "active" }
+            },
+            "active": {}
+          }
+        })";
+
+        bool cpp_input_checked = false;
+        // Test raw pointer constructor
+        lavi::Machine inputMachine(INPUT_CPP_JSON, R"({"apiKey": "token123", "initialCount": 99})");
+
+        inputMachine.registerAction("verifyInput", [&](const lavi::Value&, const lavi::Value& event) {
+            auto inp = event.getProperty("input");
+            assert(!inp.isNull());
+            assert(inp.isObject());
+            std::string token;
+            double count = 0;
+            assert(inp.getProperty("apiKey").isString());
+            assert(inp.getProperty("apiKey").getString(token) && token == "token123");
+            assert(inp.getProperty("initialCount").isNumber());
+            assert(inp.getProperty("initialCount").getNumber(count) && count == 99.0);
+            cpp_input_checked = true;
+        });
+
+        inputMachine.start();
+        assert(inputMachine.matches("init"));
+        assert(cpp_input_checked);
+
+        // Test std::string constructor
+        bool cpp_str_input_checked = false;
+        std::string str_json(INPUT_CPP_JSON);
+        std::string str_inp(R"({"apiKey": "token456", "initialCount": 100})");
+        lavi::Machine strInputMachine(str_json, str_inp);
+        strInputMachine.registerAction("verifyInput", [&](const lavi::Value&, const lavi::Value& event) {
+            auto inp = event.getProperty("input");
+            std::string token;
+            assert(inp.getProperty("apiKey").getString(token) && token == "token456");
+            cpp_str_input_checked = true;
+        });
+        strInputMachine.start();
+        assert(strInputMachine.is_in_state("init"));
+        assert(cpp_str_input_checked);
+
+        // ==========================================
+        // Milestone 5: Output Retrieval in C++
+        // ==========================================
+        const char* OUTPUT_CPP_JSON = R"({
+          "id": "outputCppFsm",
+          "initial": "running",
+          "output": { "status": "ok", "retries": 4 },
+          "states": {
+            "running": {
+              "on": { "FINISH": "done" }
+            },
+            "done": {
+              "type": "final"
+            }
+          }
+        })";
+
+        lavi::Machine out_machine(OUTPUT_CPP_JSON);
+        out_machine.start();
+
+        // Unfinished machine returns empty output
+        assert(out_machine.get_output_json().empty());
+        std::string out_sink;
+        assert(!out_machine.get_output(out_sink));
+
+        // Finish machine
+        out_machine.send("FINISH");
+        assert(out_machine.isDone());
+        std::string json_output = out_machine.get_output_json();
+        assert(!json_output.empty());
+        assert(json_output.find("\"status\":\"ok\"") != std::string::npos);
+        assert(json_output.find("\"retries\":4") != std::string::npos);
+        assert(out_machine.get_output(out_sink));
+        assert(out_sink == json_output);
+
+        // ==========================================
+        // Milestone 5: Metadata Retrieval in C++
+        // ==========================================
+        const char* META_CPP_JSON = R"({
+          "id": "metaCppFsm",
+          "initial": "idle",
+          "meta": { "schema": "v1" },
+          "states": {
+            "idle": {
+              "meta": { "help": "wait for trigger" },
+              "on": { "TRIGGER": "active" }
+            },
+            "active": {
+              "meta": { "help": "performing work" }
+            }
+          }
+        })";
+
+        lavi::Machine metaMachine(META_CPP_JSON);
+        metaMachine.start();
+
+        std::string root_meta = metaMachine.get_meta_json();
+        assert(root_meta.find("\"schema\":\"v1\"") != std::string::npos);
+        assert(root_meta.find("\"wait for trigger\"") != std::string::npos);
+
+        std::string idle_meta = metaMachine.get_state_meta_json("idle");
+        assert(idle_meta.find("\"wait for trigger\"") != std::string::npos);
+
+        std::string active_meta = metaMachine.get_state_meta_json("active");
+        assert(active_meta.find("\"performing work\"") != std::string::npos);
+
+        assert(metaMachine.get_state_meta_json("invalid_state").empty());
+
+        // State serialization & send_json
+        std::string st_json = metaMachine.get_state();
+        assert(st_json == "\"idle\"");
+        metaMachine.send_json(R"({"type": "TRIGGER"})");
+        assert(metaMachine.matches("active"));
+        assert(metaMachine.get_state() == "\"active\"");
+
+        // ==========================================
+        // Milestone 5: Dual registerDelay Overloads (Function Pointer vs std::function)
+        // ==========================================
+        const char* DUAL_DELAY_JSON = R"({
+          "id": "dualDelayFsm",
+          "initial": "s1",
+          "context": { "duration": 500 },
+          "states": {
+            "s1": {
+              "after": { "fnPtrDelay": "s2" }
+            },
+            "s2": {
+              "after": { "lambdaDelay": "s3" }
+            },
+            "s3": {}
+          }
+        })";
+
+        lavi::SimulatedClock dual_clk(0);
+        lavi::Machine dual_fsm(DUAL_DELAY_JSON, dual_clk);
+
+        struct DelayMultiplier {
+            int mult;
+        };
+        DelayMultiplier multiplier_ctx = { 2 }; // 500 * 2 = 1000
+
+        auto raw_c_delay = [](const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) -> uint64_t {
+            (void)name;
+            (void)evt;
+            auto* mult_obj = static_cast<DelayMultiplier*>(user_data);
+            const fsm_value_t* dur_val = fsm_value_get_property(ctx, "duration");
+            assert(dur_val != nullptr);
+            return static_cast<uint64_t>(fsm_value_get_number(dur_val) * mult_obj->mult);
+        };
+        dual_fsm.registerDelay("fnPtrDelay", raw_c_delay, &multiplier_ctx);
+
+        dual_fsm.registerDelay("lambdaDelay", [](const lavi::Value& ctx, const lavi::Value&) -> uint64_t {
+            double base = 0;
+            assert(ctx.getProperty("duration").getNumber(base));
+            return static_cast<uint64_t>(base + 250); // 500 + 250 = 750
+        });
+
+        dual_fsm.start();
+        assert(dual_fsm.matches("s1"));
+
+        uint64_t dual_dl = 0;
+        assert(dual_fsm.getNextDeadline(dual_dl) && dual_dl == 1000);
+        dual_clk.set(1000);
+        assert(dual_fsm.matches("s2"));
+
+        assert(dual_fsm.getNextDeadline(dual_dl) && dual_dl == 1750);
+        dual_clk.set(1750);
+        assert(dual_fsm.matches("s3"));
+
+        // ==========================================
+        // Milestone 5: Move Semantics Preserving Callbacks
+        // ==========================================
+        const char* MOVE_REG_JSON = R"({
+          "id": "moveRegFsm",
+          "initial": "step1",
+          "states": {
+            "step1": {
+              "after": { "moveDelay": "step2" },
+              "on": {
+                "TEST": {
+                  "target": "step2",
+                  "guard": "allowMove"
+                }
+              }
+            },
+            "step2": {}
+          }
+        })";
+
+        lavi::SimulatedClock move_clk(0);
+        lavi::Machine original_fsm(MOVE_REG_JSON, move_clk);
+
+        bool move_guard_called = false;
+        bool move_delay_called = false;
+
+        original_fsm.registerGuard("allowMove", [&](const lavi::Value&, const lavi::Value&) {
+            move_guard_called = true;
+            return true;
+        });
+
+        original_fsm.registerDelay("moveDelay", [&](const lavi::Value&, const lavi::Value&) -> uint64_t {
+            move_delay_called = true;
+            return 1500;
+        });
+
+        original_fsm.start();
+        assert(original_fsm.matches("step1"));
+
+        // Move original_fsm into moved_dest
+        lavi::Machine moved_dest = std::move(original_fsm);
+
+        // Advance clock and evaluate callbacks on moved_dest
+        uint64_t m_dl = 0;
+        assert(moved_dest.getNextDeadline(m_dl) && m_dl == 1500);
+        assert(move_delay_called);
+
+        assert(moved_dest.can("TEST"));
+        moved_dest.send("TEST");
+        assert(moved_dest.matches("step2"));
+        assert(move_guard_called);
+
+        // ==========================================
+        // Milestone 6: registerActionWithParams in C++
+        // ==========================================
+        const char* ACTION_PARAMS_JSON = R"({
+          "id": "actionParamsFsm",
+          "initial": "idle",
+          "states": {
+            "idle": {
+              "on": {
+                "EXEC": {
+                  "target": "active",
+                  "actions": [
+                    { "type": "lambdaAction", "params": { "threshold": 42, "msg": "ok" } },
+                    { "type": "fnAction", "params": { "factor": 3 } }
+                  ]
+                }
+              }
+            },
+            "active": {}
+          }
+        })";
+
+        lavi::Machine act_params_fsm(ACTION_PARAMS_JSON);
+        bool lambda_act_called = false;
+        bool fn_act_called = false;
+
+        act_params_fsm.registerActionWithParams("lambdaAction", [&](const lavi::Value&, const lavi::Value&, const lavi::Value& params) {
+            double thresh = 0;
+            std::string msg;
+            assert(params.getProperty("threshold").getNumber(thresh) && thresh == 42.0);
+            assert(params.getProperty("msg").getString(msg) && msg == "ok");
+            lambda_act_called = true;
+        });
+
+        struct FnActionData {
+            bool* called_flag;
+        };
+        FnActionData fn_data = { &fn_act_called };
+
+        auto raw_action_cb = [](const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, const fsm_value_t* params, void* user_data) {
+            (void)name;
+            (void)ctx;
+            (void)evt;
+            auto* data = static_cast<FnActionData*>(user_data);
+            const fsm_value_t* f_val = fsm_value_get_property(params, "factor");
+            assert(f_val != nullptr && fsm_value_get_number(f_val) == 3.0);
+            *(data->called_flag) = true;
+        };
+        act_params_fsm.registerActionWithParams("fnAction", raw_action_cb, &fn_data);
+
+        act_params_fsm.start();
+        assert(act_params_fsm.matches("idle"));
+        act_params_fsm.send("EXEC");
+        assert(act_params_fsm.matches("active"));
+        assert(lambda_act_called);
+        assert(fn_act_called);
+
     } catch (const std::exception& e) {
+
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
         return 1;
     }

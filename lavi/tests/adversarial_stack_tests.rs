@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 use lavi::{
     value_to_state_value, MachineStatus, RuntimeMachine, StateValue, Value,
 };

@@ -4,7 +4,7 @@ use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cell::RefCell;
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 use lavi::{
     MachineStatus, RuntimeMachine, StateValue, Value,
 };

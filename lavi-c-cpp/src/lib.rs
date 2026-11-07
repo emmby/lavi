@@ -1,13 +1,15 @@
 #![no_std]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 use alloc::boxed::Box;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
 use alloc::collections::BTreeMap;
 use lavi::{from_json_str, RuntimeMachine, Value};
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 
 #[repr(C)]
 pub struct fsm_value_t {
@@ -23,6 +25,16 @@ pub type fsm_action_callback_t = Option<extern "C" fn(
 )>;
 
 #[allow(non_camel_case_types)]
+pub type fsm_action_with_params_callback_t = Option<extern "C" fn(
+    action_name: *const c_char,
+    context: *const fsm_value_t,
+    event: *const fsm_value_t,
+    params: *const fsm_value_t,
+    user_data: *mut core::ffi::c_void,
+)>;
+
+
+#[allow(non_camel_case_types)]
 pub type fsm_clock_callback_t = Option<extern "C" fn() -> u64>;
 
 #[allow(non_camel_case_types)]
@@ -33,6 +45,23 @@ pub type fsm_guard_callback_t = Option<extern "C" fn(
     guard_name: *const c_char,
     context: *const fsm_value_t,
     event: *const fsm_value_t,
+    user_data: *mut core::ffi::c_void,
+) -> bool>;
+
+#[allow(non_camel_case_types)]
+pub type fsm_delay_callback_t = Option<extern "C" fn(
+    delay_name: *const c_char,
+    context: *const fsm_value_t,
+    event: *const fsm_value_t,
+    user_data: *mut core::ffi::c_void,
+) -> u64>;
+
+#[allow(non_camel_case_types)]
+pub type fsm_guard_with_params_callback_t = Option<extern "C" fn(
+    guard_name: *const c_char,
+    context: *const fsm_value_t,
+    event: *const fsm_value_t,
+    params: *const fsm_value_t,
     user_data: *mut core::ffi::c_void,
 ) -> bool>;
 
@@ -77,9 +106,38 @@ impl Drop for MachineContext {
     }
 }
 
+fn copy_string_to_buffer(s: &str, buffer: *mut c_char, buffer_len: usize) -> i32 {
+    let bytes = s.as_bytes();
+    let needed_len = bytes.len() + 1;
+
+    if needed_len > i32::MAX as usize {
+        return -3;
+    }
+
+    if buffer.is_null() || buffer_len == 0 {
+        return needed_len as i32;
+    }
+
+    if buffer_len < needed_len {
+        return -2;
+    }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer as *mut u8, bytes.len());
+        *buffer.add(bytes.len()) = 0;
+    }
+
+    bytes.len() as i32
+}
+
 #[no_mangle]
-pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
-    if json_ptr.is_null() { return ptr::null_mut(); }
+pub extern "C" fn fsm_create_with_input(
+    json_ptr: *const c_char,
+    input_ptr: *const c_char,
+) -> *mut MachineContext {
+    if json_ptr.is_null() {
+        return ptr::null_mut();
+    }
     let c_str = unsafe { CStr::from_ptr(json_ptr) };
     let json_str = match c_str.to_str() {
         Ok(s) => s,
@@ -91,10 +149,24 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
         Err(_) => return ptr::null_mut(),
     };
 
-    let machine = match RuntimeMachine::from_definition(def) {
+    let mut machine = match RuntimeMachine::from_definition(def) {
         Ok(m) => m,
         Err(_) => return ptr::null_mut(),
     };
+
+    if !input_ptr.is_null() {
+        let input_c_str = unsafe { CStr::from_ptr(input_ptr) };
+        let input_str = match input_c_str.to_str() {
+            Ok(s) => s,
+            Err(_) => return ptr::null_mut(),
+        };
+        let parsed_input = match Value::from_json(input_str) {
+            Ok(v) => v,
+            Err(_) => return ptr::null_mut(),
+        };
+        machine.input = Some(parsed_input);
+    }
+
     let ctx = Box::new(MachineContext {
         machine,
         callbacks: BTreeMap::new(),
@@ -105,6 +177,12 @@ pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
     });
     Box::into_raw(ctx)
 }
+
+#[no_mangle]
+pub extern "C" fn fsm_create(json_ptr: *const c_char) -> *mut MachineContext {
+    fsm_create_with_input(json_ptr, ptr::null())
+}
+
 
 #[no_mangle]
 pub extern "C" fn fsm_start(ptr: *mut MachineContext) -> c_int {
@@ -126,6 +204,11 @@ pub extern "C" fn fsm_free(ptr: *mut MachineContext) {
 }
 
 #[no_mangle]
+pub extern "C" fn fsm_destroy(ptr: *mut MachineContext) {
+    fsm_free(ptr);
+}
+
+#[no_mangle]
 pub extern "C" fn fsm_matches(ptr: *const MachineContext, state_path: *const c_char) -> bool {
     if ptr.is_null() || state_path.is_null() {
         return false;
@@ -138,6 +221,12 @@ pub extern "C" fn fsm_matches(ptr: *const MachineContext, state_path: *const c_c
     };
     ctx.machine.matches(path)
 }
+
+#[no_mangle]
+pub extern "C" fn fsm_is_in_state(ptr: *const MachineContext, state_path: *const c_char) -> bool {
+    fsm_matches(ptr, state_path)
+}
+
 
 #[no_mangle]
 pub extern "C" fn fsm_can(ctx: *const MachineContext, event: *const c_char) -> c_int {
@@ -234,6 +323,52 @@ pub extern "C" fn fsm_send_event(ptr: *mut MachineContext, event_ptr: *const c_c
     ctx.machine.transition(event, &payload, &ctx.guards, &ctx.actions);
     0
 }
+
+#[no_mangle]
+pub extern "C" fn fsm_send_json_event(
+    ptr: *mut MachineContext,
+    json_event_ptr: *const c_char,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() {
+            return -1;
+        }
+        &mut *ptr
+    };
+    if json_event_ptr.is_null() {
+        return -2;
+    }
+    let c_str = unsafe { CStr::from_ptr(json_event_ptr) };
+    let json_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+
+    let val = match Value::from_json(json_str) {
+        Ok(v) => v,
+        Err(_) => return -3,
+    };
+
+    if !ctx.machine.is_started {
+        return 0; // Level 1 memory invariant: drop pre-start events without buffering
+    }
+
+    let (event_type, payload) = match val {
+        Value::String(ref s) => (s.clone(), Value::event(s)),
+        Value::Object(ref map) => {
+            let ev_type = match map.get("type").and_then(|v| v.as_string()) {
+                Some(s) => alloc::string::String::from(s),
+                None => return -4,
+            };
+            (ev_type, val)
+        }
+        _ => return -4,
+    };
+
+    ctx.machine.transition(&event_type, &payload, &ctx.guards, &ctx.actions);
+    0
+}
+
 
 /// Registers a custom clock mechanism for resolving `after` transitions.
 /// The `callback` must return a u64 reflecting an absolute monotonically increasing timestamp in milliseconds.
@@ -598,6 +733,137 @@ pub extern "C" fn fsm_register_guard(
 }
 
 #[no_mangle]
+pub extern "C" fn fsm_register_delay(
+    ptr: *mut MachineContext,
+    delay_name: *const c_char,
+    callback: fsm_delay_callback_t,
+    user_data: *mut core::ffi::c_void,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    if delay_name.is_null() { return -2; }
+    
+    let name_c_str = unsafe { CStr::from_ptr(delay_name) };
+    let name = match name_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    
+    let name_string = alloc::string::String::from(name);
+    let delay_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
+    let delay_fn: lavi::DelayFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value| -> u64 {
+        if let Some(cb) = callback {
+            cb(
+                delay_name_cstr.as_ptr(),
+                context as *const Value as *const fsm_value_t,
+                event as *const Value as *const fsm_value_t,
+                user_data,
+            )
+        } else {
+            0
+        }
+    });
+    
+    ctx.machine.register_delay(&name_string, delay_fn);
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_register_guard_with_params(
+    ptr: *mut MachineContext,
+    guard_name: *const c_char,
+    callback: fsm_guard_with_params_callback_t,
+    user_data: *mut core::ffi::c_void,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() { return -1; }
+        &mut *ptr
+    };
+    if guard_name.is_null() { return -2; }
+    
+    let name_c_str = unsafe { CStr::from_ptr(guard_name) };
+    let name = match name_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    
+    let name_string = alloc::string::String::from(name);
+    let guard_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
+    let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, params: &Option<Value>| -> bool {
+        if let Some(cb) = callback {
+            let params_ptr = match params {
+                Some(p) => p as *const Value as *const fsm_value_t,
+                None => ptr::null(),
+            };
+            cb(
+                guard_name_cstr.as_ptr(),
+                context as *const Value as *const fsm_value_t,
+                event as *const Value as *const fsm_value_t,
+                params_ptr,
+                user_data,
+            )
+        } else {
+            false
+        }
+    });
+    
+    ctx.guards.insert(name_string, guard_fn);
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_register_action_with_params(
+    ptr: *mut MachineContext,
+    action_name: *const c_char,
+    callback: fsm_action_with_params_callback_t,
+    user_data: *mut core::ffi::c_void,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() {
+            return -1;
+        }
+        &mut *ptr
+    };
+    if action_name.is_null() {
+        return -2;
+    }
+
+    let name_c_str = unsafe { CStr::from_ptr(action_name) };
+    let name = match name_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+
+    let name_string = alloc::string::String::from(name);
+    let action_name_cstr = match alloc::ffi::CString::new(name_string.clone()) {
+        Ok(cs) => cs,
+        Err(_) => return -3,
+    };
+    let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(
+        move |context: &mut Value, event: &Value, params: &Option<Value>| {
+            if let Some(cb) = callback {
+                let params_ptr = match params {
+                    Some(p) => p as *const Value as *const fsm_value_t,
+                    None => ptr::null(),
+                };
+                cb(
+                    action_name_cstr.as_ptr(),
+                    context as *const Value as *const fsm_value_t,
+                    event as *const Value as *const fsm_value_t,
+                    params_ptr,
+                    user_data,
+                );
+            }
+        },
+    );
+
+    ctx.actions.insert(name_string, action_fn);
+    0
+}
+
+#[no_mangle]
 pub extern "C" fn fsm_get_snapshot_json(
     ptr: *const MachineContext,
     buffer: *mut c_char,
@@ -608,27 +874,7 @@ pub extern "C" fn fsm_get_snapshot_json(
     }
     let ctx = unsafe { &*ptr };
     let json = ctx.machine.get_persisted_snapshot_json();
-    let json_bytes = json.as_bytes();
-    let needed_len = json_bytes.len() + 1;
-
-    if needed_len > i32::MAX as usize {
-        return -3;
-    }
-
-    if buffer.is_null() || buffer_len == 0 {
-        return needed_len as i32;
-    }
-
-    if buffer_len < needed_len {
-        return -2;
-    }
-
-    unsafe {
-        core::ptr::copy_nonoverlapping(json_bytes.as_ptr(), buffer as *mut u8, json_bytes.len());
-        *buffer.add(json_bytes.len()) = 0;
-    }
-
-    json_bytes.len() as i32
+    copy_string_to_buffer(&json, buffer, buffer_len)
 }
 
 #[no_mangle]
@@ -659,6 +905,102 @@ pub extern "C" fn fsm_restore_snapshot_json(
         Err(_) => -4,
     }
 }
+
+#[no_mangle]
+pub extern "C" fn fsm_get_output_json(
+    ptr: *const MachineContext,
+    buffer: *mut c_char,
+    buffer_len: usize,
+) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &*ptr };
+    let output_val = match ctx.machine.get_output() {
+        Some(v) => v,
+        None => return -4,
+    };
+    let json = output_val.to_json_string();
+    copy_string_to_buffer(&json, buffer, buffer_len)
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_get_meta_json(
+    ptr: *const MachineContext,
+    buffer: *mut c_char,
+    buffer_len: usize,
+) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &*ptr };
+    let meta_val = ctx.machine.get_meta();
+    let json = meta_val.to_json_string();
+    copy_string_to_buffer(&json, buffer, buffer_len)
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_get_state_meta_json(
+    ptr: *const MachineContext,
+    state_path: *const c_char,
+    buffer: *mut c_char,
+    buffer_len: usize,
+) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    if state_path.is_null() {
+        return -2;
+    }
+    let ctx = unsafe { &*ptr };
+    let path_c_str = unsafe { CStr::from_ptr(state_path) };
+    let path_str = match path_c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+
+    let meta_opt = if path_str.is_empty()
+        || path_str == "(machine)"
+        || (!ctx.machine.definition.id.is_empty() && path_str == ctx.machine.definition.id)
+    {
+        ctx.machine.definition.meta.as_ref()
+    } else {
+        let resolved_path = if let Some(id) = path_str.strip_prefix('#') {
+            ctx.machine.definition.id_map.get(id).map(|s| s.as_str()).unwrap_or(path_str)
+        } else {
+            path_str
+        };
+        match ctx.machine.get_state_definition(resolved_path) {
+            Some(def) => def.meta.as_ref(),
+            None => return -4, // State not found
+        }
+    };
+
+
+    let meta = match meta_opt {
+        Some(m) => m,
+        None => return -5, // State exists but has no meta defined
+    };
+
+    let json = meta.to_json_string();
+    copy_string_to_buffer(&json, buffer, buffer_len)
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_get_state(
+    ptr: *const MachineContext,
+    buffer: *mut c_char,
+    buffer_len: usize,
+) -> i32 {
+    if ptr.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &*ptr };
+    let state_val = ctx.machine.current_state.to_value();
+    let json = state_val.to_json_string();
+    copy_string_to_buffer(&json, buffer, buffer_len)
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1305,4 +1647,126 @@ mod tests {
         fsm_free(m1);
         fsm_free(m2);
     }
+
+    #[test]
+    fn test_m5_c_ffi_parity() {
+        let json = CString::new(r#"{
+          "id": "m5Fsm",
+          "initial": "init",
+          "meta": { "version": "1.0" },
+          "output": { "result": "done", "val": 42 },
+          "states": {
+            "init": {
+              "meta": { "label": "Initial State" },
+              "on": {
+                "FINISH": "final"
+              }
+            },
+            "final": {
+              "type": "final"
+            }
+          }
+        }"#).unwrap();
+
+        let input_json = CString::new(r#"{"seed": 100}"#).unwrap();
+
+        // 1. Creation with input
+        let m = fsm_create_with_input(json.as_ptr(), input_json.as_ptr());
+        assert!(!m.is_null());
+
+        // Pre-start event is dropped
+        let ev_finish = CString::new(r#"{"type":"FINISH"}"#).unwrap();
+        assert_eq!(fsm_send_json_event(m, ev_finish.as_ptr()), 0);
+
+        let state_init = CString::new("init").unwrap();
+        let state_final = CString::new("final").unwrap();
+        assert!(!fsm_matches(m, state_final.as_ptr())); // dropped pre-start event did not transition to final
+
+        fsm_start(m);
+        assert!(fsm_is_in_state(m, state_init.as_ptr()));
+
+
+
+        // 2. State inspection
+        let mut state_buf = [0 as c_char; 32];
+        let state_len = fsm_get_state(m, state_buf.as_mut_ptr(), state_buf.len());
+        assert!(state_len > 0);
+        let state_cstr = unsafe { CStr::from_ptr(state_buf.as_ptr()) };
+        assert_eq!(state_cstr.to_str().unwrap(), "\"init\"");
+
+        // 3. Meta inspection
+        let meta_req = fsm_get_meta_json(m, ptr::null_mut(), 0);
+        assert!(meta_req > 0);
+        let mut meta_buf = alloc::vec![0 as c_char; meta_req as usize];
+        let meta_written = fsm_get_meta_json(m, meta_buf.as_mut_ptr(), meta_req as usize);
+        assert_eq!(meta_written, meta_req - 1);
+        let meta_str = unsafe { CStr::from_ptr(meta_buf.as_ptr()) }.to_str().unwrap();
+        assert!(meta_str.contains("\"version\":\"1.0\""));
+        assert!(meta_str.contains("\"label\":\"Initial State\""));
+
+        // State-specific meta
+        let mut sm_buf = [0 as c_char; 64];
+        let sm_len = fsm_get_state_meta_json(m, state_init.as_ptr(), sm_buf.as_mut_ptr(), sm_buf.len());
+        assert!(sm_len > 0);
+        let sm_str = unsafe { CStr::from_ptr(sm_buf.as_ptr()) }.to_str().unwrap();
+        assert!(sm_str.contains("\"label\":\"Initial State\""));
+
+        // Non-existent state
+        let missing_state = CString::new("nonexistent").unwrap();
+        assert_eq!(fsm_get_state_meta_json(m, missing_state.as_ptr(), sm_buf.as_mut_ptr(), sm_buf.len()), -4);
+
+        // State with no meta
+        let state_final = CString::new("final").unwrap();
+        assert_eq!(fsm_get_state_meta_json(m, state_final.as_ptr(), sm_buf.as_mut_ptr(), sm_buf.len()), -5);
+
+        // 4. Output before final is -4
+        let mut out_buf = [0 as c_char; 64];
+        assert_eq!(fsm_get_output_json(m, out_buf.as_mut_ptr(), out_buf.len()), -4);
+
+        // 5. Send JSON event
+        assert_eq!(fsm_send_json_event(m, ev_finish.as_ptr()), 0);
+        assert!(fsm_matches(m, state_final.as_ptr()));
+        assert_eq!(fsm_is_done(m), 1);
+
+        // Output after final
+        let out_req = fsm_get_output_json(m, ptr::null_mut(), 0);
+        assert!(out_req > 0);
+        assert_eq!(fsm_get_output_json(m, out_buf.as_mut_ptr(), 4), -2); // buffer too small
+        let out_written = fsm_get_output_json(m, out_buf.as_mut_ptr(), out_buf.len());
+        assert!(out_written > 0);
+        let out_str = unsafe { CStr::from_ptr(out_buf.as_ptr()) }.to_str().unwrap();
+        assert!(out_str.contains("\"result\":\"done\""));
+        assert!(out_str.contains("\"val\":42"));
+
+        fsm_destroy(m);
+    }
+}
+
+#[cfg(all(not(test), target_os = "none"))]
+struct CMalloc;
+
+#[cfg(all(not(test), target_os = "none"))]
+unsafe impl core::alloc::GlobalAlloc for CMalloc {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        extern "C" {
+            fn malloc(size: usize) -> *mut u8;
+        }
+        malloc(layout.size())
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
+        extern "C" {
+            fn free(ptr: *mut u8);
+        }
+        free(ptr);
+    }
+}
+
+#[cfg(all(not(test), target_os = "none"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: CMalloc = CMalloc;
+
+#[cfg(all(not(test), target_os = "none"))]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
 }

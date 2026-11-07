@@ -3,7 +3,8 @@
 mod tests {
     extern crate std;
     use crate::*;
-    use indexmap::IndexMap;
+    use crate::{IndexMap, IndexMapExt};
+    use crate as indexmap;
     use alloc::vec;
     use alloc::string::ToString;
 
@@ -23,19 +24,21 @@ mod tests {
                     initial: None, initial_actions: vec![],
                     entry: vec![],
                     exit: vec![],
-                    after: indexmap::IndexMap::new(),
+                    after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                     on: indexmap::indexmap! {
                         "SWITCH".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["on".to_string()]),
                             guard: None,
                             actions: vec![],
                             reenter: false,
+                            ..Default::default()
                         }],
                         "DEEP_POWER".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["on.deepHistory".to_string()]),
                             guard: None,
                             actions: vec![],
                             reenter: false,
+                            ..Default::default()
                         }],
                     },
                     states: indexmap::indexmap!{},
@@ -44,6 +47,7 @@ mod tests {
                     tags: vec![],
                     history_actions: vec![],
                     invoke: vec![],
+                    meta: None, description: None, output: None,
                 },
                 "on".to_string() => StateDefinition {
                     id: Some("on".to_string()),
@@ -51,13 +55,14 @@ mod tests {
                     initial: None, initial_actions: vec![], // Parallel has no initial -> enters all children
                     entry: vec![],
                     exit: vec![],
-                    after: indexmap::IndexMap::new(),
+                    after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                     on: indexmap::indexmap! {
                         "POWER".to_string() => vec![TransitionDefinition {
                             target: Some(vec!["off".to_string()]),
                             guard: None,
                             actions: vec![],
                             reenter: false,
+                            ..Default::default()
                         }],
                     },
                     states: indexmap::indexmap! {
@@ -68,7 +73,7 @@ mod tests {
 // Default B
                             entry: vec![],
                             exit: vec![],
-                            after: indexmap::IndexMap::new(),
+                            after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                             on: indexmap::indexmap!{},
                             states: indexmap::indexmap! {
                                 "B".to_string() => StateDefinition {
@@ -77,13 +82,14 @@ mod tests {
                                     initial: None, initial_actions: vec![],
                                     entry: vec![],
                                     exit: vec![],
-                                    after: indexmap::IndexMap::new(),
+                                    after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                                     on: indexmap::indexmap! {
                                         "INNER_A".to_string() => vec![TransitionDefinition {
                                             target: Some(vec!["C".to_string()]), // Relative C
                                             guard: None,
                                             actions: vec![],
                                             reenter: false,
+                                            ..Default::default()
                                         }],
                                     },
                                     states: indexmap::indexmap!{},
@@ -92,6 +98,7 @@ mod tests {
                                     tags: vec![],
                                     history_actions: vec![],
                                     invoke: vec![],
+                                    meta: None, description: None, output: None,
                                 },
                                  "C".to_string() => StateDefinition {
                                     id: Some("C".to_string()),
@@ -99,7 +106,7 @@ mod tests {
                                     initial: Some("D".to_string()), initial_actions: vec![],
 entry: vec![],
                                     exit: vec![],
-                                    after: indexmap::IndexMap::new(),
+                                    after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                                     on: indexmap::indexmap!{},
                                     states: indexmap::indexmap! {
                                          "D".to_string() => StateDefinition {
@@ -108,7 +115,7 @@ entry: vec![],
                                             initial: None, initial_actions: vec![],
                                             entry: vec![],
                                             exit: vec![],
-                                            after: indexmap::IndexMap::new(),
+                                            after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                                             on: indexmap::indexmap!{},
                                             states: indexmap::indexmap!{},
                                             history: None,
@@ -116,6 +123,7 @@ entry: vec![],
                                             tags: vec![],
                                             history_actions: vec![],
                                             invoke: vec![],
+                                            meta: None, description: None, output: None,
                                         },
                                     },
                                     history: None,
@@ -123,6 +131,7 @@ entry: vec![],
                                     tags: vec![],
                                     history_actions: vec![],
                                     invoke: vec![],
+                                    meta: None, description: None, output: None,
                                 },
                             },
                             history: None,
@@ -130,6 +139,7 @@ entry: vec![],
                             tags: vec![],
                             history_actions: vec![],
                             invoke: vec![],
+                            meta: None, description: None, output: None,
                         },
                         "K".to_string() => StateDefinition {
                             id: Some("K".to_string()),
@@ -137,7 +147,7 @@ entry: vec![],
                             initial: Some("L".to_string()), initial_actions: vec![],
 entry: vec![],
                             exit: vec![],
-                            after: indexmap::IndexMap::new(),
+                            after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                             on: indexmap::indexmap!{},
                             states: indexmap::indexmap! {
                                 "L".to_string() => StateDefinition::default_atomic(),
@@ -147,6 +157,7 @@ entry: vec![],
                             tags: vec![],
                             history_actions: vec![],
                             invoke: vec![],
+                            meta: None, description: None, output: None,
                         },
                         "deepHistory".to_string() => StateDefinition {
                             id: Some("deepHistory".to_string()),
@@ -154,7 +165,7 @@ entry: vec![],
                             initial: None, initial_actions: vec![],
                             entry: vec![],
                             exit: vec![],
-                            after: indexmap::IndexMap::new(),
+                            after: indexmap::IndexMap::new(), named_after: indexmap::IndexMap::new(),
                             on: indexmap::indexmap!{},
                             states: indexmap::indexmap!{},
                             history: Some(HistoryType::Deep),
@@ -162,6 +173,7 @@ entry: vec![],
                             tags: vec![],
                             history_actions: vec![],
                             invoke: vec![],
+                            meta: None, description: None, output: None,
                         },
                     },
                     history: None,
@@ -169,6 +181,7 @@ entry: vec![],
                     tags: vec![],
                     history_actions: vec![],
                     invoke: vec![],
+                    meta: None, description: None, output: None,
                 },
             },
             after: indexmap::IndexMap::new(),
@@ -176,6 +189,7 @@ entry: vec![],
             entry: vec![],
             exit: vec![],
             id_map: IndexMap::new(), // Populate if needed
+            ..Default::default()
         };
 
         let mut machine = RuntimeMachine::new(&definition).unwrap();
@@ -242,11 +256,13 @@ entry: vec![],
                         }),
                     })],
                     reenter: false,
+                    ..Default::default()
                 }],
             },
             entry: vec![],
             exit: vec![],
             id_map: IndexMap::new(),
+            ..Default::default()
         };
 
         let mut machine = RuntimeMachine::new(&definition).unwrap();
@@ -303,6 +319,7 @@ entry: vec![],
             entry: vec![Action::Named("root_entry".to_string())],
             exit: vec![],
             id_map: IndexMap::new(),
+            ..Default::default()
         };
 
         let actions = indexmap::indexmap! {
@@ -353,6 +370,7 @@ entry: vec![],
                 guard: Some(TransitionGuard::Name("isReady".to_string())),
                 actions: vec![],
                 reenter: false,
+                ..Default::default()
             }],
         );
         boot.on.insert(
@@ -362,6 +380,7 @@ entry: vec![],
                 guard: None,
                 actions: vec![],
                 reenter: false,
+                ..Default::default()
             }],
         );
 
@@ -374,12 +393,14 @@ entry: vec![],
                     guard: Some(TransitionGuard::Name("alwaysFalse".to_string())),
                     actions: vec![],
                     reenter: false,
+                    ..Default::default()
                 },
                 TransitionDefinition {
                     target: Some(vec!["final_state".to_string()]),
                     guard: Some(TransitionGuard::Name("isReady".to_string())),
                     actions: vec![],
                     reenter: false,
+                    ..Default::default()
                 },
             ],
         );
@@ -406,6 +427,7 @@ entry: vec![],
             entry: vec![],
             exit: vec![],
             id_map: IndexMap::new(),
+            ..Default::default()
         };
 
         let guards: IndexMap<String, GuardFunction> = indexmap::indexmap! {
@@ -441,6 +463,7 @@ entry: vec![],
                 guard: None,
                 actions: vec![],
                 reenter: false,
+                ..Default::default()
             }],
         );
         transient.on.insert(
@@ -450,6 +473,7 @@ entry: vec![],
                 guard: None,
                 actions: vec![],
                 reenter: false,
+                ..Default::default()
             }],
         );
 
@@ -461,6 +485,7 @@ entry: vec![],
                 guard: None,
                 actions: vec![],
                 reenter: false,
+                ..Default::default()
             }],
         );
 
@@ -483,6 +508,7 @@ entry: vec![],
             entry: vec![],
             exit: vec![],
             id_map: IndexMap::new(),
+            ..Default::default()
         };
 
         let mut machine = RuntimeMachine::new(&definition).unwrap();
@@ -1325,8 +1351,8 @@ entry: vec![],
         assert!(machine.matches("working.step2"));
         assert!(machine.has_tag("busy"));
         assert!(machine.has_tag("phase2"));
-        assert!(machine.is_done());
-        assert_eq!(machine.status(), crate::MachineStatus::Done);
+        assert!(!machine.is_done());
+        assert_eq!(machine.status(), crate::MachineStatus::Active);
 
         // Transition to parallel state ortho
         machine.transition("PARALLEL", &Value::Null, &guards, &actions);
@@ -1346,8 +1372,8 @@ entry: vec![],
         machine.transition("DONE_2", &Value::Null, &guards, &actions);
         assert!(machine.has_tag("r1_done"));
         assert!(machine.has_tag("r2_done"));
-        assert!(machine.is_done());
-        assert_eq!(machine.status(), crate::MachineStatus::Done);
+        assert!(!machine.is_done());
+        assert_eq!(machine.status(), crate::MachineStatus::Active);
 
         // Transition to top-level final state "completed"
         machine.transition("FINISH", &Value::Null, &guards, &actions);

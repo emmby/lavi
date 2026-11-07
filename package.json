@@ -23,6 +23,7 @@
   "devDependencies": {
     "@playwright/test": "^1.40.0",
     "@vitest/ui": "^4.0.16",
+    "ajv": "^8.20.0",
     "happy-dom": "^20.0.11",
     "playwright": "^1.40.0",
     "vitest": "^4.0.16"
