@@ -27,6 +27,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
+[project.urls]
+Homepage = "https://emmby.github.io/lavi/examples/"
+Repository = "https://github.com/emmby/lavi"
+Issues = "https://github.com/emmby/lavi/issues"
+
 [tool.maturin]
 python-source = "python"
 module-name = "lavi._lavi_py"

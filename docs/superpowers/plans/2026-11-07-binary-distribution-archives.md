@@ -134,7 +134,7 @@ git commit -m "feat(release): add cross-ecosystem version sync script and tests"
 
 ---
 
-### Task 2: `crates.io` (`lavi`) & `PyPI` (`lavi-py`) Packaging Metadata [~] [flowos: e7ae0ae7-7073-4f9c-aa86-77c4e6840db7]
+### Task 2: `crates.io` (`lavi`) & `PyPI` (`lavi-py`) Packaging Metadata [x] [flowos: e7ae0ae7-7073-4f9c-aa86-77c4e6840db7]
 
 **Files:**
 - Modify: `lavi/Cargo.toml`
@@ -149,7 +149,7 @@ git commit -m "feat(release): add cross-ecosystem version sync script and tests"
   - Publish-ready `lavi` crate manifest passing `cargo package --list --allow-dirty -p lavi`
   - Publish-ready `lavi-py/pyproject.toml` with `readme = "README.md"` and `[project.urls]` (`Homepage`, `Repository`, `Issues`)
 
-- [ ] **Step 1: Write the failing test in `tests/integration/registry_metadata.test.ts`**
+- [x] **Step 1: Write the failing test in `tests/integration/registry_metadata.test.ts`**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -190,21 +190,21 @@ describe('crates.io and PyPI registry metadata', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/integration/registry_metadata.test.ts`
 Expected: FAIL (`readme = "README.md"` missing in `lavi/Cargo.toml` and `lavi-py/README.md` missing)
 
-- [ ] **Step 3: Add metadata and READMEs to `lavi` and `lavi-py`**
+- [x] **Step 3: Add metadata and READMEs to `lavi` and `lavi-py`**
 
 Update `lavi/Cargo.toml` with `readme = "README.md"`, `homepage = "https://emmby.github.io/lavi/examples/"`, `documentation = "https://docs.rs/lavi"`, `keywords = ["statechart", "xstate", "fsm", "state-machine", "no-std"]`, `categories = ["no-std", "embedded", "simulation", "algorithms"]`, and `include = ["src/**/*", "Cargo.toml", "README.md"]`. Create `lavi/README.md` (Rust `#![no_std]` usage and overview) and `lavi-py/README.md` (Python `pip install lavi` usage and overview), and add `[project.urls]` (`Homepage`, `Repository`, `Issues`) to `lavi-py/pyproject.toml`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/integration/registry_metadata.test.ts`
 Expected: PASS (2 passed)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lavi/Cargo.toml lavi/README.md lavi-py/pyproject.toml lavi-py/README.md tests/integration/registry_metadata.test.ts
@@ -215,7 +215,7 @@ git commit -m "feat(packaging): add crates.io and PyPI metadata and READMEs"
 
 ## Phase 2: Unified npm & Maven Central Packaging [flowos: ba010f3c-a731-4761-b7be-7cc79e086cfc]
 
-### Task 3: Unified `lavi-fsm` npm Package Builder (`scripts/build-npm-package.mjs`) [flowos: 6a9b90c0-7f68-49f6-a1ed-8a3307554c0e]
+### Task 3: Unified `lavi-fsm` npm Package Builder (`scripts/build-npm-package.mjs`) [~] [flowos: 6a9b90c0-7f68-49f6-a1ed-8a3307554c0e]
 
 **Files:**
 - Create: `scripts/build-npm-package.mjs`
