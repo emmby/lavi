@@ -3088,11 +3088,9 @@ impl Actor {
 
         let delay_ms = deadline.saturating_sub(now) as f64;
 
-        let shared_weak = Rc::downgrade(shared_rc);
+        let shared_clone = shared_rc.clone();
         let func = Closure::once_into_js(move || {
-            if let Some(shared_upgrade) = shared_weak.upgrade() {
-                Actor::on_host_timeout(&shared_upgrade);
-            }
+            Actor::on_host_timeout(&shared_clone);
         });
         let delay_val = JsValue::from_f64(delay_ms);
 
