@@ -2,6 +2,14 @@
 #include <iostream>
 #include <cassert>
 
+static unsigned long g_fake_millis_ul = 0;
+static unsigned long fake_arduino_millis() {
+    return g_fake_millis_ul;
+}
+static uint64_t raw_c_clock_fn() {
+    return static_cast<uint64_t>(g_fake_millis_ul);
+}
+
 const char* STOPLIGHT_JSON = R"({
   "id": "trafficLight",
   "initial": "green",
@@ -439,6 +447,73 @@ int main() {
         assert(!cpp_stop_res.matches("doneState"));
         std::string stop_res_snap = cpp_stop_res.getSnapshot();
         assert(stop_res_snap.find("\"status\":\"stopped\"") != std::string::npos);
+
+        // 4. registerClock overload resolution test:
+        //    - Captureless lambda returning uint64_t (previously ambiguous!)
+        //    - Named const captureless lambda lvalue returning uint64_t
+        //    - Captureless lambda returning unsigned long (e.g., Arduino millis())
+        //    - Raw C function pointer
+        //    - Capturing lambda + std::move
+        const char* CLOCK_OVERLOAD_JSON = R"({
+          "initial": "waiting",
+          "states": {
+            "waiting": {
+              "after": { "100": "fired" }
+            },
+            "fired": {}
+          }
+        })";
+
+        // 4a. Captureless lambda with explicit uint64_t return type
+        g_fake_millis_ul = 1000;
+        lavi::Machine clk_captureless_u64(CLOCK_OVERLOAD_JSON);
+        clk_captureless_u64.registerClock([]() -> uint64_t { return fake_arduino_millis(); });
+        clk_captureless_u64.start();
+        assert(clk_captureless_u64.matches("waiting"));
+        g_fake_millis_ul = 1099;
+        clk_captureless_u64.tick();
+        assert(clk_captureless_u64.matches("waiting"));
+        g_fake_millis_ul = 1100;
+        clk_captureless_u64.tick();
+        assert(clk_captureless_u64.matches("fired"));
+
+        // 4b. Named const captureless lambda lvalue returning uint64_t
+        g_fake_millis_ul = 2000;
+        const auto named_captureless_u64 = []() -> uint64_t { return fake_arduino_millis(); };
+        lavi::Machine clk_named_u64(CLOCK_OVERLOAD_JSON);
+        clk_named_u64.registerClock(named_captureless_u64);
+        clk_named_u64.start();
+        g_fake_millis_ul = 2100;
+        clk_named_u64.tick();
+        assert(clk_named_u64.matches("fired"));
+
+        // 4c. Captureless lambda returning unsigned long (implicit conversion via ClockCallback)
+        g_fake_millis_ul = 3000;
+        lavi::Machine clk_captureless_ul(CLOCK_OVERLOAD_JSON);
+        clk_captureless_ul.registerClock([]() { return fake_arduino_millis(); });
+        clk_captureless_ul.start();
+        g_fake_millis_ul = 3100;
+        clk_captureless_ul.tick();
+        assert(clk_captureless_ul.matches("fired"));
+
+        // 4d. Raw C function pointer
+        g_fake_millis_ul = 4000;
+        lavi::Machine clk_raw_fn(CLOCK_OVERLOAD_JSON);
+        clk_raw_fn.registerClock(raw_c_clock_fn);
+        clk_raw_fn.start();
+        g_fake_millis_ul = 4100;
+        clk_raw_fn.tick();
+        assert(clk_raw_fn.matches("fired"));
+
+        // 4e. Capturing lambda + std::move of Machine
+        uint64_t local_now = 5000;
+        lavi::Machine clk_capturing(CLOCK_OVERLOAD_JSON);
+        clk_capturing.registerClock([&local_now]() -> uint64_t { return local_now; });
+        clk_capturing.start();
+        lavi::Machine clk_capturing_moved = std::move(clk_capturing);
+        local_now = 5100;
+        clk_capturing_moved.tick();
+        assert(clk_capturing_moved.matches("fired"));
 
     } catch (const std::exception& e) {
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
