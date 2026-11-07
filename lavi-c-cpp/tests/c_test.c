@@ -756,6 +756,9 @@ int main() {
 
     // Non-existent state meta returns -4
     assert(fsm_get_state_meta_json(meta_m, "does_not_exist", temp_buf, sizeof(temp_buf)) == -4);
+
+    // Buffer too small returns -3 per lavi.h contract
+    assert(fsm_get_state_meta_json(meta_m, "phaseA", small_out, sizeof(small_out)) == -3);
     fsm_destroy(meta_m);
 
     // ==========================================

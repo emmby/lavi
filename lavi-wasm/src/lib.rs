@@ -1719,29 +1719,6 @@ fn extract_inline_assignments(val: &JsValue) -> Result<(JsValue, IndexMap<String
 }
 
 fn extract_recursive(obj: &js_sys::Object, actions_out: &mut IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>, counter: &mut u32) {
-    // Process transitions in 'on'
-    let on_key = JsValue::from_str("on");
-    let on_val = js_sys::Reflect::get(obj, &on_key).unwrap_or(JsValue::UNDEFINED);
-    if on_val.is_object() {
-         let on_obj = js_sys::Object::from(on_val);
-         let event_keys = js_sys::Object::keys(&on_obj);
-         for j in 0..event_keys.length() {
-             let evt_key = event_keys.get(j);
-             let transitions_val = js_sys::Reflect::get(&on_obj, &evt_key).unwrap_or(JsValue::UNDEFINED);
-             if js_sys::Array::is_array(&transitions_val) {
-                 let arr = js_sys::Array::from(&transitions_val);
-                 for k in 0..arr.length() {
-                     let t_val = arr.get(k);
-                     if t_val.is_object() {
-                         process_action_list(&js_sys::Object::from(t_val), "actions", actions_out, counter);
-                     }
-                 }
-             } else if transitions_val.is_object() {
-                 process_action_list(&js_sys::Object::from(transitions_val), "actions", actions_out, counter);
-             }
-         }
-    }
-
     // Process entry/exit
     process_action_list(obj, "entry", actions_out, counter);
     process_action_list(obj, "exit", actions_out, counter);
@@ -1920,22 +1897,27 @@ impl Actor {
         parse_implementations(&options, &mut guards, &mut actions, &mut actions_with_effects);
 
         let machine_data: Option<InternalState> = if val.is_object() {
+             let is_wasm_fn = js_sys::Reflect::get(&val, &JsValue::from_str("is_wasm_machine"))
+                 .map(|v| v.is_function())
+                 .unwrap_or(false);
              let ptr_key = JsValue::from_str("__wbg_ptr");
              let ptr_check = js_sys::Reflect::get(&val, &ptr_key);
-             if let Ok(ptr_val) = ptr_check {
-                 if !ptr_val.is_undefined() {
-                     let ptr = ptr_val.as_f64().unwrap_or(0.0) as usize as *mut StateNode; 
-                     if !ptr.is_null() {
-                         unsafe {
-                             let wasm_machine_ref = &*ptr;
-                             let state = InternalState {
-                                 machine: wasm_machine_ref.machine.clone(),
-                                 guards: wasm_machine_ref.guards.clone(),
-                                 actions: wasm_machine_ref.actions.clone(),
-                                 action_descriptors: wasm_machine_ref.action_descriptors.clone(),
-                             };
-                             Some(state)
-                         }
+             if is_wasm_fn {
+                 if let Ok(ptr_val) = ptr_check {
+                     if !ptr_val.is_undefined() {
+                         let ptr = ptr_val.as_f64().unwrap_or(0.0) as usize as *mut StateNode;
+                         if !ptr.is_null() {
+                             unsafe {
+                                 let wasm_machine_ref = &*ptr;
+                                 let state = InternalState {
+                                     machine: wasm_machine_ref.machine.clone(),
+                                     guards: wasm_machine_ref.guards.clone(),
+                                     actions: wasm_machine_ref.actions.clone(),
+                                     action_descriptors: wasm_machine_ref.action_descriptors.clone(),
+                                 };
+                                 Some(state)
+                             }
+                         } else { None }
                      } else { None }
                  } else { None }
              } else { None }

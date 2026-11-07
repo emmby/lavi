@@ -194,9 +194,6 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
     if !id.is_empty() {
         id_map.insert(id.clone(), String::new());
     }
-    if let Some(ref output_val) = output {
-        id_map.insert("__root_output__".to_string(), output_val.to_json_string());
-    }
     let states = parse_states_iterative(states_val, &id, &mut id_map);
 
     let state_type = match raw_type.as_deref() {
@@ -283,9 +280,6 @@ fn parse_states_iterative(
             }
 
             let output_opt = child_map.swap_remove("output");
-            if let Some(ref output_val) = output_opt {
-                id_map.insert(format!("__output__.{}", child_path), output_val.to_json_string());
-            }
 
             let raw_type = child_map.swap_remove("type").and_then(|v| v.into_string());
 

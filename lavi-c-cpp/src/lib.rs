@@ -7,7 +7,6 @@ extern crate std;
 use alloc::boxed::Box;
 use core::ffi::{CStr, c_char, c_int}; 
 use core::ptr;
-use alloc::collections::BTreeMap;
 use lavi::{from_json_str, RuntimeMachine, Value};
 use lavi::{IndexMap, IndexMapExt};
 
@@ -65,16 +64,6 @@ pub type fsm_guard_with_params_callback_t = Option<extern "C" fn(
     user_data: *mut core::ffi::c_void,
 ) -> bool>;
 
-pub struct RegisteredAction {
-    pub callback: fsm_action_callback_t,
-    pub user_data: *mut core::ffi::c_void,
-}
-
-pub struct RegisteredGuard {
-    pub callback: fsm_guard_callback_t,
-    pub user_data: *mut core::ffi::c_void,
-}
-
 type SharedMachineList = alloc::rc::Rc<core::cell::RefCell<alloc::vec::Vec<*mut MachineContext>>>;
 
 pub struct SimulatedClock {
@@ -84,8 +73,6 @@ pub struct SimulatedClock {
 
 pub struct MachineContext {
     machine: RuntimeMachine,
-    callbacks: BTreeMap<alloc::string::String, RegisteredAction>,
-    guard_callbacks: BTreeMap<alloc::string::String, RegisteredGuard>,
     actions: IndexMap<alloc::string::String, lavi::ActionFunction>,
     guards: IndexMap<alloc::string::String, lavi::GuardFunction>,
     bound_clocks: alloc::vec::Vec<SharedMachineList>,
@@ -169,8 +156,6 @@ pub extern "C" fn fsm_create_with_input(
 
     let ctx = Box::new(MachineContext {
         machine,
-        callbacks: BTreeMap::new(),
-        guard_callbacks: BTreeMap::new(),
         actions: IndexMap::new(),
         guards: IndexMap::new(),
         bound_clocks: alloc::vec::Vec::new(),
@@ -663,12 +648,7 @@ pub extern "C" fn fsm_register_action(
     };
     
     let name_string = alloc::string::String::from(name);
-    
-    ctx.callbacks.insert(name_string.clone(), RegisteredAction {
-        callback,
-        user_data,
-    });
-    
+
     // Process the ActionFunction immediately
     let action_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
     let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |context: &mut Value, event: &Value, _params: &Option<Value>| {
@@ -707,12 +687,7 @@ pub extern "C" fn fsm_register_guard(
     };
     
     let name_string = alloc::string::String::from(name);
-    
-    ctx.guard_callbacks.insert(name_string.clone(), RegisteredGuard {
-        callback,
-        user_data,
-    });
-    
+
     let guard_name_cstr = alloc::ffi::CString::new(name_string.clone()).unwrap();
     let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |context: &Value, event: &Value, _params: &Option<Value>| -> bool {
         if let Some(cb) = callback {
@@ -983,7 +958,10 @@ pub extern "C" fn fsm_get_state_meta_json(
     };
 
     let json = meta.to_json_string();
-    copy_string_to_buffer(&json, buffer, buffer_len)
+    match copy_string_to_buffer(&json, buffer, buffer_len) {
+        -2 => -3,
+        res => res,
+    }
 }
 
 #[no_mangle]

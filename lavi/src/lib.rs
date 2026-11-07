@@ -17,8 +17,15 @@ use alloc::rc::Rc;
 use core::hash::{BuildHasherDefault, Hasher};
 
 /// A fast, lightweight, non-cryptographic FNV-1a hasher for `#![no_std]` environments.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct FnvHasher(u64);
+
+impl Default for FnvHasher {
+    #[inline]
+    fn default() -> Self {
+        Self(0xcbf29ce484222325)
+    }
+}
 
 impl Hasher for FnvHasher {
     #[inline]
@@ -27,7 +34,7 @@ impl Hasher for FnvHasher {
     }
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        let mut hash = if self.0 == 0 { 0xcbf29ce484222325 } else { self.0 };
+        let mut hash = self.0;
         for &byte in bytes {
             hash = (hash ^ (byte as u64)).wrapping_mul(0x100000001b3);
         }
@@ -1426,19 +1433,8 @@ impl RuntimeMachine {
 
         let context = definition.context.take().unwrap_or_else(|| Value::Object(IndexMap::new()));
 
-        let mut state_outputs = IndexMap::new();
-        let mut machine_output = None;
-        for (k, v) in &definition.id_map {
-            if let Some(path) = k.strip_prefix("__output__.") {
-                if let Ok(val) = Value::from_json(v) {
-                    state_outputs.insert(path.to_string(), val);
-                }
-            } else if k == "__root_output__" {
-                if let Ok(val) = Value::from_json(v) {
-                    machine_output = Some(val);
-                }
-            }
-        }
+        let state_outputs = IndexMap::new();
+        let machine_output = definition.output.clone();
 
         let input = definition.input.clone();
         let mut machine = Self {
@@ -2153,7 +2149,7 @@ impl RuntimeMachine {
                         if let Some(res) = self.output_resolvers.get(&child_path) {
                             return Some(res(&self.context, &self.last_received_event));
                         }
-                        if let Some(out) = self.state_outputs.get(&child_path) {
+                        if let Some(out) = self.state_outputs.get(&child_path).or(def.output.as_ref()) {
                             return Some(out.clone());
                         }
                         return None;
@@ -2224,7 +2220,7 @@ impl RuntimeMachine {
         if let Some(res) = self.output_resolvers.get("") {
             return Some(res(&self.context, &self.last_received_event));
         }
-        if let Some(out) = &self.machine_output {
+        if let Some(out) = self.machine_output.as_ref().or(self.definition.output.as_ref()) {
             return Some(out.clone());
         }
         for leaf in self.current_state.get_active_paths() {
@@ -2233,7 +2229,7 @@ impl RuntimeMachine {
                     if let Some(res) = self.output_resolvers.get(&leaf) {
                         return Some(res(&self.context, &self.last_received_event));
                     }
-                    if let Some(out) = self.state_outputs.get(&leaf) {
+                    if let Some(out) = self.state_outputs.get(&leaf).or(def.output.as_ref()) {
                         return Some(out.clone());
                     }
                 }
@@ -3737,18 +3733,20 @@ impl RuntimeMachine {
 
 
     pub fn get_state_def_recursive<'a>(states: &'a IndexMap<String, StateDefinition>, path: &str) -> Option<&'a StateDefinition> {
-        if path.is_empty() { return None; }
-        let parts: Vec<&str> = path.split('.').collect();
+        if path.is_empty() {
+            return None;
+        }
         let mut mp = states;
-        for (i, p) in parts.iter().enumerate() {
-            if let Some(d) = mp.get(*p) {
-                if i == parts.len() - 1 { return Some(d); }
+        let mut current_def = None;
+        for p in path.split('.') {
+            if let Some(d) = mp.get(p) {
+                current_def = Some(d);
                 mp = &d.states;
             } else {
                 return None;
             }
         }
-        None
+        current_def
     }
     
     #[allow(clippy::too_many_arguments)]
@@ -4083,7 +4081,7 @@ impl RuntimeMachine {
                 break;
             }
             if loop_count > 100 {
-                panic!("Maximum external queue iteration depth exceeded!");
+                break;
             }
             loop_count += 1;
 
@@ -4363,7 +4361,11 @@ impl RuntimeMachine {
                 };
             }
             if step_count > 100 {
-                panic!("Maximum transition depth exceeded!");
+                return if had_any_transition {
+                    Some(self.current_state.clone())
+                } else {
+                    None
+                };
             }
 
             match self.microstep(

@@ -44,6 +44,56 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
 - **Resolution**: Publish `lavi-wasm` (or `lavi`) to npm so JavaScript/TypeScript users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly.
 
+### `TD-13`: Split Monolithic `lavi/src/lib.rs` and `lavi-wasm/src/lib.rs` into Focused Submodules
+- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
+- **Problem**: `lavi/src/lib.rs` (~5,020 lines) and `lavi-wasm/src/lib.rs` (~5,080 lines) have grown into single-file monoliths, increasing compile times and cognitive load.
+- **Required Fix**:
+  - Split `lavi/src/lib.rs` into focused submodules: `types.rs` (`StateValue`, `StateType`, `Action`, `TransitionGuard`, `MachineDefinition`), `runtime.rs` (`RuntimeMachine`, microstep/macrostep engine, LCCA resolution), `snapshot.rs` (snapshot serialization/hydration), and `clock.rs` (`SimulatedClock`, `Clock`).
+  - Split `lavi-wasm/src/lib.rs` into `state_node.rs` (`StateNode`, `createMachine`, `setup`), `actor.rs` (`Actor`, `createActor`, subscriptions, timer bridging), `actions.rs` (`assign`, `raise`, `log`, `cancel`, `enqueueActions`), and `value_bridge.rs` (`Value` $\leftrightarrow$ `JsValue` conversion).
+
+### `TD-14`: Workspace `[profile.release]` Flash/WASM Size Optimization & `library.json` Export Pruning
+- **Files**: [`Cargo.toml`](./Cargo.toml), [`library.json`](./library.json)
+- **Problem**:
+  1. The root workspace `Cargo.toml` does not configure `[profile.release]` for size (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`), leaving `.wasm` (~752 KB) and embedded staticlibs larger than necessary.
+  2. `library.json` `export.include` currently lists `"lavi-wasm/**"`, which is unnecessary in PlatformIO microcontroller archives.
+- **Required Fix**:
+  - Add `[profile.release]` size optimizations (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`) in the workspace `Cargo.toml`.
+  - Remove `"lavi-wasm/**"` from `library.json` `export.include`.
+
+### `TD-15`: Strict XState 5 `assign` vs. `action` Separation & Zero-Copy `const fsm_value_t*` Accessors in Rust/C/C++
+- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-c-cpp/src/lib.rs`](./lavi-c-cpp/src/lib.rs), [`lavi-c-cpp/include/lavi.h`](./lavi-c-cpp/include/lavi.h), [`lavi-c-cpp/include/lavi.hpp`](./lavi-c-cpp/include/lavi.hpp)
+- **Problem**:
+  1. In XState 5, context updates happen exclusively inside pure `assign(...)` actions (which execute during pure `transition()`), while `entry` / `exit` / `actions` callbacks are read-only side-effect handlers (which are collected, not executed, during pure `transition()`). Currently, Rust `ActionFunction` takes `&mut Value` for `context`, while C `fsm_action_callback_t` takes read-only `const fsm_value_t* context` and has no `fsm_register_assign` or `fsm_value_set_*` mutators for dynamic context updates.
+  2. In C/C++, `fsm_get_output_json` and `fsm_get_state_meta_json` serialize internal `Value` trees to JSON strings on the heap instead of exposing zero-copy borrowed `const fsm_value_t*` handles like `context`, `event`, and `params`.
+- **Required Fix**:
+  - **Strict `assign` vs. `action` Separation (Option B)**:
+    - Add `AssignFunction` (`Rc<dyn Fn(&mut Value, &Value, &Option<Value>)>`) and `register_assign` in Rust `lavi`, and narrow `ActionFunction` to take read-only `&Value` for `context`. Execute registered `assign` callbacks during `transition_pure` while continuing to collect side-effect `actions` without executing them.
+    - Expose `fsm_register_assign` / `fsm_register_assign_with_params` in C (`lavi.h`) receiving mutable `fsm_value_t* context`, alongside `fsm_value_set_int`, `fsm_value_set_float`, `fsm_value_set_bool`, `fsm_value_set_string`, and `fsm_value_set_null` mutators, plus `Machine::registerAssign` and `lavi::MutableValue` in C++ (`lavi.hpp`). Keep `fsm_register_action` receiving `const fsm_value_t* context`.
+  - **Zero-Copy Borrowed `const fsm_value_t*` Accessors**:
+    - Expose `const fsm_value_t* fsm_get_context(const MachineContext* ctx)`, `const fsm_value_t* fsm_get_output(const MachineContext* ctx)`, and `const fsm_value_t* fsm_get_state_meta(const MachineContext* ctx, const char* state_path)` in C (`lavi.h`) and `lavi::Value` wrappers (`getContext()`, `getOutputValue()`, `getStateMetaValue()`) in C++ (`lavi.hpp`).
+    - Update `RuntimeMachine::get_output(&self)` to return `Option<Cow<'_, Value>>` (or cache dynamic output on `self.machine_output` when entering the final state) so static/cached outputs can be borrowed with zero heap allocation. Retain `fsm_get_meta_json` for aggregated multi-state metadata serialization.
+
+### `TD-16`: Wire Dynamic Action `params` Resolver in `Actor`, `setup()` `enqueueActions`, and Single-Pass `create_machine`
+- **Files**: [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
+- **Problem**:
+  1. Dynamic action `params: ({ context, event }) => ...` functions bridged as `__params_fn_id` in `extract_action_value` are evaluated inside `StateNode::resolve_pure_actions`, but are not yet evaluated before invoking the action in the live `Actor` execution path (`parse_implementations`).
+  2. `setup({ actions: { myBatch: enqueueActions(...) } })` drops `xstate.enqueueActions` objects inside `setup()`'s `actions` map because `setup()` currently only checks `act_val.is_function()` or `type == "xstate.assign"`.
+  3. `StateNode::resolve_pure_actions` duplicates the `enqueue` JS helper registration (`enqueue.assign`, `enqueue.raise`, `enqueue.sendTo`, `enqueue.cancel`) across two branches.
+  4. `create_machine` and `Actor::new` walk the JS config object twice (`process_config` + `extract_and_replace_inline_actions`), and `StateNode::_get_internal_state` passes a raw heap pointer via `f64` instead of borrowing via `is_wasm_machine` + `__wbg_ptr`.
+- **Required Fix**:
+  - Evaluate `__params_fn_id` from `PARAMS_FNS` in `Actor`'s action execution path before invoking the registered JS action callback.
+  - Support `xstate.enqueueActions` (and other built-in action descriptors) inside `setup({ actions: ... })`, and extract a single helper for constructing the `enqueue` object in `resolve_pure_actions`.
+  - Consolidate `process_config` and `extract_and_replace_inline_actions` into a single iterative pass and replace `_get_internal_state() -> f64` with safe `StateNode` borrowing.
+
+### `TD-17`: Iterative Work-Stack for Nested `parse_guard` / `parse_action` & Richer TypeScript Generics in `lavi-wasm`
+- **Files**: [`lavi/src/parser.rs`](./lavi/src/parser.rs), [`lavi-wasm/pkg-npm/lavi.d.ts`](./lavi-wasm/pkg-npm/lavi.d.ts)
+- **Problem**:
+  1. While `parse_states_iterative`, `Value`, and `StateValue` use explicit heap `Vec` work-stacks, `parse_guard` (for nested `and`/`or`/`not` combinators) and `parse_action` (for action arrays) in `lavi/src/parser.rs` still use recursion.
+  2. `lavi-wasm` TypeScript declarations use `any` for machine/actor generics, requiring `: any` annotations on untyped callback parameters under `strict: true`.
+- **Required Fix**:
+  - Convert `parse_guard` and `parse_action` in `lavi/src/parser.rs` to iterative `Vec` work-stacks and add an adversarial deep-combinator stack test in `lavi/tests/adversarial_stack_tests.rs`.
+  - Enhance the TypeScript declaration wrapper in `lavi-wasm` to propagate `TContext` and `TEvent` generics across `setup()`, `createMachine()`, `createActor()`, `assign()`, and `enqueueActions()`.
+
 ---
 
 ## Resolved Cleanup Items
