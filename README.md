@@ -74,135 +74,220 @@ Or run individual suites:
 - `npm run test:c-cpp` (C, C++, and PlatformIO `build_rust.py` tests)
 - `npm run test:py` (Python unit tests via pytest)
 - `npm run test:jvm` (Java and Kotlin unit tests via Gradle JUnit 5)
+- `npm run test:examples` (Self-contained Rust, JS/WASM, C, C++, Python, Java, Kotlin, and ESP32 examples)
 - `npm run test:unit` (XState 5 conformance suite via Vitest)
 
 ## Usage Examples
 
-### JavaScript / TypeScript (WASM)
-```javascript
-// TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
-import { createMachine, createActor, assign } from 'lavi-wasm';
-// (Or import from './lavi-wasm/pkg-npm/lavi.js' when running from a local repo build)
+Every supported language has a self-contained, buildable example project under [`examples/`](./examples/) running the same `stoplight` statechart (`red` $\rightarrow$ `green` $\rightarrow$ `yellow` $\rightarrow$ `red` with `entry` actions, `after` delayed transitions via `SimulatedClock`, and a guarded `PEDESTRIAN_WAIT` event):
 
-const machine = createMachine({
-  initial: 'idle',
-  context: { count: 0 },
-  states: {
-    idle: {
-      on: {
-        START: {
-          target: 'running',
-          actions: assign({ count: ({ context }) => context.count + 1 })
-        }
-      }
+```json
+{
+  "id": "stoplight",
+  "initial": "red",
+  "context": { "cycles": 1 },
+  "states": {
+    "red": {
+      "entry": ["onRed"],
+      "after": { "1000": "green" }
     },
-    running: {
-      on: { STOP: 'idle' }
+    "green": {
+      "entry": ["onGreen"],
+      "on": {
+        "PEDESTRIAN_WAIT": {
+          "target": "yellow",
+          "guard": "canCross"
+        }
+      },
+      "after": { "1000": "yellow" }
+    },
+    "yellow": {
+      "entry": ["onYellow"],
+      "after": { "1000": "red" }
     }
   }
-});
-
-const actor = createActor(machine).start();
-console.log(actor.getSnapshot().value); // "idle"
-
-actor.send({ type: 'START' });
-console.log(actor.getSnapshot().value); // "running"
-console.log(actor.getSnapshot().context.count); // 1
+}
 ```
 
-### C++11 (ESP32 / PlatformIO / Native)
+### Rust (`lavi` — [`examples/rust/`](./examples/rust/))
+```rust
+use indexmap::IndexMap;
+use lavi::{ActionFunction, GuardFunction, RuntimeMachine, SimulatedClock, Value};
+use std::rc::Rc;
+
+let clock = SimulatedClock::with_initial(0);
+let mut machine = RuntimeMachine::from_json(MACHINE_JSON).unwrap();
+machine.register_clock(&clock);
+
+let mut guards: IndexMap<String, GuardFunction> = IndexMap::new();
+guards.insert(
+    "canCross".to_string(),
+    Rc::new(|ctx, _evt, _params| {
+        ctx.as_object()
+            .and_then(|o| o.get("cycles"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) >= 1.0
+    }),
+);
+let actions: IndexMap<String, ActionFunction> = IndexMap::new();
+
+machine.start(&guards, &actions);
+assert!(machine.matches("red"));
+
+clock.increment(1000, &mut machine, &guards, &actions);
+assert!(machine.matches("green"));
+
+machine.transition("PEDESTRIAN_WAIT", &Value::event("PEDESTRIAN_WAIT"), &guards, &actions);
+assert!(machine.matches("yellow"));
+```
+
+### JavaScript / TypeScript (`lavi-wasm` — [`examples/js-wasm/`](./examples/js-wasm/))
+```javascript
+// TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
+import { createMachine, createActor, SimulatedClock } from 'lavi-wasm';
+// (Or import from './lavi-wasm/pkg-npm/lavi.js' when running from a local repo build)
+
+const machine = createMachine(
+  {
+    id: 'stoplight',
+    initial: 'red',
+    context: { cycles: 1 },
+    states: {
+      red: { entry: ['onRed'], after: { 1000: 'green' } },
+      green: {
+        entry: ['onGreen'],
+        on: { PEDESTRIAN_WAIT: { target: 'yellow', guard: 'canCross' } },
+        after: { 1000: 'yellow' }
+      },
+      yellow: { entry: ['onYellow'], after: { 1000: 'red' } }
+    }
+  },
+  {
+    guards: { canCross: ({ context }) => context.cycles >= 1 }
+  }
+);
+
+const clock = new SimulatedClock();
+const actor = createActor(machine, { clock }).start();
+console.log(actor.getSnapshot().matches('red')); // true
+
+clock.increment(1000);
+console.log(actor.getSnapshot().matches('green')); // true
+
+actor.send({ type: 'PEDESTRIAN_WAIT' });
+console.log(actor.getSnapshot().matches('yellow')); // true
+```
+
+### C (`lavi.h` — [`examples/c/`](./examples/c/))
+```c
+#include "lavi.h"
+#include <assert.h>
+
+static bool can_cross(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
+  const fsm_value_t* cycles = fsm_value_get_property(ctx, "cycles");
+  return cycles != NULL && fsm_value_get_number(cycles) >= 1.0;
+}
+
+SimulatedClock* clock = fsm_simulated_clock_create(0);
+MachineContext* machine = fsm_create(MACHINE_JSON);
+fsm_register_simulated_clock(machine, clock);
+fsm_register_guard(machine, "canCross", can_cross, NULL);
+
+fsm_start(machine);
+assert(fsm_matches(machine, "red"));
+
+fsm_simulated_clock_increment(clock, 1000);
+assert(fsm_matches(machine, "green"));
+
+fsm_send_event(machine, "PEDESTRIAN_WAIT");
+assert(fsm_matches(machine, "yellow"));
+
+fsm_free(machine);
+fsm_simulated_clock_free(clock);
+```
+
+### C++11 (`lavi.hpp` — [`examples/cpp/`](./examples/cpp/) & [`examples/esp32/`](./examples/esp32/))
 ```cpp
 #include "lavi.hpp"
+#include <cassert>
 
-const char* MACHINE_JSON = R"({
-  "initial": "idle",
-  "states": {
-    "idle": { "on": { "START": { "target": "running", "actions": ["onStart"] } } },
-    "running": { "after": { "1000": "idle" } }
-  }
-})";
+lavi::SimulatedClock clock(0);
+lavi::Machine machine(MACHINE_JSON, clock); // Or pass `registerClock(millis)` on ESP32
 
-lavi::Machine fsm(MACHINE_JSON);
-fsm.registerAction("onStart", [](const lavi::Value& ctx, const lavi::Value& evt) {
-  // Handle action
+machine.registerGuard("canCross", [](const lavi::Value& ctx, const lavi::Value&) {
+  double cycles = 0.0;
+  ctx.getProperty("cycles").getNumber(cycles);
+  return cycles >= 1.0;
 });
-fsm.registerClock(millis); // Or bind a lavi::SimulatedClock for deterministic tests
-fsm.start();
 
-fsm.send("START");
-bool is_running = fsm.matches("running"); // true
-fsm.tick();
+machine.start();
+assert(machine.matches("red"));
+
+clock.increment(1000);
+assert(machine.matches("green"));
+
+machine.send("PEDESTRIAN_WAIT");
+assert(machine.matches("yellow"));
 ```
 
-### Python (`lavi-py`)
+### Python (`lavi-py` — [`examples/python/`](./examples/python/))
 ```python
 from lavi import Machine, SimulatedClock, Value
 
-MACHINE_JSON = """{
-  "initial": "idle",
-  "states": {
-    "idle": { "on": { "START": { "target": "running", "actions": ["onStart"] } } },
-    "running": { "after": { "1000": "idle" } }
-  }
-}"""
-
 clock = SimulatedClock(initial_ms=0)
 with Machine(MACHINE_JSON, clock=clock) as machine:
-    @machine.action("onStart")
-    def handle_start(ctx: Value, evt: Value) -> None:
-        print("Started with count:", ctx.get("count", 0))
+    @machine.guard("canCross")
+    def can_cross(ctx: Value, _evt: Value) -> bool:
+        return (ctx["cycles"].as_int() or 0) >= 1
 
     machine.start()
-    machine.send("START", payload={"boost": 10})
-    assert machine.matches("running")
+    assert machine.matches("red")
+
     clock.increment(1000)
-    assert machine.matches("idle")
+    assert machine.matches("green")
+
+    machine.send("PEDESTRIAN_WAIT")
+    assert machine.matches("yellow")
 ```
 
-### Java (`lavi-jvm`)
+### Java (`lavi-jvm` — [`examples/java/`](./examples/java/))
 ```java
 import io.lavi.Machine;
 import io.lavi.SimulatedClock;
 
-String json = """
-  {
-    "initial": "idle",
-    "states": {
-      "idle": { "on": { "START": { "target": "running", "actions": ["onStart"] } } },
-      "running": { "after": { "1000": "idle" } }
-    }
-  }
-""";
-
 try (SimulatedClock clock = new SimulatedClock(0);
-     Machine machine = new Machine(json, clock)
-         .registerAction("onStart", (ctx, evt) -> {
-             long boost = evt.getProperty("boost").asLong().orElse(0L);
-         })) {
+     Machine machine = new Machine(MACHINE_JSON, clock)
+         .registerGuard("canCross", (ctx, evt) ->
+             ctx.getProperty("cycles").asLong().orElse(0L) >= 1L)) {
     machine.start();
-    machine.send("START", "{\"boost\": 10}");
-    assert machine.matches("running");
+    assert machine.matches("red");
+
     clock.increment(1000);
-    assert machine.matches("idle");
+    assert machine.matches("green");
+
+    machine.send("PEDESTRIAN_WAIT");
+    assert machine.matches("yellow");
 }
 ```
 
-### Kotlin (`lavi-jvm`)
+### Kotlin (`lavi-jvm` — [`examples/kotlin/`](./examples/kotlin/))
 ```kotlin
-import io.lavi.Machine
-import io.lavi.SimulatedClock
 import io.lavi.*
 
 SimulatedClock(0).use { clock ->
-    Machine(json, clock).use { machine ->
-        machine.onAction("onStart") { ctx, evt ->
-            val boost = evt["boost"].asLongOrNull() ?: 0L
+    Machine(MACHINE_JSON, clock).use { machine ->
+        machine.onGuard("canCross") { ctx, _ ->
+            (ctx["cycles"].asLongOrNull() ?: 0L) >= 1L
         }
+
         machine.start()
-        machine.send("START", mapOf("boost" to 10))
-        assert(machine.matches("running"))
+        check(machine.matches("red"))
+
         clock.increment(1000)
-        assert(machine.matches("idle"))
+        check(machine.matches("green"))
+
+        machine.send("PEDESTRIAN_WAIT")
+        check(machine.matches("yellow"))
     }
 }
 ```

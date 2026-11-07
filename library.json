@@ -33,7 +33,7 @@
       "lavi-c-cpp/include/**",
       "lavi-wasm/Cargo.toml",
       "lavi-wasm/src/**",
-      "examples/stoplight-esp32/**"
+      "examples/esp32/**"
     ]
   },
   "frameworks": [

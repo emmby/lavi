@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lavi-example-python"
+version = "0.1.0"
+description = "Self-contained Python usage example for the Lavi statechart runtime."
+requires-python = ">=3.8"
+dependencies = [
+    "lavi",
+]
+
+[project.scripts]
+example = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]

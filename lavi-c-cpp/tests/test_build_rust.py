@@ -253,11 +253,13 @@ class TestBuildRust(unittest.TestCase):
                 f"Workspace member {member} must be covered in library.json export.include",
             )
 
-    def test_stoplight_esp32_example_and_workflow_cleanup(self):
-        pio_ini = os.path.join(REPO_ROOT, "examples", "stoplight-esp32", "platformio.ini")
-        main_cpp = os.path.join(REPO_ROOT, "examples", "stoplight-esp32", "src", "main.cpp")
+    def test_esp32_example_and_workflow_cleanup(self):
+        pio_ini = os.path.join(REPO_ROOT, "examples", "esp32", "platformio.ini")
+        main_cpp = os.path.join(REPO_ROOT, "examples", "esp32", "src", "main.cpp")
+        old_dir = os.path.join(REPO_ROOT, "examples", "stoplight-esp32")
         self.assertTrue(os.path.isfile(pio_ini))
         self.assertTrue(os.path.isfile(main_cpp))
+        self.assertFalse(os.path.exists(old_dir))
         with open(pio_ini, "r", encoding="utf-8") as f:
             ini_content = f.read()
         self.assertIn("https://github.com/emmby/lavi.git", ini_content)
