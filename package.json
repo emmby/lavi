@@ -2,10 +2,11 @@
   "name": "lavi",
   "license": "MIT",
   "scripts": {
-    "build": "npm run build:npm && npm run build:web && npm run build:c-cpp && npm run build:py && npm run build:jvm",
+    "build": "npm run build:npm && npm run build:web && npm run build:c-cpp && npm run build:py && npm run build:jvm && npm run build:examples",
     "build:web": "cd lavi-wasm && wasm-pack build --target web --out-name lavi",
     "build:npm": "cd lavi-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name lavi",
-    "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:py && npm run test:jvm && npm run test:unit",
+    "build:examples": "cargo build --manifest-path examples/rust/Cargo.toml && make -C examples/c && make -C examples/cpp && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/java assemble || gradle -p examples/java assemble) && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/kotlin assemble || gradle -p examples/kotlin assemble)",
+    "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:py && npm run test:jvm && npm run test:examples && npm run test:unit",
     "test:conformance-check": "node scripts/check-conformance-tests.mjs",
     "test:native": "cargo test",
     "test:wasm": "cd lavi-wasm && CHROMEDRIVER_ARGS=--disable-build-check wasm-pack test --headless --chrome",
@@ -19,7 +20,8 @@
     "build:py": "cargo build --package lavi-py && node scripts/stage-py-native.mjs",
     "test:py": "npm run build:py && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests",
     "build:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm assemble || gradle -p lavi-jvm assemble)",
-    "test:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm test || gradle -p lavi-jvm test)"
+    "test:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm test || gradle -p lavi-jvm test)",
+    "test:examples": "cargo run --manifest-path examples/rust/Cargo.toml && node examples/js-wasm/index.mjs && make -C examples/c run && make -C examples/cpp run && PYTHONPATH=lavi-py/python python3 examples/python/main.py && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/java run || gradle -p examples/java run) && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/kotlin run || gradle -p examples/kotlin run) && clang++ -std=c++11 -fsyntax-only -I examples/esp32/mock_arduino -I lavi-c-cpp/include examples/esp32/test_host_compile.cpp"
   },
   "dependencies": {
     "xstate": "^5.25.0"
