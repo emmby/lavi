@@ -1,6 +1,6 @@
 # Lavi
 
-**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in `#![no_std]` Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`) and **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO).
+**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in `#![no_std]` Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`), **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO), **Python** (`lavi-py`), and **Java / Kotlin / Android** (`lavi-jvm`).
 
 ## Why Lavi?
 
@@ -9,6 +9,8 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
 - **Embedded Microcontrollers (C / C++ / PlatformIO)**: Run statecharts on ESP32, STM32, or bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
 - **Native Systems (Rust)**: Embed a lightweight `#![no_std]` + `alloc` statechart engine (`indexmap` is the sole dependency; zero `serde` overhead).
 - **Browsers & Node.js (WebAssembly)**: Use XState v5's `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock` APIs backed by the compiled WASM core.
+- **Backend Services & Simulation (Python)**: Run statecharts in Python services or drive deterministic tests in `pytest` with `SimulatedClock` using `lavi-py`.
+- **Server JVM & Android (Java & Kotlin)**: Embed statecharts in server backends or Android mobile apps with zero-friction native loading (`.jar`) and 16 KB page-aligned AAR packaging (`.aar`) using `lavi-jvm`.
 
 ### Why the Name "Lavi"?
 Statecharts were invented in 1983–1987 by computer scientist **David Harel** in collaboration with systems engineering pioneer **Dr. Jonah Z. Lavi** while designing the avionics software for the **Lavi** aircraft—where complex embedded flight-control logic needed a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "young lion" in Hebrew.
@@ -25,6 +27,9 @@ Statecharts were invented in 1983–1987 by computer scientist **David Harel** i
    - **C (`lavi.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers with `void* user_data`.
    - **C++11 (`lavi.hpp`)**: Move-safe RAII classes (`lavi::Machine`, `lavi::SimulatedClock`, `lavi::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
    - **Rust (`lavi`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
+   - **Python (`lavi-py`)**: Idiomatic `Machine`, `SimulatedClock`, `Value`, decorators (`@machine.action`, `@machine.guard`), context managers (`with Machine(...)`), and dict/list payload interop.
+   - **Java (`lavi-jvm`)**: `AutoCloseable` `Machine` and `SimulatedClock`, fluent registration (`registerAction`, `registerGuard`), and zero-GC-leak callback mechanics.
+   - **Kotlin (`lavi-jvm`)**: Trailing lambdas (`onAction`, `onGuard`, `onClock`), operator indexing (`ctx["key"]`), and `Map<String, Any?>` event payload support.
 
 ## Interactive WASM Demos
 
@@ -41,6 +46,9 @@ Hierarchical statecharts replace fragile `if/else` boolean-flag logic with decla
 * **`lavi`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
 * **`lavi-wasm`**: WebAssembly adapter exposing XState 5's JavaScript/TypeScript API and bridging inline JS callbacks to named runtime handlers.
 * **`lavi-c-cpp`**: C/C++ static library and headers (`include/lavi.h`, `include/lavi.hpp`) for embedded (`espressif32`) and host (`native`) targets.
+* **`lavi-py`**: Python native extension via PyO3 (`abi3-py38`) with full `.pyi` type stubs and pytest integration.
+* **`lavi-jvm`**: Java and Kotlin JNI bridge via `jni-rs` with Gradle `java-library`, desktop resource extraction, and Android AAR packaging.
+* **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator and Android AAR packager (16 KB page-alignment check).
 * **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/lavi.git`).
 * **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
 * **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
@@ -53,7 +61,7 @@ npm run build
 ```
 
 ### Run All Tests
-Runs the conformance provenance check, native Rust unit tests, headless Chrome WASM tests, Playwright E2E tests, C/C++ static library + PlatformIO build script tests, and Vitest XState 5 conformance tests:
+Runs the conformance provenance check, native Rust unit tests, headless Chrome WASM tests, Playwright E2E tests, C/C++ static library + PlatformIO build script tests, Python pytest tests, Java & Kotlin JUnit tests, and Vitest XState 5 conformance tests:
 ```bash
 npm test
 ```
@@ -64,6 +72,8 @@ Or run individual suites:
 - `npm run test:wasm` (WASM browser tests)
 - `npm run test:e2e` (HTML examples via Playwright)
 - `npm run test:c-cpp` (C, C++, and PlatformIO `build_rust.py` tests)
+- `npm run test:py` (Python unit tests via pytest)
+- `npm run test:jvm` (Java and Kotlin unit tests via Gradle JUnit 5)
 - `npm run test:unit` (XState 5 conformance suite via Vitest)
 
 ## Usage Examples
@@ -122,6 +132,79 @@ fsm.start();
 fsm.send("START");
 bool is_running = fsm.matches("running"); // true
 fsm.tick();
+```
+
+### Python (`lavi-py`)
+```python
+from lavi import Machine, SimulatedClock, Value
+
+MACHINE_JSON = """{
+  "initial": "idle",
+  "states": {
+    "idle": { "on": { "START": { "target": "running", "actions": ["onStart"] } } },
+    "running": { "after": { "1000": "idle" } }
+  }
+}"""
+
+clock = SimulatedClock(initial_ms=0)
+with Machine(MACHINE_JSON, clock=clock) as machine:
+    @machine.action("onStart")
+    def handle_start(ctx: Value, evt: Value) -> None:
+        print("Started with count:", ctx.get("count", 0))
+
+    machine.start()
+    machine.send("START", payload={"boost": 10})
+    assert machine.matches("running")
+    clock.increment(1000)
+    assert machine.matches("idle")
+```
+
+### Java (`lavi-jvm`)
+```java
+import io.lavi.Machine;
+import io.lavi.SimulatedClock;
+
+String json = """
+  {
+    "initial": "idle",
+    "states": {
+      "idle": { "on": { "START": { "target": "running", "actions": ["onStart"] } } },
+      "running": { "after": { "1000": "idle" } }
+    }
+  }
+""";
+
+try (SimulatedClock clock = new SimulatedClock(0);
+     Machine machine = new Machine(json, clock)
+         .registerAction("onStart", (ctx, evt) -> {
+             long boost = evt.getProperty("boost").asLong().orElse(0L);
+         })) {
+    machine.start();
+    machine.send("START", "{\"boost\": 10}");
+    assert machine.matches("running");
+    clock.increment(1000);
+    assert machine.matches("idle");
+}
+```
+
+### Kotlin (`lavi-jvm`)
+```kotlin
+import io.lavi.Machine
+import io.lavi.SimulatedClock
+import io.lavi.*
+
+SimulatedClock(0).use { clock ->
+    Machine(json, clock).use { machine ->
+        machine.onAction("onStart") { ctx, evt ->
+            val boost = evt["boost"].asLongOrNull() ?: 0L
+        }
+        machine.start()
+        machine.send("START", mapOf("boost" to 10))
+        assert(machine.matches("running"))
+        clock.increment(1000)
+        assert(machine.matches("idle"))
+    }
+}
 ```
 
 ## Known Discrepancy: XState 5 Parity vs. Microcontroller Memory Safety

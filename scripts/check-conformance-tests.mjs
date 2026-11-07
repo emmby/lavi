@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(__dirname, '..');
-const META_TEST_FILES = new Set(['conformance-check.test.ts']);
+const META_TEST_FILES = new Set(['conformance-check.test.ts', 'build-release-natives.test.ts']);
 
 function sha256(content) {
   return crypto.createHash('sha256').update(content, 'utf8').digest('hex');

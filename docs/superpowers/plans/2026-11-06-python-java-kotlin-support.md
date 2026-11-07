@@ -51,7 +51,7 @@
   - `class SimulatedClock(initial_ms: int = 0)`: `now() -> int`, `set(target_ms: int) -> None`, `increment(dt_ms: int) -> None`, `close() -> None`, `__enter__() -> SimulatedClock`, `__exit__(...) -> None`
   - `class Machine(json_config: str, clock: Optional[SimulatedClock] = None)`: `start() -> Machine`, `stop() -> None`, `close() -> None`, `matches(state_path: str) -> bool`, `can(event: str, payload: Optional[dict[str, Any] | str] = None) -> bool`, `has_tag(tag: str) -> bool`, `is_done() -> bool`, `send(event: str | dict[str, Any], payload: Optional[dict[str, Any] | str] = None) -> None`, `tick() -> None`, `get_next_deadline() -> Optional[int]`, `get_snapshot() -> str`, `restore_snapshot(snapshot_json: str) -> None`, `__enter__() -> Machine`, `__exit__(...) -> None`
 
-- [ ] **Step 1: Write the failing Python lifecycle, `Value`, and `SimulatedClock` tests in `lavi-py/tests/test_lavi.py`**
+- [x] **Step 1: Write the failing Python lifecycle, `Value`, and `SimulatedClock` tests in `lavi-py/tests/test_lavi.py`**
 
 ```python
 import pytest
@@ -129,22 +129,22 @@ def test_stop_and_closed_machine_behavior():
         m.send("TIMER")
 ```
 
-- [ ] **Step 2: Create `lavi-py` scaffolding and `scripts/stage-py-native.mjs`, and verify `pytest` fails with `NotImplementedError` or missing symbols**
+- [x] **Step 2: Create `lavi-py` scaffolding and `scripts/stage-py-native.mjs`, and verify `pytest` fails with `NotImplementedError` or missing symbols**
 
 Configure `lavi-py/Cargo.toml` (`crate-type = ["cdylib"]`, `lavi = { workspace = true }`, `indexmap = "2.2"`, `pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }`), `lavi-py/build.rs` calling `pyo3_build_config::add_extension_module_link_args()`, and `scripts/stage-py-native.mjs` copying `target/debug/liblavi_py.dylib` (macOS) or `liblavi_py.so` (Linux) to `lavi-py/python/lavi/_lavi_py.abi3.so` (and `lavi_py.dll` to `_lavi_py.pyd` on Windows), re-exported from `lavi-py/python/lavi/__init__.py`.
 Run: `cargo build -p lavi-py && node scripts/stage-py-native.mjs && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests/test_lavi.py`
 Expected: FAIL (`ImportError: cannot import name 'Machine' from 'lavi'`).
 
-- [ ] **Step 3: Implement `Value`, `SimulatedClock`, and `Machine` lifecycle methods in `lavi-py/src/lib.rs` and type stubs in `lavi-py/python/lavi/__init__.pyi`**
+- [x] **Step 3: Implement `Value`, `SimulatedClock`, and `Machine` lifecycle methods in `lavi-py/src/lib.rs` and type stubs in `lavi-py/python/lavi/__init__.pyi`**
 
 Implement `Value` wrapping `Arc<CoreValue>` with iterative heap `Vec` work-stack conversion in `to_python()` and Python object-to-`CoreValue` payload conversion for `send` and `can`. Implement `SimulatedClock` wrapping `Arc<Mutex<SimulatedClockInner>>` and `Machine` wrapping `RefCell<Option<MachineInner>>` (`None` when closed). Add `"build:py": "cargo build --package lavi-py && node scripts/stage-py-native.mjs"` and `"test:py": "npm run build:py && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests"` to `package.json`.
 
-- [ ] **Step 4: Run `npm run test:py` to verify all Task 1 tests pass**
+- [x] **Step 4: Run `npm run test:py` to verify all Task 1 tests pass**
 
 Run: `npm run test:py`
 Expected: PASS (4 passed).
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add Cargo.toml Cargo.lock package.json scripts/stage-py-native.mjs lavi-py/
@@ -171,7 +171,7 @@ git commit -m "feat(py): add lavi-py core crate, Value, SimulatedClock, and Mach
   - `clock(callback: Callable[[], int]) -> Callable[[], int]`
   - PyO3 `__traverse__` and `__clear__` on `Machine` and `SimulatedClock`.
 
-- [ ] **Step 1: Write failing tests for callbacks, `Value` inspection, re-entrant `send`/`matches`/`stop`, exception short-circuiting, and GC cycle collection in `lavi-py/tests/test_lavi.py`**
+- [x] **Step 1: Write failing tests for callbacks, `Value` inspection, re-entrant `send`/`matches`/`stop`, exception short-circuiting, and GC cycle collection in `lavi-py/tests/test_lavi.py`**
 
 ```python
 import gc
@@ -292,12 +292,12 @@ def test_gc_collects_reference_cycle_between_machine_and_callback():
     assert ref() is None
 ```
 
-- [ ] **Step 2: Run `npm run test:py` to verify the new tests fail**
+- [x] **Step 2: Run `npm run test:py` to verify the new tests fail**
 
 Run: `npm run test:py`
 Expected: FAIL (`AttributeError: 'lavi.Machine' object has no attribute 'guard'`).
 
-- [ ] **Step 3: Implement callback registration, re-entrant `PendingCommand` queue, exception short-circuiting, and `__traverse__`/`__clear__` in `lavi-py/src/lib.rs`**
+- [x] **Step 3: Implement callback registration, re-entrant `PendingCommand` queue, exception short-circuiting, and `__traverse__`/`__clear__` in `lavi-py/src/lib.rs`**
 
 In `lavi-py/src/lib.rs`:
 - Store registered Python callables (`Py<PyAny>`) in `MachineState` and bind synthetic `ActionFunction` / `GuardFunction` closures that acquire `Python::with_gil`, construct `Value(Arc::new(ctx.clone()))` and `Value(Arc::new(evt.clone()))`, and invoke the Python callable.
@@ -305,12 +305,12 @@ In `lavi-py/src/lib.rs`:
 - If a Python callback raises `PyErr`, store it via `PyErr::restore(py)` + `aborted.set(true)`, skip remaining foreign callbacks in the step, break any outer `SimulatedClock.set()`/`increment()` loop immediately, and return `Err(PyErr::fetch(py))`.
 - Implement `__traverse__` and `__clear__` on `Machine` and `SimulatedClock`.
 
-- [ ] **Step 4: Run `npm run test:py` and `cargo clippy` to verify all Python tests and lints pass**
+- [x] **Step 4: Run `npm run test:py` and `cargo clippy` to verify all Python tests and lints pass**
 
 Run: `npm run test:py && cargo clippy --workspace --all-targets -- -D warnings`
 Expected: PASS (8 passed, 0 clippy warnings).
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add lavi-py/
@@ -349,7 +349,7 @@ git commit -m "feat(py): add callbacks, re-entrant queue, exception short-circui
   - `public final class SimulatedClock implements AutoCloseable`: `SimulatedClock()`, `SimulatedClock(long initialMs)`, `now() -> long`, `set(long targetMs) -> void`, `increment(long dtMs) -> void`, `close() -> void`
   - `public final class Machine implements AutoCloseable`: `Machine(String jsonConfig)`, `Machine(String jsonConfig, SimulatedClock clock)`, `registerAction(String name, ActionCallback cb) -> Machine`, `registerGuard(String name, GuardCallback cb) -> Machine`, `registerClock(ClockCallback cb) -> Machine`, `registerClock(SimulatedClock clock) -> Machine`, `start() -> Machine`, `stop() -> void`, `close() -> void`, `matches(String statePath) -> boolean`, `can(String event) -> boolean`, `can(String event, String payloadJson) -> boolean`, `hasTag(String tag) -> boolean`, `isDone() -> boolean`, `send(String event) -> void`, `send(String event, String payloadJson) -> void`, `tick() -> void`, `getNextDeadline() -> OptionalLong`, `getSnapshot() -> String`, `restoreSnapshot(String snapshotJson) -> void`
 
-- [ ] **Step 1: Write failing Java JUnit 5 tests in `lavi-jvm/src/test/java/io/lavi/JavaMachineTest.java`**
+- [x] **Step 1: Write failing Java JUnit 5 tests in `lavi-jvm/src/test/java/io/lavi/JavaMachineTest.java`**
 
 ```java
 package io.lavi;
@@ -461,25 +461,25 @@ class JavaMachineTest {
 }
 ```
 
-- [ ] **Step 2: Create `lavi-jvm` Cargo and Gradle configuration and verify `./gradlew test` fails before implementation**
+- [x] **Step 2: Create `lavi-jvm` Cargo and Gradle configuration and verify `./gradlew test` fails before implementation**
 
 Create `lavi-jvm/Cargo.toml` (`crate-type = ["cdylib"]`, `jni = "0.21"`, `lavi = { workspace = true }`, `indexmap = "2.2"`) and `lavi-jvm/build.gradle.kts` (`java-library`, `org.jetbrains.kotlin.jvm`, JUnit Jupiter, passing `-Dlavi.library.path=${rootProject.projectDir}/../target/debug` to the `test` task).
 Run: `cargo build -p lavi-jvm && gradle -p lavi-jvm test`
 Expected: FAIL (compilation failure or `UnsatisfiedLinkError`).
 
-- [ ] **Step 3: Implement `lavi-jvm/src/lib.rs` and the `io.lavi.*` Java classes**
+- [x] **Step 3: Implement `lavi-jvm/src/lib.rs` and the `io.lavi.*` Java classes**
 
 Implement:
 - `Value.java`: Pure Java immutable tree materializer (or JNI-backed `Arc<CoreValue>` wrapper materializing into Java `Value` nodes iteratively) so `Value` has zero dangling native pointers and works outside callbacks without native finalizer pressure.
 - `Machine.java` & `SimulatedClock.java`: Hold callback `Map`s on the Java `Machine` instance; expose private `dispatchAction(String name, Value ctx, Value evt)`, `dispatchGuard(String name, Value ctx, Value evt)`, and `dispatchClock()` called from JNI using the active `JNIEnv` and `jobject` during transitions; register `java.lang.ref.Cleaner` to free native Rust peers if `.close()` is omitted; handle re-entrant `send`/`stop` via a `PendingCommand` queue in Rust (`lavi-jvm/src/lib.rs`) and check `env.exception_check()` after every callback to short-circuit transitions and `SimulatedClock` loops.
 - `NativeLoader.java`: Support `-Dlavi.library.path`, Android `System.loadLibrary("lavi_jvm")`, `musl` vs `gnu` detection on Linux, content-addressed extraction `<baseDir>/lavi-jni-<hash>/liblavi_jvm.<ext>`, and fallback to user cache dir (`~/.cache/lavi`) if `/tmp` is `noexec`.
 
-- [ ] **Step 4: Run `cargo build -p lavi-jvm && gradle -p lavi-jvm test` to verify all Java tests pass**
+- [x] **Step 4: Run `cargo build -p lavi-jvm && gradle -p lavi-jvm test` to verify all Java tests pass**
 
 Run: `cargo build -p lavi-jvm && gradle -p lavi-jvm test`
 Expected: PASS (5 passed).
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add Cargo.toml Cargo.lock lavi-jvm/
@@ -511,7 +511,7 @@ git commit -m "feat(jvm): add lavi-jvm JNI bridge, NativeLoader, and Java API"
   - `fun Value.asLongOrNull(): Long?`
   - `fun Value.asBooleanOrNull(): Boolean?`
 
-- [ ] **Step 1: Write failing Kotlin tests in `lavi-jvm/src/test/kotlin/io/lavi/KotlinMachineTest.kt`**
+- [x] **Step 1: Write failing Kotlin tests in `lavi-jvm/src/test/kotlin/io/lavi/KotlinMachineTest.kt`**
 
 ```kotlin
 package io.lavi
@@ -587,21 +587,21 @@ class KotlinMachineTest {
 }
 ```
 
-- [ ] **Step 2: Run `gradle -p lavi-jvm test` to verify compilation fails before `MachineExtensions.kt` exists**
+- [x] **Step 2: Run `gradle -p lavi-jvm test` to verify compilation fails before `MachineExtensions.kt` exists**
 
 Run: `gradle -p lavi-jvm test`
 Expected: FAIL (`Unresolved reference: onGuard`).
 
-- [ ] **Step 3: Implement `lavi-jvm/src/main/kotlin/io/lavi/MachineExtensions.kt` and wire `build:jvm` and `test:jvm` into `package.json`**
+- [x] **Step 3: Implement `lavi-jvm/src/main/kotlin/io/lavi/MachineExtensions.kt` and wire `build:jvm` and `test:jvm` into `package.json`**
 
 Implement the extension functions and an iterative heap work-stack `Map<String, Any?>` $\rightarrow$ JSON serializer for `send` and `can` payloads in `MachineExtensions.kt`. Add `"build:jvm": "cargo build --package lavi-jvm && gradle -p lavi-jvm assemble"` and `"test:jvm": "cargo build --package lavi-jvm && gradle -p lavi-jvm test"` to `package.json`.
 
-- [ ] **Step 4: Run `npm run test:jvm` to verify both Java and Kotlin test suites pass**
+- [x] **Step 4: Run `npm run test:jvm` to verify both Java and Kotlin test suites pass**
 
 Run: `npm run test:jvm`
 Expected: PASS (JavaMachineTest and KotlinMachineTest pass).
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add package.json lavi-jvm/
@@ -628,7 +628,7 @@ git commit -m "feat(jvm): add Kotlin idiomatic extensions and Kotlin test suite"
   - `ANDROID_TARGETS`: `arm64-v8a` (`aarch64-linux-android`), `armeabi-v7a` (`armv7-linux-androideabi`), `x86_64` (`x86_64-linux-android`) with `-C link-arg=-Wl,-z,max-page-size=16384`
   - `buildReleasePlan(options)` returning the exact command plan for `cargo zigbuild`, `maturin build --zig`, `cargo ndk`, ELF 16 KB (`0x4000`) alignment check, and `.aar` packaging (`AndroidManifest.xml`, `classes.jar`, `jni/<abi>/liblavi_jvm.so`).
 
-- [ ] **Step 1: Write failing Vitest unit tests in `tests/build-release-natives.test.ts`**
+- [x] **Step 1: Write failing Vitest unit tests in `tests/build-release-natives.test.ts`**
 
 ```ts
 import { describe, it, expect } from 'vitest';
@@ -668,21 +668,21 @@ describe('build-release-natives', () => {
 });
 ```
 
-- [ ] **Step 2: Run Vitest on `tests/build-release-natives.test.ts` and verify it fails**
+- [x] **Step 2: Run Vitest on `tests/build-release-natives.test.ts` and verify it fails**
 
 Run: `npx vitest run tests/build-release-natives.test.ts`
 Expected: FAIL (`Cannot find module '../scripts/build-release-natives.mjs'`).
 
-- [ ] **Step 3: Implement `scripts/build-release-natives.mjs` and update `package.json`, `PROCESS.md`, and `README.md`**
+- [x] **Step 3: Implement `scripts/build-release-natives.mjs` and update `package.json`, `PROCESS.md`, and `README.md`**
 
 Implement `scripts/build-release-natives.mjs`, wire `test:py` and `test:jvm` into `npm test` and `npm run build` in `package.json`, and document the Python (`lavi-py`) and Java/Kotlin (`lavi-jvm`) usage examples and workflow in `README.md` and `PROCESS.md`.
 
-- [ ] **Step 4: Run the full verification suite (`npm run build && npm test && cargo clippy`)**
+- [x] **Step 4: Run the full verification suite (`npm run build && npm test && cargo clippy`)**
 
 Run: `cargo clippy --workspace --all-targets -- -D warnings && npm run build && npm test`
 Expected: PASS (all conformance checks, native Rust tests, WASM tests, E2E tests, C/C++ tests, Python pytest tests, JVM Java/Kotlin JUnit tests, and Vitest unit tests pass).
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add scripts/build-release-natives.mjs tests/build-release-natives.test.ts package.json PROCESS.md README.md
