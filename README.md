@@ -6,7 +6,7 @@
 
 ### Design in XState. Run Everywhere.
 XState v5 and Stately Studio provide an expressive, standardized JSON configuration format for Harel Statecharts and W3C SCXML semantics. **Lavi** brings that same statechart execution model beyond JavaScript so the exact same machine definition can run identically across:
-- **Embedded Microcontrollers (C / C++ / PlatformIO / Arduino IDE)**: Run statecharts on ESP32, STM32, or bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
+- **Embedded Microcontrollers (C / C++ / PlatformIO / Arduino IDE)**: Run statecharts on ESP32 (Xtensa & RISC-V) and bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
 - **Native Systems (Rust)**: Embed a lightweight `#![no_std]` + `alloc` statechart engine (`indexmap` is the sole dependency; zero `serde` overhead).
 - **Browsers & Node.js (WebAssembly)**: Use XState v5's `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock` APIs backed by the compiled WASM core.
 - **Backend Services & Simulation (Python)**: Run statecharts in Python services or drive deterministic tests in `pytest` with `SimulatedClock` using `lavi-py`.
@@ -304,7 +304,7 @@ SimulatedClock(0).use { clock ->
 ## How Lavi Compares
 
 - **[XState v5](https://stately.ai/docs/xstate)** is the reference standard when your entire stack runs on JavaScript/TypeScript; **Lavi** brings those exact statechart semantics and Stately Studio JSON definitions to `#![no_std]` Rust, C, C++, WebAssembly, Python, Java, and Kotlin (with Swift, Dart, and C# planned) via a single shared native engine.
-- **[StateSmith](https://github.com/StateSmith/StateSmith)**, **[`statig`](https://github.com/mdeloof/statig)**, and **[Boost.SML](https://github.com/boost-ext/sml)** are ideal when you need compile-time code generators or macros with **zero heap (`no-alloc`)** on tiny 8-bit or Cortex-M0 chips; **Lavi** uses `#![no_std]` + `alloc` (targeting 32-bit MCUs like ESP32/STM32, desktop, and web) to unlock runtime/OTA JSON loading, snapshot persistence, parallel states, and declarative `after` timers across languages.
+- **[StateSmith](https://github.com/StateSmith/StateSmith)**, **[`statig`](https://github.com/mdeloof/statig)**, and **[Boost.SML](https://github.com/boost-ext/sml)** are ideal when you need compile-time code generators or macros with **zero heap (`no-alloc`)** on tiny 8-bit or Cortex-M0 chips; **Lavi** uses `#![no_std]` + `alloc` (targeting 32-bit MCUs like ESP32, desktop, and web) to unlock runtime/OTA JSON loading, snapshot persistence, parallel states, and declarative `after` timers across languages.
 - **[QP/C & QP/C++](https://www.state-machine.com/products/qp)** provide a full Active Object RTOS framework (dual GPLv3 / commercial); **Lavi** is an MIT-licensed, standalone statechart engine that drops into any existing RTOS (FreeRTOS, Zephyr), async runtime, or UI loop.
 - **[itemis CREATE](https://www.itemis.com/en/products/itemis-create/)** and **MathWorks Stateflow** serve enterprise workflows requiring proprietary IDEs and safety-certification kits; **Lavi** is open-source, uses standard XState v5 JSON, and verifies correctness directly against the upstream XState test suite.
 
