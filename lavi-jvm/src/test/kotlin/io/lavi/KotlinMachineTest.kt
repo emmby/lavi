@@ -204,4 +204,56 @@ class KotlinMachineTest {
             }
         }
     }
+
+    @Test
+    fun kotlinContextInspectionAndParameterizedCallbacks() {
+        val testJson = """
+            {
+              "id": "ktParam",
+              "initial": "idle",
+              "context": { "score": 95, "user": "alice" },
+              "states": {
+                "idle": {
+                  "on": {
+                    "SUBMIT": {
+                      "target": "verified",
+                      "guard": { "type": "minScore", "params": { "threshold": 80 } },
+                      "actions": [{ "type": "onVerified", "params": { "award": "gold" } }]
+                    }
+                  }
+                },
+                "verified": { "type": "final" }
+              }
+            }
+        """.trimIndent()
+
+        var observedAward: String? = null
+        var guardExecuted = false
+
+        Machine(testJson).use { machine ->
+            assertTrue(machine.context.isNull)
+
+            machine.onGuardWithParams("minScore") { ctx, _, params ->
+                guardExecuted = true
+                val threshold = params["threshold"].asLongOrNull() ?: 0L
+                val score = ctx["score"].asLongOrNull() ?: 0L
+                score >= threshold
+            }
+
+            machine.onActionWithParams("onVerified") { _, _, params ->
+                observedAward = params["award"].asStringOrNull()
+            }
+
+            machine.start()
+            assertFalse(machine.context.isNull)
+            assertEquals(95L, machine.context["score"].asLongOrNull())
+            assertEquals("alice", machine.context["user"].asStringOrNull())
+
+            assertTrue(machine.can("SUBMIT"))
+            machine.send("SUBMIT")
+            assertTrue(machine.matches("verified"))
+            assertTrue(guardExecuted)
+            assertEquals("gold", observedAward)
+        }
+    }
 }

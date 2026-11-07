@@ -1,13 +1,10 @@
 package io.lavi;
 
-import java.lang.ref.Cleaner;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.OptionalLong;
 
 public final class Machine implements AutoCloseable {
-    private static final Cleaner CLEANER = Cleaner.create();
-
     private static class NativeState implements Runnable {
         private long nativeHandle;
 
@@ -26,9 +23,11 @@ public final class Machine implements AutoCloseable {
 
     private long nativeHandle;
     private final NativeState state;
-    private final Cleaner.Cleanable cleanable;
-    private final Map<String, ActionCallback> actions = new HashMap<>();
-    private final Map<String, GuardCallback> guards = new HashMap<>();
+    private final NativeCleaner.Cleanable cleanable;
+    private final Map<String, ActionCallback> actions = new HashMap<String, ActionCallback>();
+    private final Map<String, ParameterizedActionCallback> parameterizedActions = new HashMap<String, ParameterizedActionCallback>();
+    private final Map<String, GuardCallback> guards = new HashMap<String, GuardCallback>();
+    private final Map<String, ParameterizedGuardCallback> parameterizedGuards = new HashMap<String, ParameterizedGuardCallback>();
     private ClockCallback clockCallback;
     private SimulatedClock simulatedClock;
     private volatile boolean closed = false;
@@ -49,7 +48,7 @@ public final class Machine implements AutoCloseable {
         long clockHandle = clock != null ? clock.getNativeHandle() : 0L;
         this.nativeHandle = nativeCreate(jsonConfig, clockHandle);
         this.state = new NativeState(nativeHandle);
-        this.cleanable = CLEANER.register(this, state);
+        this.cleanable = NativeCleaner.register(this, state);
 
         if (clock != null) {
             registerClock(clock);
@@ -61,7 +60,19 @@ public final class Machine implements AutoCloseable {
         if (name == null || cb == null) {
             throw new IllegalArgumentException("Action name and callback cannot be null");
         }
+        parameterizedActions.remove(name);
         actions.put(name, cb);
+        nativeRegisterAction(nativeHandle, name);
+        return this;
+    }
+
+    public synchronized Machine registerAction(String name, ParameterizedActionCallback cb) {
+        checkClosed();
+        if (name == null || cb == null) {
+            throw new IllegalArgumentException("Action name and callback cannot be null");
+        }
+        actions.remove(name);
+        parameterizedActions.put(name, cb);
         nativeRegisterAction(nativeHandle, name);
         return this;
     }
@@ -71,7 +82,19 @@ public final class Machine implements AutoCloseable {
         if (name == null || cb == null) {
             throw new IllegalArgumentException("Guard name and callback cannot be null");
         }
+        parameterizedGuards.remove(name);
         guards.put(name, cb);
+        nativeRegisterGuard(nativeHandle, name);
+        return this;
+    }
+
+    public synchronized Machine registerGuard(String name, ParameterizedGuardCallback cb) {
+        checkClosed();
+        if (name == null || cb == null) {
+            throw new IllegalArgumentException("Guard name and callback cannot be null");
+        }
+        guards.remove(name);
+        parameterizedGuards.put(name, cb);
         nativeRegisterGuard(nativeHandle, name);
         return this;
     }
@@ -130,8 +153,16 @@ public final class Machine implements AutoCloseable {
             simulatedClock = null;
         }
         actions.clear();
+        parameterizedActions.clear();
         guards.clear();
+        parameterizedGuards.clear();
         clockCallback = null;
+    }
+
+    public synchronized Value getContext() {
+        checkClosed();
+        long handle = nativeGetContext(nativeHandle);
+        return handle != 0L ? Value.fromNativeHandle(handle) : Value.NULL;
     }
 
     public synchronized boolean matches(String statePath) {
@@ -207,17 +238,41 @@ public final class Machine implements AutoCloseable {
     }
 
     // Called from JNI during transitions/ticks
-    private void dispatchAction(String name, Value ctx, Value evt) {
+    private void dispatchAction(String name, long ctxHandle, long evtHandle, long paramsHandle) {
         ActionCallback cb = actions.get(name);
-        if (cb != null) {
+        ParameterizedActionCallback pcb = parameterizedActions.get(name);
+        if (cb == null && pcb == null) {
+            if (ctxHandle != 0L) Value.nativeFree(ctxHandle);
+            if (evtHandle != 0L) Value.nativeFree(evtHandle);
+            if (paramsHandle != 0L) Value.nativeFree(paramsHandle);
+            return;
+        }
+        Value ctx = Value.fromNativeHandle(ctxHandle);
+        Value evt = Value.fromNativeHandle(evtHandle);
+        Value params = paramsHandle != 0L ? Value.fromNativeHandle(paramsHandle) : Value.NULL;
+        if (pcb != null) {
+            pcb.execute(ctx, evt, params);
+        } else if (cb != null) {
             cb.execute(ctx, evt);
         }
     }
 
     // Called from JNI during transitions/can
-    private boolean dispatchGuard(String name, Value ctx, Value evt) {
+    private boolean dispatchGuard(String name, long ctxHandle, long evtHandle, long paramsHandle) {
         GuardCallback cb = guards.get(name);
-        if (cb != null) {
+        ParameterizedGuardCallback pcb = parameterizedGuards.get(name);
+        if (cb == null && pcb == null) {
+            if (ctxHandle != 0L) Value.nativeFree(ctxHandle);
+            if (evtHandle != 0L) Value.nativeFree(evtHandle);
+            if (paramsHandle != 0L) Value.nativeFree(paramsHandle);
+            return false;
+        }
+        Value ctx = Value.fromNativeHandle(ctxHandle);
+        Value evt = Value.fromNativeHandle(evtHandle);
+        Value params = paramsHandle != 0L ? Value.fromNativeHandle(paramsHandle) : Value.NULL;
+        if (pcb != null) {
+            return pcb.evaluate(ctx, evt, params);
+        } else if (cb != null) {
             return cb.evaluate(ctx, evt);
         }
         return false;
@@ -239,6 +294,7 @@ public final class Machine implements AutoCloseable {
     private native void nativeStart(long handle);
     private native void nativeStop(long handle);
     private static native void nativeFree(long handle);
+    private native long nativeGetContext(long handle);
     private native boolean nativeMatches(long handle, String statePath);
     private native boolean nativeCan(long handle, String event, String payloadJson);
     private native boolean nativeHasTag(long handle, String tag);

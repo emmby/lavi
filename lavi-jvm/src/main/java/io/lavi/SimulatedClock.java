@@ -1,13 +1,10 @@
 package io.lavi;
 
-import java.lang.ref.Cleaner;
 import java.util.Collections;
 import java.util.Set;
 import java.util.WeakHashMap;
 
 public final class SimulatedClock implements AutoCloseable {
-    private static final Cleaner CLEANER = Cleaner.create();
-
     private static class NativeState implements Runnable {
         private long nativeHandle;
 
@@ -26,7 +23,7 @@ public final class SimulatedClock implements AutoCloseable {
 
     private final long nativeHandle;
     private final NativeState state;
-    private final Cleaner.Cleanable cleanable;
+    private final NativeCleaner.Cleanable cleanable;
     private final Set<Machine> machines = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
     private boolean closed = false;
 
@@ -38,7 +35,7 @@ public final class SimulatedClock implements AutoCloseable {
         NativeLoader.load();
         this.nativeHandle = nativeCreate(initialMs);
         this.state = new NativeState(nativeHandle);
-        this.cleanable = CLEANER.register(this, state);
+        this.cleanable = NativeCleaner.register(this, state);
     }
 
     public synchronized long now() {

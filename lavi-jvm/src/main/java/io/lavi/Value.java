@@ -3,6 +3,10 @@ package io.lavi;
 import java.util.*;
 
 public final class Value {
+    static {
+        NativeLoader.load();
+    }
+
     public enum Type {
         NULL,
         BOOLEAN,
@@ -12,49 +16,97 @@ public final class Value {
         OBJECT
     }
 
-    public static final Value NULL = new Value(Type.NULL, null, null, null, null, null);
+    public static final Value NULL = new Value(0L, Type.NULL);
 
+    private final long nativeHandle;
     private final Type type;
-    private final Boolean boolVal;
-    private final Double numVal;
-    private final String strVal;
-    private final List<Value> arrayVal;
-    private final Map<String, Value> objVal;
 
-    private Value(Type type, Boolean b, Double num, String s, List<Value> arr, Map<String, Value> obj) {
+    private Value(long nativeHandle, Type type) {
+        this.nativeHandle = nativeHandle;
         this.type = type;
-        this.boolVal = b;
-        this.numVal = num;
-        this.strVal = s;
-        this.arrayVal = arr;
-        this.objVal = obj;
+    }
+
+    public static Value fromNativeHandle(long handle) {
+        if (handle == 0L) {
+            return NULL;
+        }
+        int typeOrd = nativeGetType(handle);
+        if (typeOrd < 0 || typeOrd >= Type.values().length) {
+            typeOrd = 0;
+        }
+        Type t = Type.values()[typeOrd];
+        if (t == Type.NULL) {
+            nativeFree(handle);
+            return NULL;
+        }
+        Value v = new Value(handle, t);
+        NativeCleaner.register(v, new ValueFreeAction(handle));
+        return v;
+    }
+
+    private static final class ValueFreeAction implements Runnable {
+        private final long handle;
+
+        ValueFreeAction(long handle) {
+            this.handle = handle;
+        }
+
+        @Override
+        public void run() {
+            if (handle != 0L) {
+                nativeFree(handle);
+            }
+        }
     }
 
     public static Value of(boolean b) {
-        return new Value(Type.BOOLEAN, b, null, null, null, null);
+        return fromNativeHandle(nativeOfBoolean(b));
     }
 
     public static Value of(double n) {
-        return new Value(Type.NUMBER, null, n, null, null, null);
+        return fromNativeHandle(nativeOfNumber(n));
     }
 
     public static Value of(long n) {
-        return new Value(Type.NUMBER, null, (double) n, null, null, null);
+        return fromNativeHandle(nativeOfNumber((double) n));
     }
 
     public static Value of(String s) {
         if (s == null) return NULL;
-        return new Value(Type.STRING, null, null, s, null, null);
+        return fromNativeHandle(nativeOfString(s));
     }
 
     public static Value ofArray(List<Value> elements) {
         if (elements == null) return NULL;
-        return new Value(Type.ARRAY, null, null, null, Collections.unmodifiableList(new ArrayList<>(elements)), null);
+        long[] handles = new long[elements.size()];
+        for (int i = 0; i < elements.size(); i++) {
+            Value el = elements.get(i);
+            handles[i] = el != null ? el.nativeHandle : 0L;
+        }
+        return fromNativeHandle(nativeOfArray(handles));
     }
 
     public static Value ofObject(Map<String, Value> properties) {
         if (properties == null) return NULL;
-        return new Value(Type.OBJECT, null, null, null, null, Collections.unmodifiableMap(new LinkedHashMap<>(properties)));
+        int size = properties.size();
+        String[] keys = new String[size];
+        long[] handles = new long[size];
+        int idx = 0;
+        for (Map.Entry<String, Value> entry : properties.entrySet()) {
+            keys[idx] = entry.getKey();
+            Value val = entry.getValue();
+            handles[idx] = val != null ? val.nativeHandle : 0L;
+            idx++;
+        }
+        return fromNativeHandle(nativeOfObject(keys, handles));
+    }
+
+    public static Value fromJson(String json) {
+        if (json == null) return NULL;
+        String s = json.trim();
+        if (s.isEmpty() || s.equals("null")) return NULL;
+        long h = nativeFromJson(s);
+        return h != 0L ? fromNativeHandle(h) : NULL;
     }
 
     public Type getType() {
@@ -86,86 +138,112 @@ public final class Value {
     }
 
     public Optional<Boolean> asBoolean() {
-        return type == Type.BOOLEAN ? Optional.of(boolVal) : Optional.empty();
+        if (type != Type.BOOLEAN || nativeHandle == 0L) {
+            return Optional.empty();
+        }
+        return Optional.of(nativeAsBoolean(nativeHandle));
     }
 
     public Optional<Double> asNumber() {
-        return type == Type.NUMBER ? Optional.of(numVal) : Optional.empty();
+        if (type != Type.NUMBER || nativeHandle == 0L) {
+            return Optional.empty();
+        }
+        return Optional.of(nativeAsNumber(nativeHandle));
     }
 
     public Optional<Long> asLong() {
-        return type == Type.NUMBER ? Optional.of(numVal.longValue()) : Optional.empty();
+        if (type != Type.NUMBER || nativeHandle == 0L) {
+            return Optional.empty();
+        }
+        return Optional.of((long) nativeAsNumber(nativeHandle));
     }
 
     public Optional<String> asString() {
-        return type == Type.STRING ? Optional.of(strVal) : Optional.empty();
+        if (type != Type.STRING || nativeHandle == 0L) {
+            return Optional.empty();
+        }
+        String s = nativeAsString(nativeHandle);
+        return Optional.ofNullable(s);
     }
 
     public Value getProperty(String key) {
-        if (type == Type.OBJECT && objVal != null && key != null) {
-            Value val = objVal.get(key);
-            return val != null ? val : NULL;
+        if (type != Type.OBJECT || nativeHandle == 0L || key == null) {
+            return NULL;
         }
-        return NULL;
+        long child = nativeGetProperty(nativeHandle, key);
+        return child != 0L ? fromNativeHandle(child) : NULL;
     }
 
     public Value getElement(int index) {
-        if (type == Type.ARRAY && arrayVal != null && index >= 0 && index < arrayVal.size()) {
-            return arrayVal.get(index);
+        if (type != Type.ARRAY || nativeHandle == 0L || index < 0) {
+            return NULL;
         }
-        return NULL;
+        long child = nativeGetElement(nativeHandle, index);
+        return child != 0L ? fromNativeHandle(child) : NULL;
     }
 
     public int size() {
-        if (type == Type.ARRAY && arrayVal != null) {
-            return arrayVal.size();
+        if ((type != Type.ARRAY && type != Type.OBJECT) || nativeHandle == 0L) {
+            return 0;
         }
-        if (type == Type.OBJECT && objVal != null) {
-            return objVal.size();
-        }
-        return 0;
+        return nativeSize(nativeHandle);
     }
 
     public boolean hasProperty(String key) {
-        if (type == Type.OBJECT && objVal != null && key != null) {
-            return objVal.containsKey(key);
+        if (type != Type.OBJECT || nativeHandle == 0L || key == null) {
+            return false;
         }
-        return false;
+        return nativeHasProperty(nativeHandle, key);
     }
 
     public Map<String, Value> asObjectMap() {
-        return type == Type.OBJECT && objVal != null ? objVal : Collections.emptyMap();
+        if (type != Type.OBJECT || nativeHandle == 0L) {
+            return Collections.emptyMap();
+        }
+        String[] keys = nativeGetObjectKeys(nativeHandle);
+        long[] handles = nativeGetObjectValues(nativeHandle);
+        if (keys == null || handles == null || keys.length != handles.length) {
+            return Collections.emptyMap();
+        }
+        Map<String, Value> map = new LinkedHashMap<String, Value>(keys.length);
+        for (int i = 0; i < keys.length; i++) {
+            map.put(keys[i], fromNativeHandle(handles[i]));
+        }
+        return Collections.unmodifiableMap(map);
     }
 
     public List<Value> asArrayList() {
-        return type == Type.ARRAY && arrayVal != null ? arrayVal : Collections.emptyList();
+        if (type != Type.ARRAY || nativeHandle == 0L) {
+            return Collections.emptyList();
+        }
+        long[] handles = nativeGetArrayElements(nativeHandle);
+        if (handles == null) {
+            return Collections.emptyList();
+        }
+        List<Value> list = new ArrayList<Value>(handles.length);
+        for (int i = 0; i < handles.length; i++) {
+            list.add(fromNativeHandle(handles[i]));
+        }
+        return Collections.unmodifiableList(list);
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof Value other)) return false;
-        if (type != other.type) return false;
-        return switch (type) {
-            case NULL -> true;
-            case BOOLEAN -> Objects.equals(boolVal, other.boolVal);
-            case NUMBER -> Objects.equals(numVal, other.numVal);
-            case STRING -> Objects.equals(strVal, other.strVal);
-            case ARRAY -> Objects.equals(arrayVal, other.arrayVal);
-            case OBJECT -> Objects.equals(objVal, other.objVal);
-        };
+        if (!(o instanceof Value)) return false;
+        Value other = (Value) o;
+        if (this.type != other.type) return false;
+        if (this.type == Type.NULL) return true;
+        if (this.nativeHandle != 0L && other.nativeHandle != 0L) {
+            return nativeEquals(this.nativeHandle, other.nativeHandle);
+        }
+        return false;
     }
 
     @Override
     public int hashCode() {
-        return switch (type) {
-            case NULL -> 0;
-            case BOOLEAN -> Objects.hashCode(boolVal);
-            case NUMBER -> Objects.hashCode(numVal);
-            case STRING -> Objects.hashCode(strVal);
-            case ARRAY -> Objects.hashCode(arrayVal);
-            case OBJECT -> Objects.hashCode(objVal);
-        };
+        if (type == Type.NULL || nativeHandle == 0L) return 0;
+        return nativeHashCode(nativeHandle);
     }
 
     @Override
@@ -174,355 +252,43 @@ public final class Value {
     }
 
     public String toJson() {
-        StringBuilder sb = new StringBuilder();
-        toJson(sb);
-        return sb.toString();
-    }
-
-    private enum SerializeMode { ARRAY, OBJECT }
-
-    private static final class SerializeFrame {
-        final SerializeMode mode;
-        final Iterator<?> iterator;
-
-        SerializeFrame(SerializeMode mode, Iterator<?> iterator) {
-            this.mode = mode;
-            this.iterator = iterator;
+        if (type == Type.NULL || nativeHandle == 0L) {
+            return "null";
         }
+        String s = nativeToJson(nativeHandle);
+        return s != null ? s : "null";
     }
 
     public void toJson(StringBuilder sb) {
-        Deque<SerializeFrame> stack = new ArrayDeque<>();
-        Value nextVal = this;
-
-        while (true) {
-            if (nextVal != null) {
-                Value val = nextVal;
-                nextVal = null;
-                switch (val.type) {
-                    case NULL -> sb.append("null");
-                    case BOOLEAN -> sb.append(val.boolVal);
-                    case NUMBER -> {
-                        double n = val.numVal;
-                        if (n == Math.floor(n) && !Double.isInfinite(n) && n >= Long.MIN_VALUE && n <= Long.MAX_VALUE) {
-                            sb.append(val.numVal.longValue());
-                        } else {
-                            sb.append(val.numVal);
-                        }
-                    }
-                    case STRING -> escapeJsonString(val.strVal, sb);
-                    case ARRAY -> {
-                        sb.append("[");
-                        Iterator<Value> it = val.arrayVal.iterator();
-                        if (it.hasNext()) {
-                            stack.push(new SerializeFrame(SerializeMode.ARRAY, it));
-                            nextVal = it.next();
-                            continue;
-                        } else {
-                            sb.append("]");
-                        }
-                    }
-                    case OBJECT -> {
-                        sb.append("{");
-                        Iterator<Map.Entry<String, Value>> it = val.objVal.entrySet().iterator();
-                        if (it.hasNext()) {
-                            Map.Entry<String, Value> first = it.next();
-                            escapeJsonString(first.getKey(), sb);
-                            sb.append(":");
-                            stack.push(new SerializeFrame(SerializeMode.OBJECT, it));
-                            nextVal = first.getValue();
-                            continue;
-                        } else {
-                            sb.append("}");
-                        }
-                    }
-                }
-            }
-
-            if (stack.isEmpty()) {
-                break;
-            }
-
-            SerializeFrame top = stack.peek();
-            if (top.mode == SerializeMode.ARRAY) {
-                @SuppressWarnings("unchecked")
-                Iterator<Value> it = (Iterator<Value>) top.iterator;
-                if (it.hasNext()) {
-                    sb.append(",");
-                    nextVal = it.next();
-                } else {
-                    sb.append("]");
-                    stack.pop();
-                }
-            } else {
-                @SuppressWarnings("unchecked")
-                Iterator<Map.Entry<String, Value>> it = (Iterator<Map.Entry<String, Value>>) top.iterator;
-                if (it.hasNext()) {
-                    sb.append(",");
-                    Map.Entry<String, Value> entry = it.next();
-                    escapeJsonString(entry.getKey(), sb);
-                    sb.append(":");
-                    nextVal = entry.getValue();
-                } else {
-                    sb.append("}");
-                    stack.pop();
-                }
-            }
+        if (sb != null) {
+            sb.append(toJson());
         }
     }
 
-    private static void escapeJsonString(String s, StringBuilder sb) {
-        sb.append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\b' -> sb.append("\\b");
-                case '\f' -> sb.append("\\f");
-                case '\n' -> sb.append("\\n");
-                case '\r' -> sb.append("\\r");
-                case '\t' -> sb.append("\\t");
-                default -> {
-                    if (c < ' ') {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                }
-            }
-        }
-        sb.append('"');
+    long getNativeHandle() {
+        return nativeHandle;
     }
 
-    // -----------------------------------------------------------------------
-    // Iterative JSON Parser (Zero CPU Call-Stack Recursion)
-    // -----------------------------------------------------------------------
-
-    private enum ContainerType { ARRAY, OBJECT }
-
-    private static final class ParseFrame {
-        final ContainerType type;
-        final List<Value> list;
-        final Map<String, Value> map;
-        String pendingKey;
-
-        ParseFrame(ContainerType type) {
-            this.type = type;
-            if (type == ContainerType.ARRAY) {
-                this.list = new ArrayList<>();
-                this.map = null;
-            } else {
-                this.list = null;
-                this.map = new LinkedHashMap<>();
-            }
-        }
-    }
-
-    public static Value fromJson(String json) {
-        if (json == null) return NULL;
-        String s = json.trim();
-        if (s.isEmpty() || s.equals("null")) return NULL;
-        if (s.equals("true")) return Value.of(true);
-        if (s.equals("false")) return Value.of(false);
-
-        Deque<ParseFrame> stack = new ArrayDeque<>();
-        Value root = null;
-        int idx = 0;
-        int len = s.length();
-        boolean expectValue = true;
-
-        while (idx < len) {
-            while (idx < len && Character.isWhitespace(s.charAt(idx))) idx++;
-            if (idx >= len) break;
-
-            char c = s.charAt(idx);
-
-            if (expectValue) {
-                if (c == '{') {
-                    stack.push(new ParseFrame(ContainerType.OBJECT));
-                    idx++;
-                    expectValue = false;
-                } else if (c == '[') {
-                    stack.push(new ParseFrame(ContainerType.ARRAY));
-                    idx++;
-                    expectValue = true;
-                } else if (c == ']') {
-                    if (!stack.isEmpty() && stack.peek().type == ContainerType.ARRAY) {
-                        ParseFrame frame = stack.pop();
-                        Value arrVal = Value.ofArray(frame.list);
-                        if (stack.isEmpty()) {
-                            root = arrVal;
-                        } else {
-                            attachToTop(stack.peek(), arrVal);
-                        }
-                        idx++;
-                        expectValue = false;
-                    } else {
-                        idx++;
-                    }
-                } else if (c == '}') {
-                    if (!stack.isEmpty() && stack.peek().type == ContainerType.OBJECT) {
-                        ParseFrame frame = stack.pop();
-                        Value objVal = Value.ofObject(frame.map);
-                        if (stack.isEmpty()) {
-                            root = objVal;
-                        } else {
-                            attachToTop(stack.peek(), objVal);
-                        }
-                        idx++;
-                        expectValue = false;
-                    } else {
-                        idx++;
-                    }
-                } else if (c == '"') {
-                    int[] next = new int[1];
-                    String str = parseStringToken(s, idx, next);
-                    idx = next[0];
-                    Value val = Value.of(str);
-                    if (stack.isEmpty()) {
-                        root = val;
-                    } else {
-                        attachToTop(stack.peek(), val);
-                    }
-                    expectValue = false;
-                } else if (c == 't' && s.startsWith("true", idx)) {
-                    idx += 4;
-                    Value val = Value.of(true);
-                    if (stack.isEmpty()) root = val; else attachToTop(stack.peek(), val);
-                    expectValue = false;
-                } else if (c == 'f' && s.startsWith("false", idx)) {
-                    idx += 5;
-                    Value val = Value.of(false);
-                    if (stack.isEmpty()) root = val; else attachToTop(stack.peek(), val);
-                    expectValue = false;
-                } else if (c == 'n' && s.startsWith("null", idx)) {
-                    idx += 4;
-                    if (stack.isEmpty()) root = NULL; else attachToTop(stack.peek(), NULL);
-                    expectValue = false;
-                } else if (c == '-' || Character.isDigit(c)) {
-                    int start = idx;
-                    while (idx < len) {
-                        char ch = s.charAt(idx);
-                        if (Character.isDigit(ch) || ch == '.' || ch == '-' || ch == '+' || ch == 'e' || ch == 'E') {
-                            idx++;
-                        } else {
-                            break;
-                        }
-                    }
-                    double num = Double.parseDouble(s.substring(start, idx));
-                    Value val = Value.of(num);
-                    if (stack.isEmpty()) root = val; else attachToTop(stack.peek(), val);
-                    expectValue = false;
-                } else {
-                    idx++;
-                }
-            } else {
-                if (c == ',') {
-                    idx++;
-                    if (!stack.isEmpty() && stack.peek().type == ContainerType.ARRAY) {
-                        expectValue = true;
-                    } else {
-                        expectValue = false;
-                    }
-                } else if (c == ']') {
-                    if (!stack.isEmpty() && stack.peek().type == ContainerType.ARRAY) {
-                        ParseFrame frame = stack.pop();
-                        Value arrVal = Value.ofArray(frame.list);
-                        if (stack.isEmpty()) {
-                            root = arrVal;
-                        } else {
-                            attachToTop(stack.peek(), arrVal);
-                        }
-                        idx++;
-                        expectValue = false;
-                    } else {
-                        idx++;
-                    }
-                } else if (c == '}') {
-                    if (!stack.isEmpty() && stack.peek().type == ContainerType.OBJECT) {
-                        ParseFrame frame = stack.pop();
-                        Value objVal = Value.ofObject(frame.map);
-                        if (stack.isEmpty()) {
-                            root = objVal;
-                        } else {
-                            attachToTop(stack.peek(), objVal);
-                        }
-                        idx++;
-                        expectValue = false;
-                    } else {
-                        idx++;
-                    }
-                } else if (!stack.isEmpty() && stack.peek().type == ContainerType.OBJECT && stack.peek().pendingKey == null) {
-                    if (c == '"') {
-                        int[] next = new int[1];
-                        String key = parseStringToken(s, idx, next);
-                        idx = next[0];
-                        stack.peek().pendingKey = key;
-                        while (idx < len && Character.isWhitespace(s.charAt(idx))) idx++;
-                        if (idx < len && s.charAt(idx) == ':') {
-                            idx++;
-                        }
-                        expectValue = true;
-                    } else {
-                        idx++;
-                    }
-                } else {
-                    idx++;
-                }
-            }
-        }
-
-        return root != null ? root : NULL;
-    }
-
-    private static void attachToTop(ParseFrame top, Value val) {
-        if (top.type == ContainerType.ARRAY) {
-            top.list.add(val);
-        } else if (top.type == ContainerType.OBJECT) {
-            if (top.pendingKey != null) {
-                top.map.put(top.pendingKey, val);
-                top.pendingKey = null;
-            }
-        }
-    }
-
-    private static String parseStringToken(String s, int startIdx, int[] nextIdx) {
-        StringBuilder sb = new StringBuilder();
-        int i = startIdx + 1; // skip leading "
-        int len = s.length();
-        while (i < len) {
-            char c = s.charAt(i);
-            if (c == '"') {
-                i++;
-                break;
-            } else if (c == '\\' && i + 1 < len) {
-                i++;
-                char esc = s.charAt(i);
-                switch (esc) {
-                    case '"' -> sb.append('"');
-                    case '\\' -> sb.append('\\');
-                    case '/' -> sb.append('/');
-                    case 'b' -> sb.append('\b');
-                    case 'f' -> sb.append('\f');
-                    case 'n' -> sb.append('\n');
-                    case 'r' -> sb.append('\r');
-                    case 't' -> sb.append('\t');
-                    case 'u' -> {
-                        if (i + 4 < len) {
-                            String hex = s.substring(i + 1, i + 5);
-                            sb.append((char) Integer.parseInt(hex, 16));
-                            i += 4;
-                        }
-                    }
-                    default -> sb.append(esc);
-                }
-            } else {
-                sb.append(c);
-            }
-            i++;
-        }
-        nextIdx[0] = i;
-        return sb.toString();
-    }
+    // Native declarations
+    static native void nativeFree(long handle);
+    static native int nativeGetType(long handle);
+    static native boolean nativeAsBoolean(long handle);
+    static native double nativeAsNumber(long handle);
+    static native String nativeAsString(long handle);
+    static native long nativeGetProperty(long handle, String key);
+    static native long nativeGetElement(long handle, int index);
+    static native int nativeSize(long handle);
+    static native boolean nativeHasProperty(long handle, String key);
+    static native String[] nativeGetObjectKeys(long handle);
+    static native long[] nativeGetObjectValues(long handle);
+    static native long[] nativeGetArrayElements(long handle);
+    static native boolean nativeEquals(long h1, long h2);
+    static native int nativeHashCode(long handle);
+    static native String nativeToJson(long handle);
+    static native long nativeFromJson(String json);
+    static native long nativeOfBoolean(boolean b);
+    static native long nativeOfNumber(double n);
+    static native long nativeOfString(String s);
+    static native long nativeOfArray(long[] handles);
+    static native long nativeOfObject(String[] keys, long[] handles);
 }

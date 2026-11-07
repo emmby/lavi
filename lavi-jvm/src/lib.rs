@@ -2,10 +2,14 @@ extern crate alloc;
 
 use indexmap::IndexMap;
 use jni::objects::{JClass, JObject, JObjectArray, JString};
-use jni::sys::{jboolean, jlong, jobject, jstring, JNI_FALSE, JNI_TRUE};
+use jni::sys::{
+    jboolean, jdouble, jint, jlong, jlongArray, jobject, jobjectArray, jstring, JNI_FALSE,
+    JNI_TRUE,
+};
 use jni::JNIEnv;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub enum PendingCommand {
     Send {
@@ -529,7 +533,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterAction(
     let peer_ptr = machine_handle as *const MachinePeer;
     let name_clone = action_name.clone();
 
-    let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |ctx, evt, _params| {
+    let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |ctx, evt, params| {
         let peer = unsafe { &*peer_ptr };
         if peer.is_closed.get() || peer.aborted.get() {
             return;
@@ -545,29 +549,12 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterAction(
         let _guard = CallbackGuard::new(&peer.callback_depth);
 
         let res = env.with_local_frame(16, |env| -> Result<(), jni::errors::Error> {
-            let ctx_json = ctx.to_json_string();
-            let evt_json = evt.to_json_string();
-
-            let j_ctx_str = env.new_string(ctx_json)?;
-            let j_evt_str = env.new_string(evt_json)?;
-
-            let j_ctx = env
-                .call_static_method(
-                    "io/lavi/Value",
-                    "fromJson",
-                    "(Ljava/lang/String;)Lio/lavi/Value;",
-                    &[(&j_ctx_str).into()],
-                )?
-                .l()?;
-
-            let j_evt = env
-                .call_static_method(
-                    "io/lavi/Value",
-                    "fromJson",
-                    "(Ljava/lang/String;)Lio/lavi/Value;",
-                    &[(&j_evt_str).into()],
-                )?
-                .l()?;
+            let ctx_handle = Box::into_raw(Box::new(Arc::new(ctx.clone()))) as jlong;
+            let evt_handle = Box::into_raw(Box::new(Arc::new(evt.clone()))) as jlong;
+            let params_handle = match params {
+                Some(p) => Box::into_raw(Box::new(Arc::new(p.clone()))) as jlong,
+                None => 0 as jlong,
+            };
 
             let j_name = env.new_string(&name_clone)?;
             let target_obj = unsafe { JObject::from_raw(obj) };
@@ -575,8 +562,13 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterAction(
             env.call_method(
                 &target_obj,
                 "dispatchAction",
-                "(Ljava/lang/String;Lio/lavi/Value;Lio/lavi/Value;)V",
-                &[(&j_name).into(), (&j_ctx).into(), (&j_evt).into()],
+                "(Ljava/lang/String;JJJ)V",
+                &[
+                    (&j_name).into(),
+                    ctx_handle.into(),
+                    evt_handle.into(),
+                    params_handle.into(),
+                ],
             )?;
 
             Ok(())
@@ -611,7 +603,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterGuard(
     let peer_ptr = machine_handle as *const MachinePeer;
     let name_clone = guard_name.clone();
 
-    let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |ctx, evt, _params| {
+    let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |ctx, evt, params| {
         let peer = unsafe { &*peer_ptr };
         if peer.is_closed.get() || peer.aborted.get() {
             return false;
@@ -627,29 +619,12 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterGuard(
         let _guard = CallbackGuard::new(&peer.callback_depth);
 
         let res = env.with_local_frame(16, |env| -> Result<bool, jni::errors::Error> {
-            let ctx_json = ctx.to_json_string();
-            let evt_json = evt.to_json_string();
-
-            let j_ctx_str = env.new_string(ctx_json)?;
-            let j_evt_str = env.new_string(evt_json)?;
-
-            let j_ctx = env
-                .call_static_method(
-                    "io/lavi/Value",
-                    "fromJson",
-                    "(Ljava/lang/String;)Lio/lavi/Value;",
-                    &[(&j_ctx_str).into()],
-                )?
-                .l()?;
-
-            let j_evt = env
-                .call_static_method(
-                    "io/lavi/Value",
-                    "fromJson",
-                    "(Ljava/lang/String;)Lio/lavi/Value;",
-                    &[(&j_evt_str).into()],
-                )?
-                .l()?;
+            let ctx_handle = Box::into_raw(Box::new(Arc::new(ctx.clone()))) as jlong;
+            let evt_handle = Box::into_raw(Box::new(Arc::new(evt.clone()))) as jlong;
+            let params_handle = match params {
+                Some(p) => Box::into_raw(Box::new(Arc::new(p.clone()))) as jlong,
+                None => 0 as jlong,
+            };
 
             let j_name = env.new_string(&name_clone)?;
             let target_obj = unsafe { JObject::from_raw(obj) };
@@ -657,8 +632,13 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterGuard(
             let ret = env.call_method(
                 &target_obj,
                 "dispatchGuard",
-                "(Ljava/lang/String;Lio/lavi/Value;Lio/lavi/Value;)Z",
-                &[(&j_name).into(), (&j_ctx).into(), (&j_evt).into()],
+                "(Ljava/lang/String;JJJ)Z",
+                &[
+                    (&j_name).into(),
+                    ctx_handle.into(),
+                    evt_handle.into(),
+                    params_handle.into(),
+                ],
             )?;
 
             ret.z()
@@ -1134,4 +1114,493 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRestoreSnapshot(
             format!("Invalid snapshot: {e}"),
         );
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeGetContext(
+    _env: JNIEnv,
+    _this_obj: JObject,
+    machine_handle: jlong,
+) -> jlong {
+    let m_peer = unsafe { &*(machine_handle as *const MachinePeer) };
+    if m_peer.is_closed.get() {
+        return 0;
+    }
+    let res = m_peer.with_machine(|m| {
+        if !m.is_started {
+            0
+        } else {
+            Box::into_raw(Box::new(Arc::new(m.context.clone()))) as jlong
+        }
+    });
+    res.unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// JNI Exports for Value
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeFree(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        unsafe {
+            drop(Box::from_raw(handle as *mut Arc<lavi::Value>));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeGetType(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    if handle == 0 {
+        return 0; // NULL
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    match **arc {
+        lavi::Value::Null => 0,
+        lavi::Value::Bool(_) => 1,
+        lavi::Value::Number(_) => 2,
+        lavi::Value::String(_) => 3,
+        lavi::Value::Array(_) => 4,
+        lavi::Value::Object(_) => 5,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeAsBoolean(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jboolean {
+    if handle == 0 {
+        return JNI_FALSE;
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Bool(b) = **arc {
+        if b { JNI_TRUE } else { JNI_FALSE }
+    } else {
+        JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeAsNumber(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jdouble {
+    if handle == 0 {
+        return 0.0;
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Number(n) = **arc {
+        n as jdouble
+    } else {
+        0.0
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeAsString(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::String(ref s) = **arc {
+        match env.new_string(s) {
+            Ok(js) => js.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeGetProperty(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    key: JString,
+) -> jlong {
+    if handle == 0 || key.is_null() {
+        return 0;
+    }
+    let k: String = match env.get_string(&key) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Object(ref obj) = **arc {
+        if let Some(child) = obj.get(&k) {
+            return Box::into_raw(Box::new(Arc::new(child.clone()))) as jlong;
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeGetElement(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jlong {
+    if handle == 0 || index < 0 {
+        return 0;
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Array(ref arr) = **arc {
+        if let Some(child) = arr.get(index as usize) {
+            return Box::into_raw(Box::new(Arc::new(child.clone()))) as jlong;
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeSize(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    if handle == 0 {
+        return 0;
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    match **arc {
+        lavi::Value::Array(ref arr) => arr.len() as jint,
+        lavi::Value::Object(ref obj) => obj.len() as jint,
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeHasProperty(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    key: JString,
+) -> jboolean {
+    if handle == 0 || key.is_null() {
+        return JNI_FALSE;
+    }
+    let k: String = match env.get_string(&key) {
+        Ok(s) => s.into(),
+        Err(_) => return JNI_FALSE,
+    };
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Object(ref obj) = **arc {
+        if obj.contains_key(&k) {
+            return JNI_TRUE;
+        }
+    }
+    JNI_FALSE
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeGetObjectKeys(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jobjectArray {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Object(ref obj) = **arc {
+        let string_class = match env.find_class("java/lang/String") {
+            Ok(c) => c,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let initial_elem = match env.new_string("") {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let arr = match env.new_object_array(obj.len() as jni::sys::jsize, &string_class, &initial_elem) {
+            Ok(a) => a,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        for (i, key) in obj.keys().enumerate() {
+            let jstr = match env.new_string(key) {
+                Ok(s) => s,
+                Err(_) => return std::ptr::null_mut(),
+            };
+            if env.set_object_array_element(&arr, i as jni::sys::jsize, &jstr).is_err() {
+                return std::ptr::null_mut();
+            }
+        }
+        arr.into_raw()
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeGetObjectValues(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlongArray {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Object(ref obj) = **arc {
+        let arr = match env.new_long_array(obj.len() as jni::sys::jsize) {
+            Ok(a) => a,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let handles: Vec<i64> = obj.values()
+            .map(|val| Box::into_raw(Box::new(Arc::new(val.clone()))) as i64)
+            .collect();
+        if env.set_long_array_region(&arr, 0, &handles).is_err() {
+            return std::ptr::null_mut();
+        }
+        arr.into_raw()
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeGetArrayElements(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlongArray {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    if let lavi::Value::Array(ref items) = **arc {
+        let arr = match env.new_long_array(items.len() as jni::sys::jsize) {
+            Ok(a) => a,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let handles: Vec<i64> = items.iter()
+            .map(|val| Box::into_raw(Box::new(Arc::new(val.clone()))) as i64)
+            .collect();
+        if env.set_long_array_region(&arr, 0, &handles).is_err() {
+            return std::ptr::null_mut();
+        }
+        arr.into_raw()
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeEquals(
+    _env: JNIEnv,
+    _class: JClass,
+    h1: jlong,
+    h2: jlong,
+) -> jboolean {
+    if h1 == h2 {
+        return JNI_TRUE;
+    }
+    if h1 == 0 || h2 == 0 {
+        return JNI_FALSE;
+    }
+    let arc1 = unsafe { &*(h1 as *const Arc<lavi::Value>) };
+    let arc2 = unsafe { &*(h2 as *const Arc<lavi::Value>) };
+    if **arc1 == **arc2 { JNI_TRUE } else { JNI_FALSE }
+}
+
+fn compute_hash(v: &lavi::Value) -> i32 {
+    match v {
+        lavi::Value::Null => 0,
+        lavi::Value::Bool(b) => if *b { 1231 } else { 1237 },
+        lavi::Value::Number(n) => {
+            let bits = n.to_bits();
+            (bits ^ (bits >> 32)) as i32
+        }
+        lavi::Value::String(s) => {
+            let mut h: i32 = 0;
+            for b in s.bytes() {
+                h = h.wrapping_mul(31).wrapping_add(b as i32);
+            }
+            h
+        }
+        lavi::Value::Array(a) => {
+            let mut h: i32 = 1;
+            for item in a {
+                h = h.wrapping_mul(31).wrapping_add(compute_hash(item));
+            }
+            h
+        }
+        lavi::Value::Object(o) => {
+            let mut h: i32 = 0;
+            for (k, val) in o {
+                let mut kh: i32 = 0;
+                for b in k.bytes() {
+                    kh = kh.wrapping_mul(31).wrapping_add(b as i32);
+                }
+                let vh = compute_hash(val);
+                h = h.wrapping_add(kh ^ vh);
+            }
+            h
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeHashCode(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    if handle == 0 {
+        return 0;
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    compute_hash(arc)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeToJson(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    if handle == 0 {
+        return env.new_string("null").map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut());
+    }
+    let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+    let json_str = arc.to_json_string();
+    match env.new_string(&json_str) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeFromJson(
+    mut env: JNIEnv,
+    _class: JClass,
+    json: JString,
+) -> jlong {
+    if json.is_null() {
+        return 0;
+    }
+    let s: String = match env.get_string(&json) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return 0;
+    }
+    match lavi::Value::from_json(trimmed) {
+        Ok(v) => Box::into_raw(Box::new(Arc::new(v))) as jlong,
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeOfBoolean(
+    _env: JNIEnv,
+    _class: JClass,
+    b: jboolean,
+) -> jlong {
+    Box::into_raw(Box::new(Arc::new(lavi::Value::Bool(b != 0)))) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeOfNumber(
+    _env: JNIEnv,
+    _class: JClass,
+    n: jdouble,
+) -> jlong {
+    Box::into_raw(Box::new(Arc::new(lavi::Value::Number(n)))) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeOfString(
+    mut env: JNIEnv,
+    _class: JClass,
+    s: JString,
+) -> jlong {
+    if s.is_null() {
+        return 0;
+    }
+    let str_val: String = match env.get_string(&s) {
+        Ok(str_val) => str_val.into(),
+        Err(_) => return 0,
+    };
+    Box::into_raw(Box::new(Arc::new(lavi::Value::String(str_val)))) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeOfArray(
+    env: JNIEnv,
+    _class: JClass,
+    handles: jni::objects::JLongArray,
+) -> jlong {
+    let len = match env.get_array_length(&handles) {
+        Ok(l) => l as usize,
+        Err(_) => return 0,
+    };
+    let mut raw_handles = vec![0i64; len];
+    if env.get_long_array_region(&handles, 0, &mut raw_handles).is_err() {
+        return 0;
+    }
+    let mut items = Vec::with_capacity(len);
+    for h in raw_handles {
+        if h == 0 {
+            items.push(lavi::Value::Null);
+        } else {
+            let arc = unsafe { &*(h as *const Arc<lavi::Value>) };
+            items.push((**arc).clone());
+        }
+    }
+    Box::into_raw(Box::new(Arc::new(lavi::Value::Array(items)))) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Value_nativeOfObject(
+    mut env: JNIEnv,
+    _class: JClass,
+    keys: JObjectArray,
+    handles: jni::objects::JLongArray,
+) -> jlong {
+    let len = match env.get_array_length(&keys) {
+        Ok(l) => l as usize,
+        Err(_) => return 0,
+    };
+    let mut raw_handles = vec![0i64; len];
+    if env.get_long_array_region(&handles, 0, &mut raw_handles).is_err() {
+        return 0;
+    }
+    let mut map = IndexMap::with_capacity(len);
+    for (i, &handle) in raw_handles.iter().enumerate().take(len) {
+        let key_obj = match env.get_object_array_element(&keys, i as jni::sys::jsize) {
+            Ok(o) => JString::from(o),
+            Err(_) => return 0,
+        };
+        let key_str: String = match env.get_string(&key_obj) {
+            Ok(s) => s.into(),
+            Err(_) => return 0,
+        };
+        let val = if handle == 0 {
+            lavi::Value::Null
+        } else {
+            let arc = unsafe { &*(handle as *const Arc<lavi::Value>) };
+            (**arc).clone()
+        };
+        map.insert(key_str, val);
+    }
+    Box::into_raw(Box::new(Arc::new(lavi::Value::Object(map)))) as jlong
 }

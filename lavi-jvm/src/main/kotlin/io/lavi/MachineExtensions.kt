@@ -9,8 +9,14 @@ import java.util.ArrayDeque
 fun Machine.onAction(name: String, block: (context: Value, event: Value) -> Unit): Machine =
     registerAction(name, ActionCallback { ctx, evt -> block(ctx, evt) })
 
+fun Machine.onActionWithParams(name: String, block: (context: Value, event: Value, params: Value) -> Unit): Machine =
+    registerAction(name, ParameterizedActionCallback { ctx, evt, params -> block(ctx, evt, params) })
+
 fun Machine.onGuard(name: String, block: (context: Value, event: Value) -> Boolean): Machine =
     registerGuard(name, GuardCallback { ctx, evt -> block(ctx, evt) })
+
+fun Machine.onGuardWithParams(name: String, block: (context: Value, event: Value, params: Value) -> Boolean): Machine =
+    registerGuard(name, ParameterizedGuardCallback { ctx, evt, params -> block(ctx, evt, params) })
 
 fun Machine.onClock(block: () -> Long): Machine =
     registerClock(ClockCallback { block() })

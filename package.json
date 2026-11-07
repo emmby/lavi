@@ -18,8 +18,8 @@
     "test:unit": "vitest run",
     "build:py": "cargo build --package lavi-py && node scripts/stage-py-native.mjs",
     "test:py": "npm run build:py && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests",
-    "build:jvm": "cargo build --package lavi-jvm && gradle -p lavi-jvm assemble",
-    "test:jvm": "cargo build --package lavi-jvm && gradle -p lavi-jvm test"
+    "build:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm assemble || gradle -p lavi-jvm assemble)",
+    "test:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm test || gradle -p lavi-jvm test)"
   },
   "dependencies": {
     "xstate": "^5.25.0"

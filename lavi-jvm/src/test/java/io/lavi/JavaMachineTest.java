@@ -181,13 +181,13 @@ class JavaMachineTest {
         ByteArrayInputStream stream1 = new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
         Path extracted1 = NativeLoader.extractOrReuse(stream1, hash, tempDir, fileName);
         assertTrue(Files.exists(extracted1));
-        assertEquals(content, Files.readString(extracted1));
+        assertEquals(content, new String(Files.readAllBytes(extracted1), StandardCharsets.UTF_8));
 
         // Second extraction with same hash should reuse existing file without reading stream
         ByteArrayInputStream stream2 = new ByteArrayInputStream("different-content".getBytes(StandardCharsets.UTF_8));
         Path extracted2 = NativeLoader.extractOrReuse(stream2, hash, tempDir, fileName);
         assertEquals(extracted1, extracted2);
-        assertEquals(content, Files.readString(extracted2));
+        assertEquals(content, new String(Files.readAllBytes(extracted2), StandardCharsets.UTF_8));
     }
 
     @Test
@@ -229,5 +229,60 @@ class JavaMachineTest {
         String serialized = val.toJson();
         assertNotNull(serialized);
         assertTrue(serialized.contains("42"));
+    }
+
+    @Test
+    void contextInspectionAndParameterizedCallbacks() {
+        String json = "{\n" +
+            "  \"id\": \"paramDemo\",\n" +
+            "  \"initial\": \"idle\",\n" +
+            "  \"context\": { \"count\": 10, \"name\": \"alpha\" },\n" +
+            "  \"states\": {\n" +
+            "    \"idle\": {\n" +
+            "      \"on\": {\n" +
+            "        \"GO\": {\n" +
+            "          \"target\": \"done\",\n" +
+            "          \"guard\": { \"type\": \"minThreshold\", \"params\": { \"threshold\": 5 } },\n" +
+            "          \"actions\": [{ \"type\": \"recordEvent\", \"params\": { \"tag\": \"success\" } }]\n" +
+            "        }\n" +
+            "      }\n" +
+            "    },\n" +
+            "    \"done\": { \"type\": \"final\" }\n" +
+            "  }\n" +
+            "}";
+
+        AtomicReference<String> actionTag = new AtomicReference<String>();
+        AtomicBoolean guardMatched = new AtomicBoolean(false);
+
+        try (Machine m = new Machine(json)) {
+            // Unstarted returns null Value
+            assertTrue(m.getContext().isNull());
+
+            m.registerGuard("minThreshold", (ParameterizedGuardCallback) (ctx, evt, params) -> {
+                long threshold = params.getProperty("threshold").asLong().orElse(0L);
+                long count = ctx.getProperty("count").asLong().orElse(0L);
+                if (count >= threshold) {
+                    guardMatched.set(true);
+                    return true;
+                }
+                return false;
+            });
+
+            m.registerAction("recordEvent", (ParameterizedActionCallback) (ctx, evt, params) -> {
+                actionTag.set(params.getProperty("tag").asString().orElse(""));
+            });
+
+            m.start();
+            // After start, context is populated
+            assertFalse(m.getContext().isNull());
+            assertEquals(10L, m.getContext().getProperty("count").asLong().orElse(0L));
+            assertEquals("alpha", m.getContext().getProperty("name").asString().orElse(""));
+
+            assertTrue(m.can("GO"));
+            m.send("GO");
+            assertTrue(m.matches("done"));
+            assertTrue(guardMatched.get());
+            assertEquals("success", actionTag.get());
+        }
     }
 }

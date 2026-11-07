@@ -383,5 +383,54 @@ def test_clock_decorator_with_parens():
         m.start()
         assert m.matches("green")
 
+def test_context_inspection_and_parameterized_callbacks():
+    json_config = json.dumps({
+        "id": "paramDemo",
+        "initial": "idle",
+        "context": { "count": 10, "status": "init" },
+        "states": {
+            "idle": {
+                "on": {
+                    "GO": {
+                        "target": "active",
+                        "guard": { "type": "minCount", "params": { "threshold": 5 } },
+                        "actions": [{ "type": "recordStep", "params": { "stepName": "toActive" } }]
+                    }
+                }
+            },
+            "active": {
+                "type": "final"
+            }
+        }
+    })
+
+    captured_params = {}
+    with Machine(json_config) as m:
+        # Before start, context is null
+        assert m.context.is_null()
+        assert m.get_context().is_null()
+
+        @m.guard("minCount")
+        def check(ctx, evt, params):
+            captured_params["guard_threshold"] = params["threshold"].as_int()
+            return ctx["count"].as_int() >= params["threshold"].as_int()
+
+        @m.action("recordStep")
+        def act(ctx, evt, params):
+            captured_params["action_step"] = params["stepName"].as_str()
+
+        m.start()
+        # After start, context is populated
+        assert not m.context.is_null()
+        assert m.context["count"].as_int() == 10
+        assert m.get_context()["status"].as_str() == "init"
+
+        assert m.can("GO")
+        m.send("GO")
+        assert m.matches("active")
+        assert captured_params["guard_threshold"] == 5
+        assert captured_params["action_step"] == "toActive"
+
+
 
 

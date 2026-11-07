@@ -797,8 +797,8 @@ pub struct MachineState {
     pub python_actions: RefCell<IndexMap<String, Py<PyAny>>>,
     pub python_guards: RefCell<IndexMap<String, Py<PyAny>>>,
     pub python_clock: RefCell<Option<Py<PyAny>>>,
-    pub guards: RefCell<IndexMap<String, lavi::GuardFunction>>,
-    pub actions: RefCell<IndexMap<String, lavi::ActionFunction>>,
+    pub guards: RefCell<Rc<IndexMap<String, lavi::GuardFunction>>>,
+    pub actions: RefCell<Rc<IndexMap<String, lavi::ActionFunction>>>,
     pub clock: RefCell<Option<SimulatedClock>>,
     pub last_error: RefCell<Option<PyErr>>,
     pub is_closed: Cell<bool>,
@@ -866,8 +866,8 @@ impl MachineState {
             return self.check_and_raise_error();
         }
 
-        let guards = self.guards.borrow().clone();
-        let actions = self.actions.borrow().clone();
+        let guards = Rc::clone(&*self.guards.borrow());
+        let actions = Rc::clone(&*self.actions.borrow());
 
         {
             let mut guard = self.machine.borrow_mut();
@@ -895,8 +895,8 @@ impl MachineState {
             return self.check_and_raise_error();
         }
 
-        let guards = self.guards.borrow().clone();
-        let actions = self.actions.borrow().clone();
+        let guards = Rc::clone(&*self.guards.borrow());
+        let actions = Rc::clone(&*self.actions.borrow());
 
         {
             let mut guard = self.machine.borrow_mut();
@@ -928,8 +928,8 @@ impl MachineState {
             return self.check_and_raise_error();
         }
 
-        let guards = self.guards.borrow().clone();
-        let actions = self.actions.borrow().clone();
+        let guards = Rc::clone(&*self.guards.borrow());
+        let actions = Rc::clone(&*self.actions.borrow());
 
         {
             let mut guard = self.machine.borrow_mut();
@@ -1056,6 +1056,51 @@ impl ClockDecorator {
     }
 }
 
+fn call_python_callback<'py>(
+    py: Python<'py>,
+    py_fn: &Bound<'py, PyAny>,
+    ctx: PyObject,
+    evt: PyObject,
+    params: PyObject,
+) -> PyResult<Bound<'py, PyAny>> {
+    let (code_obj, is_bound) = if let Ok(code) = py_fn.getattr("__code__") {
+        (Some(code), py_fn.hasattr("__self__").unwrap_or(false))
+    } else if let Ok(f) = py_fn.getattr("__func__") {
+        (f.getattr("__code__").ok(), true)
+    } else if let Ok(call) = py_fn.getattr("__call__") {
+        let is_method = call.hasattr("__self__").unwrap_or(false);
+        (call.getattr("__code__").ok(), is_method)
+    } else {
+        (None, false)
+    };
+
+    let takes_three = if let Some(code) = code_obj {
+        let argcount: usize = code.getattr("co_argcount").and_then(|a| a.extract()).unwrap_or(0);
+        let flags: usize = code.getattr("co_flags").and_then(|f| f.extract()).unwrap_or(0);
+        let has_varargs = (flags & 0x04) != 0;
+        let effective_args = if is_bound && argcount > 0 { argcount - 1 } else { argcount };
+        has_varargs || effective_args >= 3
+    } else {
+        false
+    };
+
+    if takes_three {
+        py_fn.call1((ctx, evt, params))
+    } else {
+        match py_fn.call1((ctx.clone_ref(py), evt.clone_ref(py))) {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                if py_fn.getattr("__code__").is_err() {
+                    if let Ok(res) = py_fn.call1((ctx, evt, params)) {
+                        return Ok(res);
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
 #[pyclass(unsendable, weakref)]
 pub struct Machine {
     state: Rc<MachineState>,
@@ -1088,8 +1133,8 @@ impl Machine {
             python_actions: RefCell::new(IndexMap::new()),
             python_guards: RefCell::new(IndexMap::new()),
             python_clock: RefCell::new(None),
-            guards: RefCell::new(IndexMap::new()),
-            actions: RefCell::new(IndexMap::new()),
+            guards: RefCell::new(Rc::new(IndexMap::new())),
+            actions: RefCell::new(Rc::new(IndexMap::new())),
             clock: RefCell::new(clock.clone()),
             last_error: RefCell::new(None),
             is_closed: Cell::new(false),
@@ -1126,7 +1171,7 @@ impl Machine {
         let weak_state = Rc::downgrade(&machine_self.state);
         let action_name = name.to_string();
 
-        let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |ctx, evt, _params| {
+        let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |ctx, evt, params| {
             let Some(state) = weak_state.upgrade() else {
                 return;
             };
@@ -1138,11 +1183,16 @@ impl Machine {
             let result = Python::with_gil(|py| -> PyResult<()> {
                 let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
                 let evt_val = Value(Arc::new(evt.clone())).into_py(py);
+                let params_val = match params {
+                    Some(p) => Value(Arc::new(p.clone())).into_py(py),
+                    None => Value(Arc::new(lavi::Value::Null)).into_py(py),
+                };
                 let actions_map = state.python_actions.borrow();
                 let Some(py_fn) = actions_map.get(&action_name) else {
                     return Ok(());
                 };
-                let _ = py_fn.bind(py).call1((ctx_val, evt_val))?;
+                let bound = py_fn.bind(py);
+                let _ = call_python_callback(py, bound, ctx_val, evt_val, params_val)?;
                 Ok(())
             });
 
@@ -1152,11 +1202,9 @@ impl Machine {
             }
         });
 
-        machine_self
-            .state
-            .actions
-            .borrow_mut()
-            .insert(name.to_string(), action_fn);
+        let mut map = (**machine_self.state.actions.borrow()).clone();
+        map.insert(name.to_string(), action_fn);
+        *machine_self.state.actions.borrow_mut() = Rc::new(map);
 
         drop(machine_self);
         Ok(slf.clone())
@@ -1182,7 +1230,7 @@ impl Machine {
         let weak_state = Rc::downgrade(&machine_self.state);
         let guard_name = name.to_string();
 
-        let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |ctx, evt, _params| {
+        let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |ctx, evt, params| {
             let Some(state) = weak_state.upgrade() else {
                 return false;
             };
@@ -1194,11 +1242,16 @@ impl Machine {
             let result = Python::with_gil(|py| -> PyResult<bool> {
                 let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
                 let evt_val = Value(Arc::new(evt.clone())).into_py(py);
+                let params_val = match params {
+                    Some(p) => Value(Arc::new(p.clone())).into_py(py),
+                    None => Value(Arc::new(lavi::Value::Null)).into_py(py),
+                };
                 let guards_map = state.python_guards.borrow();
                 let Some(py_fn) = guards_map.get(&guard_name) else {
                     return Ok(false);
                 };
-                let ret = py_fn.bind(py).call1((ctx_val, evt_val))?;
+                let bound = py_fn.bind(py);
+                let ret = call_python_callback(py, bound, ctx_val, evt_val, params_val)?;
                 ret.is_truthy()
             });
 
@@ -1212,11 +1265,9 @@ impl Machine {
             }
         });
 
-        machine_self
-            .state
-            .guards
-            .borrow_mut()
-            .insert(name.to_string(), guard_fn);
+        let mut map = (**machine_self.state.guards.borrow()).clone();
+        map.insert(name.to_string(), guard_fn);
+        *machine_self.state.guards.borrow_mut() = Rc::new(map);
 
         drop(machine_self);
         Ok(slf.clone())
@@ -1353,8 +1404,8 @@ impl Machine {
         self.state.python_actions.borrow_mut().clear();
         self.state.python_guards.borrow_mut().clear();
         *self.state.python_clock.borrow_mut() = None;
-        self.state.guards.borrow_mut().clear();
-        self.state.actions.borrow_mut().clear();
+        *self.state.guards.borrow_mut() = Rc::new(IndexMap::new());
+        *self.state.actions.borrow_mut() = Rc::new(IndexMap::new());
         self.state.pending_commands.borrow_mut().clear();
         Ok(())
     }
@@ -1367,6 +1418,21 @@ impl Machine {
                 m.matches(state_path)
             }
         })
+    }
+
+    fn get_context(&self) -> PyResult<Value> {
+        self.state.with_machine(|m| {
+            if !m.is_started {
+                Value(Arc::new(lavi::Value::Null))
+            } else {
+                Value(Arc::new(m.context.clone()))
+            }
+        })
+    }
+
+    #[getter(context)]
+    fn py_context(&self) -> PyResult<Value> {
+        self.get_context()
     }
 
     #[pyo3(signature = (event, payload=None))]
@@ -1583,8 +1649,8 @@ impl Machine {
         self.state.python_actions.borrow_mut().clear();
         self.state.python_guards.borrow_mut().clear();
         *self.state.python_clock.borrow_mut() = None;
-        self.state.guards.borrow_mut().clear();
-        self.state.actions.borrow_mut().clear();
+        *self.state.guards.borrow_mut() = Rc::new(IndexMap::new());
+        *self.state.actions.borrow_mut() = Rc::new(IndexMap::new());
         self.state.pending_commands.borrow_mut().clear();
     }
 }

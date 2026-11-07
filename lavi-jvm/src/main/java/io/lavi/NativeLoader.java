@@ -1,8 +1,12 @@
 package io.lavi;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 
 public final class NativeLoader {
@@ -15,9 +19,9 @@ public final class NativeLoader {
 
         // 1. Check -Dlavi.library.path
         String customPath = System.getProperty("lavi.library.path");
-        if (customPath != null && !customPath.isBlank()) {
+        if (customPath != null && !customPath.trim().isEmpty()) {
             String libName = getNativeLibName(System.getProperty("os.name"));
-            Path candidate = Path.of(customPath, libName);
+            Path candidate = Paths.get(customPath, libName);
             if (Files.exists(candidate)) {
                 try {
                     System.load(candidate.toAbsolutePath().toString());
@@ -34,7 +38,9 @@ public final class NativeLoader {
             System.loadLibrary("lavi_jvm");
             loaded = true;
             return;
-        } catch (UnsatisfiedLinkError | SecurityException ignored) {
+        } catch (UnsatisfiedLinkError ignored) {
+            // Continue to bundled extraction
+        } catch (SecurityException ignored) {
             // Continue to bundled extraction
         }
 
@@ -48,29 +54,62 @@ public final class NativeLoader {
         String resourcePath = "/native/" + target + "/" + libName;
         InputStream is = NativeLoader.class.getResourceAsStream(resourcePath);
         if (is != null) {
-            String versionHash = NativeLoader.class.getPackage().getImplementationVersion();
-            if (versionHash == null || versionHash.isBlank()) {
-                versionHash = "dev";
+            byte[] libBytes;
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = is.read(buffer)) != -1) {
+                    baos.write(buffer, 0, read);
+                }
+                libBytes = baos.toByteArray();
+            } catch (IOException e) {
+                throw new UnsatisfiedLinkError("Failed to read bundled native library resource: " + e.getMessage());
+            } finally {
+                try {
+                    is.close();
+                } catch (IOException ignored) {}
             }
 
-            Path baseDir = Path.of(System.getProperty("java.io.tmpdir"));
+            String versionHash = NativeLoader.class.getPackage() != null
+                ? NativeLoader.class.getPackage().getImplementationVersion()
+                : null;
+            if (versionHash == null || versionHash.trim().isEmpty() || "dev".equals(versionHash)) {
+                try {
+                    MessageDigest md = MessageDigest.getInstance("SHA-256");
+                    byte[] digest = md.digest(libBytes);
+                    StringBuilder sb = new StringBuilder();
+                    for (byte b : digest) {
+                        sb.append(String.format("%02x", b & 0xff));
+                    }
+                    versionHash = sb.substring(0, 16);
+                } catch (NoSuchAlgorithmException e) {
+                    versionHash = "dev";
+                }
+            }
+
+            String laviTmp = System.getProperty("lavi.tmpdir");
+            Path baseDir;
+            if (laviTmp != null && !laviTmp.trim().isEmpty()) {
+                baseDir = Paths.get(laviTmp);
+            } else {
+                baseDir = Paths.get(System.getProperty("java.io.tmpdir"));
+            }
+
             Path extracted = null;
             try {
-                extracted = extractOrReuse(is, versionHash, baseDir, libName);
+                extracted = extractOrReuse(new ByteArrayInputStream(libBytes), versionHash, baseDir, libName);
                 System.load(extracted.toAbsolutePath().toString());
                 loaded = true;
                 return;
             } catch (Throwable t) {
-                // Fallback to user cache dir if /tmp is noexec or write-failed
+                // Fallback to user cache dir if baseDir is noexec or write-failed
                 try {
-                    Path userCache = Path.of(System.getProperty("user.home"), ".cache", "lavi");
-                    InputStream is2 = NativeLoader.class.getResourceAsStream(resourcePath);
-                    if (is2 != null) {
-                        extracted = extractOrReuse(is2, versionHash, userCache, libName);
-                        System.load(extracted.toAbsolutePath().toString());
-                        loaded = true;
-                        return;
-                    }
+                    Path userCache = Paths.get(System.getProperty("user.home"), ".cache", "lavi");
+                    extracted = extractOrReuse(new ByteArrayInputStream(libBytes), versionHash, userCache, libName);
+                    System.load(extracted.toAbsolutePath().toString());
+                    loaded = true;
+                    return;
                 } catch (Throwable fallbackErr) {
                     throw new UnsatisfiedLinkError("Failed to extract or load native library: " + t.getMessage()
                         + "; fallback also failed: " + fallbackErr.getMessage());
@@ -96,11 +135,14 @@ public final class NativeLoader {
         String lowerOs = osName.toLowerCase(Locale.ROOT);
         String lowerArch = osArch.toLowerCase(Locale.ROOT);
 
-        String normalizedArch = switch (lowerArch) {
-            case "arm64", "aarch64" -> "aarch64";
-            case "amd64", "x86_64", "x64" -> "x86_64";
-            default -> lowerArch;
-        };
+        String normalizedArch;
+        if (lowerArch.equals("arm64") || lowerArch.equals("aarch64")) {
+            normalizedArch = "aarch64";
+        } else if (lowerArch.equals("amd64") || lowerArch.equals("x86_64") || lowerArch.equals("x64")) {
+            normalizedArch = "x86_64";
+        } else {
+            normalizedArch = lowerArch;
+        }
 
         if (lowerOs.contains("mac") || lowerOs.contains("darwin")) {
             return "darwin-" + normalizedArch;
@@ -127,8 +169,8 @@ public final class NativeLoader {
 
         Files.createDirectories(targetDir);
         Path tempFile = Files.createTempFile(targetDir, "lib", ".tmp");
-        try (stream) {
-            Files.copy(stream, tempFile, StandardCopyOption.REPLACE_EXISTING);
+        try (InputStream in = stream) {
+            Files.copy(in, tempFile, StandardCopyOption.REPLACE_EXISTING);
         }
         try {
             Files.move(tempFile, targetFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -141,10 +183,10 @@ public final class NativeLoader {
 
     static boolean isMusl() {
         try {
-            if (Files.exists(Path.of("/etc/alpine-release"))) return true;
-            Path lib = Path.of("/lib");
+            if (Files.exists(Paths.get("/etc/alpine-release"))) return true;
+            Path lib = Paths.get("/lib");
             if (Files.isDirectory(lib)) {
-                try (var s = Files.list(lib)) {
+                try (java.util.stream.Stream<Path> s = Files.list(lib)) {
                     if (s.anyMatch(p -> p.getFileName().toString().startsWith("ld-musl-"))) return true;
                 }
             }

@@ -2,6 +2,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -239,12 +240,249 @@ export function buildReleasePlan(options = {}) {
   };
 }
 
+const CRC32_TABLE = new Int32Array(256);
+for (let i = 0; i < 256; i++) {
+  let c = i;
+  for (let j = 0; j < 8; j++) {
+    c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  }
+  CRC32_TABLE[i] = c;
+}
+
+export function crc32(buffer) {
+  let c = -1;
+  for (let i = 0; i < buffer.length; i++) {
+    c = CRC32_TABLE[(c ^ buffer[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ -1) >>> 0;
+}
+
+export function createZipArchive(entries) {
+  const localHeaders = [];
+  const centralHeaders = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.path, 'utf8');
+    const dataBuf = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data || '');
+    const crc = crc32(dataBuf);
+    const uncompressedSize = dataBuf.length;
+    const compressedSize = uncompressedSize;
+
+    // Local file header: 30 bytes + name length
+    const localHeader = Buffer.alloc(30 + nameBuf.length);
+    localHeader.writeUInt32LE(0x04034b50, 0); // PK\x03\x04
+    localHeader.writeUInt16LE(20, 4);         // version 2.0
+    localHeader.writeUInt16LE(0x0800, 6);     // UTF-8 flag
+    localHeader.writeUInt16LE(0, 8);          // STORED (method 0)
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0x21, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(compressedSize, 18);
+    localHeader.writeUInt32LE(uncompressedSize, 22);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    nameBuf.copy(localHeader, 30);
+
+    localHeaders.push(localHeader, dataBuf);
+
+    // Central directory header: 46 bytes + name length
+    const centralHeader = Buffer.alloc(46 + nameBuf.length);
+    centralHeader.writeUInt32LE(0x02014b50, 0); // PK\x01\x02
+    centralHeader.writeUInt16LE(0x0314, 4);     // version made by (UNIX 2.0)
+    centralHeader.writeUInt16LE(20, 6);         // version needed
+    centralHeader.writeUInt16LE(0x0800, 8);     // UTF-8
+    centralHeader.writeUInt16LE(0, 10);         // STORED
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0x21, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(compressedSize, 20);
+    centralHeader.writeUInt32LE(uncompressedSize, 24);
+    centralHeader.writeUInt16LE(nameBuf.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0x81a40000, 38);// regular file 0644
+    centralHeader.writeUInt32LE(offset, 42);
+    nameBuf.copy(centralHeader, 46);
+
+    centralHeaders.push(centralHeader);
+
+    offset += localHeader.length + dataBuf.length;
+  }
+
+  const centralDirOffset = offset;
+  let centralDirSize = 0;
+  for (const ch of centralHeaders) {
+    centralDirSize += ch.length;
+  }
+
+  // End of central directory record: 22 bytes
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);          // PK\x05\x06
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralDirSize, 12);
+  eocd.writeUInt32LE(centralDirOffset, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localHeaders, ...centralHeaders, eocd]);
+}
+
+/**
+ * Packages an Android AAR zip archive containing:
+ * - AndroidManifest.xml
+ * - classes.jar
+ * - R.txt
+ * - jni/<abi>/liblavi_jvm.so
+ */
+export function packageAndroidAar({ classesJarPath, jniLibsDir, outputAarPath, packageName = 'io.lavi' }) {
+  const entries = [];
+
+  // 1. AndroidManifest.xml
+  const manifestXml = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="${packageName}">
+</manifest>
+`;
+  entries.push({ path: 'AndroidManifest.xml', data: Buffer.from(manifestXml, 'utf8') });
+
+  // 2. classes.jar
+  if (classesJarPath && fs.existsSync(classesJarPath)) {
+    entries.push({ path: 'classes.jar', data: fs.readFileSync(classesJarPath) });
+  } else {
+    // Generate valid empty jar (valid empty zip archive)
+    const emptyJar = createZipArchive([]);
+    entries.push({ path: 'classes.jar', data: emptyJar });
+  }
+
+  // 3. R.txt
+  entries.push({ path: 'R.txt', data: Buffer.alloc(0) });
+
+  // 4. JNI shared libraries
+  if (jniLibsDir && fs.existsSync(jniLibsDir)) {
+    const stack = [jniLibsDir];
+    while (stack.length > 0) {
+      const dir = stack.pop();
+      const files = fs.readdirSync(dir, { withFileTypes: true });
+      for (const file of files) {
+        const fullPath = path.join(dir, file.name);
+        if (file.isDirectory()) {
+          stack.push(fullPath);
+        } else if (file.name.endsWith('.so')) {
+          const rel = path.relative(jniLibsDir, fullPath).replace(/\\/g, '/');
+          const entryPath = rel.startsWith('jni/') ? rel : `jni/${rel}`;
+          entries.push({ path: entryPath, data: fs.readFileSync(fullPath) });
+        }
+      }
+    }
+  }
+
+  const zipBuf = createZipArchive(entries);
+  fs.mkdirSync(path.dirname(outputAarPath), { recursive: true });
+  fs.writeFileSync(outputAarPath, zipBuf);
+
+  return {
+    aarPath: outputAarPath,
+    entries: entries.map((e) => e.path)
+  };
+}
+
+/**
+ * Executes commands in the release plan via child_process.spawnSync when
+ * --execute or dryRun: false is specified.
+ */
+export function executeReleasePlan(plan, options = {}) {
+  const isExecute = options.execute ?? (!plan.dryRun && !(options.dryRun ?? false));
+  if (!isExecute) {
+    return { executed: false, commandsRun: 0, plan };
+  }
+
+  let commandsRun = 0;
+
+  // 1. Desktop compilation
+  for (const cmd of plan.desktopCommands) {
+    if (options.verbose) {
+      console.log(`Executing desktop command: ${cmd.command} ${cmd.args.join(' ')}`);
+    }
+    const res = spawnSync(cmd.command, cmd.args, {
+      stdio: 'inherit',
+      cwd: plan.rootDir,
+      env: process.env
+    });
+    if (res.status !== 0) {
+      throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+    }
+    commandsRun++;
+
+    if (cmd.destResource && cmd.srcBinary && fs.existsSync(cmd.srcBinary)) {
+      fs.mkdirSync(path.dirname(cmd.destResource), { recursive: true });
+      fs.copyFileSync(cmd.srcBinary, cmd.destResource);
+    }
+  }
+
+  // 2. Android compilation
+  for (const cmd of plan.androidCommands) {
+    if (options.verbose) {
+      console.log(`Executing Android build: ${cmd.command} ${cmd.args.join(' ')}`);
+    }
+    const env = { ...process.env };
+    if (cmd.rustflags) {
+      env.RUSTFLAGS = cmd.rustflags;
+    }
+    const res = spawnSync(cmd.command, cmd.args, {
+      stdio: 'inherit',
+      cwd: plan.rootDir,
+      env
+    });
+    if (res.status !== 0) {
+      throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+    }
+    commandsRun++;
+
+    if (cmd.verifyAlignment && fs.existsSync(cmd.srcBinary)) {
+      const readelf = spawnSync('llvm-readelf', ['-l', cmd.srcBinary], { encoding: 'utf8' });
+      if (readelf.status === 0 && !verifyElf16KbAlignmentOutput(readelf.stdout)) {
+        throw new Error(`ELF segment alignment verification failed for 16 KB pages: ${cmd.srcBinary}`);
+      }
+    }
+  }
+
+  // 3. Package AAR
+  const stagingJni = path.join(plan.outDir, 'aar', 'staging', 'jni');
+  for (const cmd of plan.androidCommands) {
+    if (fs.existsSync(cmd.srcBinary)) {
+      const targetDir = path.join(stagingJni, cmd.abi);
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.copyFileSync(cmd.srcBinary, path.join(targetDir, 'liblavi_jvm.so'));
+    }
+  }
+
+  packageAndroidAar({
+    classesJarPath: plan.aarPackage.classesJar,
+    jniLibsDir: stagingJni,
+    outputAarPath: plan.aarPackage.aarPath,
+    packageName: 'io.lavi'
+  });
+
+  return {
+    executed: true,
+    commandsRun,
+    plan
+  };
+}
+
 const isMain =
   process.argv[1] &&
   path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
-  const plan = buildReleasePlan({ dryRun: true });
+  const args = process.argv.slice(2);
+  const shouldExecute = args.includes('--execute');
+  const plan = buildReleasePlan({ dryRun: !shouldExecute });
   console.log('=== Lavi Single-Host Release Cross-Compilation Plan ===\n');
   console.log(`Desktop Targets (${DESKTOP_TARGETS.length}):`);
   for (const t of DESKTOP_TARGETS) {
@@ -257,5 +495,12 @@ if (isMain) {
   }
   console.log(`\nAAR Output: ${plan.aarPackage.aarPath}`);
   console.log(`AAR Entries: ${plan.aarPackage.entries.join(', ')}`);
-  console.log('\n✅ Plan generated successfully.');
+
+  if (shouldExecute) {
+    console.log('\n🚀 Executing release compilation plan...');
+    executeReleasePlan(plan, { execute: true, verbose: true });
+    console.log('\n✅ Release compilation and packaging completed successfully.');
+  } else {
+    console.log('\n✅ Plan generated successfully (dry-run). Pass --execute to run.');
+  }
 }
