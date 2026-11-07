@@ -39,15 +39,26 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: In C FFI, `fsm_get_snapshot_json` allocates the full serialized JSON `String` on the heap during the pass-1 size query (`buffer == NULL` or `buffer_len == 0`) and serializes/allocates it a second time on pass 2 when copying into the caller's buffer (such as in `lavi::Machine::getSnapshot()`).
 - **Required Fix**: Implement a streaming or counting length calculation (e.g. a zero-allocation byte-counting visitor over `RuntimeMachine` / `Value`) or write directly into the caller's buffer slice when `buffer != NULL` so pass-1 size queries perform zero heap string allocations.
 
-### `TD-12`: Publish `lavi-wasm` to npm [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
+### `TD-12`: Publish `lavi-wasm` to npm with Node & Browser Bundler Exports [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
 - **Files**: [`lavi-wasm/Cargo.toml`](./lavi-wasm/Cargo.toml), [`package.json`](./package.json), [`README.md`](./README.md)
-- **Problem**: `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
-- **Resolution**: Publish `lavi-wasm` (or `lavi`) to npm so JavaScript/TypeScript users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly.
+- **Problem**:
+  1. `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
+  2. `npm run build:npm` currently builds only `--target nodejs` (which uses CommonJS `require('fs').readFileSync` to load `.wasm`), while `npm run build:web` builds `--target web` (which requires calling `await init()` in raw `<script type="module">` HTML pages). There is no `--target bundler` build or conditional `exports` map for browser bundlers (Vite, Webpack, Rollup, esbuild).
+- **Resolution**: Build `--target nodejs`, `--target bundler`, and `--target web` outputs with conditional `package.json` `"exports"` (`"node"`, `"bundler"`/`"import"`, and `"browser"`) and publish `lavi-wasm` to npm so both Node.js and browser bundler users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly without `await init()`.
 
 ### `TD-13`: Replace Recursive `#[derive(Clone, PartialEq)]` on `StateValue` with Iterative Heap Work-Stacks [flowos: 1695ba29-a50c-4f0f-8a21-05ecb6f02ed0]
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs) (lines 19–24)
 - **Problem**: While `StateValue::drop`, `StateValue::to_value`, `StateValue::collect_paths`, `StateValue::matches`, `Value::clone`, and `Value::eq` use iterative heap work-stacks (`Vec`), `StateValue` still derives `Clone` and `PartialEq` (`#[derive(Debug, Clone, PartialEq)]`). Comparing or cloning deeply nested `StateValue` trees (e.g., `finalized_state != self.current_state` in `transition_internal` or `self.current_state.clone()` when recording `history_value`) recurses on the CPU call stack proportional to state nesting depth $O(D)$.
 - **Required Fix**: Implement manual iterative `Clone` and `PartialEq` for `StateValue` using explicit heap `Vec` work-stacks (matching `impl Clone for Value` and `impl PartialEq for Value`), and audit remaining state-value helpers (`resolve_state_value_from_path`, `merge_state_value`) to ensure 100% bounded $O(1)$ call-stack usage.
+
+### `TD-14`: Fix `setup().createMachine()` Inline Guards & Parent Targetless Transition Domain [flowos: 0b644a4a-50dc-4a4a-be93-df74b27e3869]
+- **Files**: [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs) (lines 1166–1171, 2446–2457), [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`tests/actions.test.ts`](./tests/actions.test.ts)
+- **Problem**:
+  1. **Dropped Inline Guards in `setup().createMachine()`**: In `lavi-wasm/src/lib.rs`, `create_machine` runs `process_config` before `Actor::new` and merges `inline_guards`, but `SetupObject::create_wasm_machine` calls `Actor::new` directly. Inside `Actor::new` (lines 1166–1171), `process_config` populates `dummy_guards` and `dummy_actions`, and calls `actions.extend(dummy_actions)` while omitting `guards.extend(dummy_guards)`. Additionally, `evaluate_js_guard` (line 2446) ignores `_guard_params` for inline guards.
+  2. **Parent Targetless Transition Exits Child State**: While targetless transitions (`on: { EVENT: { actions: [...] } }` with no `target`) are marked supported in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md), a targetless transition defined on a compound parent state currently exits and re-enters active child states (causing `"shouldn't exit a state on a parent's targetless transition"` in `tests/actions.test.ts` to be skipped).
+- **Required Fix**:
+  1. Add `guards.extend(dummy_guards)` in `Actor::new` and pass `params` in `evaluate_js_guard` in `lavi-wasm/src/lib.rs`, with a unit test covering inline guards inside `setup().createMachine()`.
+  2. Fix internal targetless transition handling on ancestor states in `lavi/src/lib.rs` so active descendant states are not exited, and unskip `"shouldn't exit a state on a parent's targetless transition"` in `tests/actions.test.ts` and `tests/conformance-manifest.json`.
 
 
 ---

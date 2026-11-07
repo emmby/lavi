@@ -78,16 +78,16 @@ Or run individual suites:
 
 ## Usage Examples
 
-### JavaScript / TypeScript (WASM) — Drop-In Replacement for XState v5
+### JavaScript / TypeScript (WASM) — Drop-In Replacement for Core XState v5
 
-In Node.js and bundler projects, `lavi-wasm` is a **1-line import replacement** for `xstate`:
+For core statechart logic, `lavi-wasm` provides a **1-line import replacement** for `xstate` in Node.js (with npm publication and browser bundler `--target bundler` exports tracked in [`TD-12`](./TECH_DEBT.md)):
 
 ```diff
 - import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'xstate';
 + import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'lavi-wasm';
 ```
 
-*(In raw, unbundled browser `<script type="module">` pages using `wasm-pack build --target web`, call `await init()` once before creating machines—see [`examples/simple.html`](./examples/simple.html).)*
+*(When running from a local repo build today, import `./lavi-wasm/pkg-npm/lavi.js` in Node.js/Vitest, or `./lavi-wasm/pkg/lavi.js` with `await init()` in browser ES modules—see [`examples/simple.html`](./examples/simple.html).)*
 
 ```javascript
 // TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
@@ -121,11 +121,11 @@ console.log(actor.getSnapshot().context.count); // 1
 ```
 
 #### Drop-In Compatibility & Boundaries
-- **Verified Against Upstream XState v5 Tests**: The conformance suites in [`tests/*.test.ts`](./tests/) are unmodified upstream `statelyai/xstate@5.25.0` tests with only the module import line swapped to `lavi-wasm`, verified mechanically on every test run by `npm run test:conformance-check`.
-- **Supported Out-of-the-Box**: `createMachine`, `createActor`, `setup`, `assign` (object and function updaters), `raise`, `SimulatedClock`, nested/compound states, parallel states, shallow & deep `history`, `final` states, `always` (eventless) transitions, `after` delayed transitions (automatically bridged to host `setTimeout`), inline & named `entry`/`exit`/transition actions, inline & named `guard`s, wildcard (`*` / `prefix.*`) transitions, `actor.subscribe()`, `.matches()`, `.can()`, `.hasTag()`, `getPersistedSnapshot()`, `machine.provide()`, and `inspect`.
-- **Known Differences / Not Yet Implemented** (tracked in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)):
+- **Verified Against Upstream XState v5 Tests**: The 7 onboarded conformance suites in [`tests/*.test.ts`](./tests/) run unmodified upstream `statelyai/xstate@5.25.0` test bodies against `lavi-wasm`, verified mechanically on every test run by `npm run test:conformance-check` (with unimplemented features explicitly tracked in [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) and [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)).
+- **Supported Out-of-the-Box**: `createMachine`, `createActor`, `setup`, `assign` (object and function updaters), immediate static `raise`, `SimulatedClock`, nested/compound states, parallel states, shallow & deep `history`, `final` states (`status: 'done'`), `always` (eventless) transitions, numeric `after` delayed transitions (automatically bridged to host `setTimeout`), inline & named `entry`/`exit`/transition actions, inline & named `guard`s, wildcard (`*` / `prefix.*`) transitions, `actor.subscribe()`, `.matches()`, `.can()`, `.hasTag()`, `getPersistedSnapshot()`, `machine.provide()`, and basic `inspect` (`@xstate.snapshot` / `@xstate.event`).
+- **Known Differences / Not Yet Implemented** (see [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md) for the full checklist):
   - **Pre-start events are dropped**: Events sent via `actor.send()` *before* `actor.start()` are intentionally dropped rather than buffered in an unbounded queue (microcontroller memory safety invariant).
-  - **Async Actor Model (`invoke` / `spawn`)**: `fromPromise`, `fromCallback`, `fromObservable`, and `spawnChild` are not yet implemented.
+  - **Unimplemented XState v5 features**: Async Actor Model (`invoke` / `spawn`, `sendTo`, `sendParent`, `forwardTo`), `input` / `output`, `onDone` transitions, named/dynamic `delays`, delayed/dynamic `raise`, `enqueueActions`, `log`, `emit`, `cancel`, dynamic action `params` resolvers, higher-order guards (`and`, `or`, `not`, `stateIn`), and full TypeScript generic type inference in `.d.ts` bindings.
 
 ### C++11 (ESP32 / PlatformIO / Native)
 ```cpp
@@ -243,7 +243,7 @@ SimulatedClock(0).use { clock ->
 | **Shallow & Deep History** | ✅ | ✅ | ✅ *(Plugin/map)* | ✅ | ✅ | — | Shallow only |
 | **Declarative `after` & `SimulatedClock`** | ✅ | ✅ | Manual² | ✅ | Manual² | — | — |
 | **Snapshot Save / Restore** | ✅ | ✅ | — | — | — | — | — |
-| **XState v5 Conformance** | [~75% (Core HSM ✅)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
+| **XState v5 Conformance** | [Core HSM ✅ (7/19 suites)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
 
 *¹ Via QP's manual "Orthogonal Component" pattern. ² Via user-managed timer events rather than declarative `after` delays.*
 
