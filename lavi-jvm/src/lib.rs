@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 use jni::objects::{JClass, JObject, JObjectArray, JString};
 use jni::sys::{
     jboolean, jdouble, jint, jlong, jlongArray, jobject, jobjectArray, jstring, JNI_FALSE,

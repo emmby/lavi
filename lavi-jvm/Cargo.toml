@@ -10,4 +10,4 @@ crate-type = ["cdylib"]
 [dependencies]
 jni = "0.21"
 lavi = { workspace = true }
-indexmap = "2.2"
+indexmap = { version = "2.2", default-features = false }

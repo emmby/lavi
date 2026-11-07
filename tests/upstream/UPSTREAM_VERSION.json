@@ -8,6 +8,14 @@
     "actions.test.ts": "d6235d78996417c63a3c74d2082adf52d4b2e8e703eebb5a11a48542e6a46368",
     "after.test.ts": "0801e4069d0dcc3d6dba614406884a3fb664c0701ec9ac4041d4b42266dd5716",
     "eventDescriptors.test.ts": "357534b057f050713b9860d00b2f24cb6ca0e1071aa94b851f24cbddc64b0652",
-    "assign.test.ts": "062edf207d3c563f9ac6d5272b0a7aa827fb757ebbf41bcbb9e3d98c79257d1a"
+    "assign.test.ts": "062edf207d3c563f9ac6d5272b0a7aa827fb757ebbf41bcbb9e3d98c79257d1a",
+    "parallel.test.ts": "1a3dc51e530f23b5403808b7d9b6fd95db6a51dd5bf9e5e402b57d2a41ae1708",
+    "final.test.ts": "a125d5231999ac8f93620f12f5ba62aadfdf80f56393c470da91422ab5bb74b3",
+    "guards.test.ts": "de22465c3c16f61ec6aeebea5e234f452876e2b6448a1907c294c05d31d12e72",
+    "tags.test.ts": "67bea28ab0ea966f490b468103ea4c6269355439dd1f9c1effcce6b389b59123",
+    "meta.test.ts": "31348f0eff3e20303c32e5c9834be94618973c53e4cfb01d5675e6ffb3b45215",
+    "input.test.ts": "4e3ff538e5bda30af1b5f7a815c4e402a56975bfd0e07854ca834ffa419a22ca",
+    "json.test.ts": "fda8247d3051d6447d67e904357d2fa22500978d98f913a36d795ae838cfc09e",
+    "transition.test.ts": "6d2d0c9c11af42b096c2a87a73919c32e9e4299289642429c7ac5e30ca1bf9b3"
   }
 }

@@ -3,13 +3,13 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use indexmap::IndexMap;
+use crate::{IndexMap, IndexMapExt};
 
 use crate::json::JsonError;
 use crate::{
-    Action, AssignAction, GenericAction, GuardObject, HistoryType, InvokeDefinition,
-    MachineDefinition, StateDefinition, StateType, StateValue, TransitionDefinition,
-    TransitionGuard, Value,
+    Action, AssignAction, CancelAction, Delay, DelayedRaiseAction, GenericAction, GuardObject,
+    HistoryType, InvokeDefinition, LogAction, MachineDefinition, StateDefinition, StateType,
+    StateValue, TransitionDefinition, TransitionGuard, Value,
 };
 
 pub struct SetupObject;
@@ -171,25 +171,46 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
         on.insert(String::new(), always);
     }
 
-    let after = parse_after(root.swap_remove("after"));
+    let (num_after, named_after) = parse_after(root.swap_remove("after"));
+    let mut after = IndexMap::new();
+    for (k, v) in num_after {
+        after.insert(Delay::Literal(k), v);
+    }
+    for (k, v) in named_after {
+        after.insert(Delay::Named(k), v);
+    }
     let entry = parse_action_list(root.swap_remove("entry"));
     let exit = parse_action_list(root.swap_remove("exit"));
     let invoke = parse_invoke_list(root.swap_remove("invoke"));
     let context = root.swap_remove("context");
     let types = root.swap_remove("types");
+    let tags = parse_string_list(root.swap_remove("tags"));
+    let meta = root.swap_remove("meta");
+    let description = root.swap_remove("description").and_then(|v| v.into_string());
+    let output = root.swap_remove("output");
 
     let mut id_map = IndexMap::new();
+    id_map.insert(String::new(), String::new());
+    if !id.is_empty() {
+        id_map.insert(id.clone(), String::new());
+    }
     let states = parse_states_iterative(states_val, &id, &mut id_map);
-
-    let initial = initial_str
-        .or_else(|| states.keys().next().cloned())
-        .unwrap_or_default();
 
     let state_type = match raw_type.as_deref() {
         Some("parallel") => StateType::Parallel,
+        Some("final") => StateType::Final,
         _ if !states.is_empty() => StateType::Compound,
         _ => StateType::Atomic,
     };
+
+    let initial = if matches!(state_type, StateType::Parallel) {
+        String::new()
+    } else {
+        initial_str
+            .or_else(|| states.keys().next().cloned())
+            .unwrap_or_default()
+    };
+
 
     Ok(MachineDefinition {
         id,
@@ -205,6 +226,11 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
         context,
         types,
         id_map,
+        tags,
+        meta,
+        description,
+        input: None,
+        output,
     })
 }
 
@@ -245,12 +271,15 @@ fn parse_states_iterative(
             let mut child_map = child_val.into_object().unwrap_or_default();
             let child_id = child_map.swap_remove("id").and_then(|v| v.into_string());
 
+            let default_id = format!("{}.{}", machine_id, child_path);
             if let Some(id) = &child_id {
                 id_map.insert(id.clone(), child_path.clone());
+                id_map.insert(default_id.clone(), child_path.clone());
             } else {
-                let default_id = format!("{}.{}", machine_id, child_path);
-                id_map.insert(default_id, child_path.clone());
+                id_map.insert(default_id.clone(), child_path.clone());
             }
+
+            let output_opt = child_map.swap_remove("output");
 
             let raw_type = child_map.swap_remove("type").and_then(|v| v.into_string());
 
@@ -274,17 +303,29 @@ fn parse_states_iterative(
             let history_target = target.into_iter().next();
             let history_actions = parse_action_list(child_map.swap_remove("actions"));
 
+            let on_done = parse_transition_list(child_map.swap_remove("onDone"));
             let mut on_map = parse_on(child_map.swap_remove("on"));
             let always = parse_transition_list(child_map.swap_remove("always"));
             if !always.is_empty() {
                 on_map.insert(String::new(), always);
             }
+            if !on_done.is_empty() {
+                let state_id = child_id.clone().unwrap_or_else(|| default_id.clone());
+                on_map.insert(format!("xstate.done.state.{}", state_id), on_done.clone());
+                if let Some(ref custom_id) = child_id {
+                    if *custom_id != default_id {
+                        on_map.insert(format!("xstate.done.state.{}", default_id), on_done);
+                    }
+                }
+            }
 
-            let after_map = parse_after(child_map.swap_remove("after"));
+            let (after_map, named_after_map) = parse_after(child_map.swap_remove("after"));
             let entry = parse_action_list(child_map.swap_remove("entry"));
             let exit = parse_action_list(child_map.swap_remove("exit"));
             let tags = parse_string_list(child_map.swap_remove("tags"));
             let invoke = parse_invoke_list(child_map.swap_remove("invoke"));
+            let meta = child_map.swap_remove("meta");
+            let description = child_map.swap_remove("description").and_then(|v| v.into_string());
 
             let grandchild_map = child_map
                 .swap_remove("states")
@@ -331,6 +372,7 @@ fn parse_states_iterative(
                 states: IndexMap::new(),
                 on: on_map,
                 after: after_map,
+                named_after: named_after_map,
                 entry,
                 exit,
                 history,
@@ -338,6 +380,9 @@ fn parse_states_iterative(
                 tags,
                 invoke,
                 history_actions,
+                meta,
+                description,
+                output: output_opt,
             };
 
             stack.push(StateWorkFrame {
@@ -411,11 +456,50 @@ fn parse_action(mut val: Value) -> Action {
                 .and_then(|v| v.into_string())
                 .unwrap_or_else(|| "unknown".to_string());
             let assignment = obj.swap_remove("assignment");
-            let params = obj.swap_remove("params");
+            let mut params = obj.swap_remove("params");
             let event = obj.swap_remove("event");
 
-            if action_type == "xstate.raise" {
-                if let Some(e) = event {
+            if action_type == "xstate.raise.delayed" || action_type == "xstate.raise" {
+                let delay_val = obj.swap_remove("delay").or_else(|| {
+                    if let Some(Value::Object(ref mut m)) = params {
+                        m.swap_remove("delay")
+                    } else {
+                        None
+                    }
+                });
+                let id_val = obj.swap_remove("id").or_else(|| {
+                    if let Some(Value::Object(ref mut m)) = params {
+                        m.swap_remove("id")
+                    } else {
+                        None
+                    }
+                }).and_then(|v| v.into_string());
+
+                if let Some(d) = delay_val {
+                    let delay = match &d {
+                        Value::Number(n) => Delay::Literal(*n as u64),
+                        Value::String(s) => {
+                            if let Ok(ms) = s.parse::<u64>() {
+                                Delay::Literal(ms)
+                            } else {
+                                Delay::Named(s.clone())
+                            }
+                        }
+                        _ => Delay::Literal(0),
+                    };
+                    let event_val = event.or_else(|| {
+                        if let Some(Value::Object(ref mut m)) = params {
+                            m.swap_remove("event")
+                        } else {
+                            None
+                        }
+                    }).unwrap_or(Value::Null);
+                    return Action::DelayedRaise(DelayedRaiseAction {
+                        event: event_val,
+                        delay,
+                        id: id_val,
+                    });
+                } else if let Some(e) = event {
                     return Action::Raise(e);
                 } else if let Some(mut p) = params {
                     if let Value::Object(ref mut m) = p {
@@ -425,6 +509,50 @@ fn parse_action(mut val: Value) -> Action {
                     }
                     return Action::Raise(p);
                 }
+            }
+            if action_type == "xstate.cancel" {
+                let send_id = obj.swap_remove("sendId")
+                    .or_else(|| obj.swap_remove("id"))
+                    .and_then(|v| v.into_string())
+                    .or_else(|| {
+                        if let Some(Value::Object(ref mut m)) = params {
+                            m.swap_remove("sendId")
+                                .or_else(|| m.swap_remove("id"))
+                                .and_then(|v| v.into_string())
+                        } else {
+                            params.and_then(|v| v.into_string())
+                        }
+                    })
+                    .unwrap_or_default();
+                return Action::Cancel(CancelAction { send_id });
+            }
+            if action_type == "xstate.raise.invalid" {
+                let error_msg = obj
+                    .swap_remove("error")
+                    .and_then(|v| v.into_string())
+                    .unwrap_or_default();
+                return Action::RaiseInvalid(error_msg);
+            }
+            if action_type == "xstate.log" {
+                let value = obj.swap_remove("value")
+                    .or_else(|| {
+                        if let Some(Value::Object(ref mut m)) = params {
+                            m.swap_remove("value")
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(Value::Null);
+                let label = obj.swap_remove("label")
+                    .or_else(|| {
+                        if let Some(Value::Object(ref mut m)) = params {
+                            m.swap_remove("label")
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|v| v.into_string());
+                return Action::Log(LogAction { value, label });
             }
             if action_type == "xstate.assign" {
                 if let Some(a) = assignment {
@@ -468,20 +596,128 @@ fn parse_action_list(v: Option<Value>) -> Vec<Action> {
     }
 }
 
-fn parse_guard(mut val: Value) -> Option<TransitionGuard> {
-    match &mut val {
-        Value::String(name) => Some(TransitionGuard::Name(core::mem::take(name))),
-        Value::Object(obj) => {
-            let mut obj = core::mem::take(obj);
-            let guard_type = obj
-                .swap_remove("type")
-                .and_then(|v| v.into_string())
-                .unwrap_or_default();
-            let params = obj.swap_remove("params");
-            Some(TransitionGuard::Object(GuardObject { guard_type, params }))
+enum ParseGuardFrame {
+    And {
+        children: Vec<TransitionGuard>,
+        remaining: Vec<Value>,
+    },
+    Or {
+        children: Vec<TransitionGuard>,
+        remaining: Vec<Value>,
+    },
+    Not,
+}
+
+fn parse_guard(val: Value) -> Option<TransitionGuard> {
+    let mut stack: Vec<ParseGuardFrame> = Vec::new();
+    let mut current_val: Option<Value> = Some(val);
+    let mut last_guard: Option<TransitionGuard> = None;
+
+    loop {
+        if let Some(mut v) = current_val.take() {
+            match &mut v {
+                Value::String(name) => {
+                    last_guard = Some(TransitionGuard::Name(core::mem::take(name)));
+                }
+                Value::Object(obj) => {
+                    let mut obj = core::mem::take(obj);
+                    let guard_type = obj
+                        .swap_remove("type")
+                        .and_then(|t| t.into_string())
+                        .unwrap_or_default();
+                    match guard_type.as_str() {
+                        "xstate.and" => {
+                            let mut guards_arr = obj
+                                .swap_remove("guards")
+                                .and_then(|v| v.into_array())
+                                .unwrap_or_default();
+                            guards_arr.reverse();
+                            if guards_arr.is_empty() {
+                                last_guard = Some(TransitionGuard::And(Vec::new()));
+                            } else {
+                                let first = guards_arr.pop().unwrap();
+                                stack.push(ParseGuardFrame::And {
+                                    children: Vec::new(),
+                                    remaining: guards_arr,
+                                });
+                                current_val = Some(first);
+                            }
+                        }
+                        "xstate.or" => {
+                            let mut guards_arr = obj
+                                .swap_remove("guards")
+                                .and_then(|v| v.into_array())
+                                .unwrap_or_default();
+                            guards_arr.reverse();
+                            if guards_arr.is_empty() {
+                                last_guard = Some(TransitionGuard::Or(Vec::new()));
+                            } else {
+                                let first = guards_arr.pop().unwrap();
+                                stack.push(ParseGuardFrame::Or {
+                                    children: Vec::new(),
+                                    remaining: guards_arr,
+                                });
+                                current_val = Some(first);
+                            }
+                        }
+                        "xstate.not" => {
+                            let inner = obj.swap_remove("guard")
+                                .or_else(|| {
+                                    obj.swap_remove("guards")
+                                        .and_then(|v| v.into_array())
+                                        .and_then(|mut arr| if !arr.is_empty() { Some(arr.swap_remove(0)) } else { None })
+                                })
+                                .unwrap_or(Value::Null);
+                            stack.push(ParseGuardFrame::Not);
+                            current_val = Some(inner);
+                        }
+                        "xstate.stateIn" => {
+                            let state_val = obj.swap_remove("stateValue").unwrap_or(Value::Null);
+                            last_guard = Some(TransitionGuard::StateIn(state_val));
+                        }
+                        _ => {
+                            let params = obj.swap_remove("params");
+                            last_guard = Some(TransitionGuard::Object(GuardObject { guard_type, params }));
+                        }
+                    }
+                }
+                _ => {
+                    last_guard = None;
+                }
+            }
+        } else if let Some(g) = last_guard.take() {
+            if let Some(top) = stack.pop() {
+                match top {
+                    ParseGuardFrame::Not => {
+                        last_guard = Some(TransitionGuard::Not(Box::new(g)));
+                    }
+                    ParseGuardFrame::And { mut children, mut remaining } => {
+                        children.push(g);
+                        if let Some(next) = remaining.pop() {
+                            stack.push(ParseGuardFrame::And { children, remaining });
+                            current_val = Some(next);
+                        } else {
+                            last_guard = Some(TransitionGuard::And(children));
+                        }
+                    }
+                    ParseGuardFrame::Or { mut children, mut remaining } => {
+                        children.push(g);
+                        if let Some(next) = remaining.pop() {
+                            stack.push(ParseGuardFrame::Or { children, remaining });
+                            current_val = Some(next);
+                        } else {
+                            last_guard = Some(TransitionGuard::Or(children));
+                        }
+                    }
+                }
+            } else {
+                return Some(g);
+            }
+        } else {
+            break;
         }
-        _ => None,
     }
+    last_guard
 }
 
 fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefinition {
@@ -510,12 +746,16 @@ fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefini
         .swap_remove("reenter")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let description = obj
+        .swap_remove("description")
+        .and_then(|v| v.into_string());
 
     TransitionDefinition {
         target,
         guard,
         actions,
         reenter,
+        description,
     }
 }
 
@@ -526,6 +766,7 @@ fn parse_single_transition(mut val: Value) -> TransitionDefinition {
             guard: None,
             actions: Vec::new(),
             reenter: false,
+            description: None,
         },
         Value::Object(obj) => parse_transition_object(core::mem::take(obj)),
         _ => TransitionDefinition {
@@ -533,6 +774,7 @@ fn parse_single_transition(mut val: Value) -> TransitionDefinition {
             guard: None,
             actions: Vec::new(),
             reenter: false,
+            description: None,
         },
     }
 }
@@ -549,6 +791,7 @@ fn parse_transition_list(v: Option<Value>) -> Vec<TransitionDefinition> {
                 guard: None,
                 actions: Vec::new(),
                 reenter: false,
+                description: None,
             }],
             Value::Object(obj) => vec![parse_transition_object(core::mem::take(obj))],
             _ => Vec::new(),
@@ -567,15 +810,18 @@ fn parse_on(v: Option<Value>) -> IndexMap<String, Vec<TransitionDefinition>> {
     result
 }
 
-fn parse_after(v: Option<Value>) -> IndexMap<u64, Vec<TransitionDefinition>> {
-    let mut result: IndexMap<u64, Vec<TransitionDefinition>> = IndexMap::new();
+fn parse_after(v: Option<Value>) -> (IndexMap<u64, Vec<TransitionDefinition>>, IndexMap<String, Vec<TransitionDefinition>>) {
+    let mut num_after: IndexMap<u64, Vec<TransitionDefinition>> = IndexMap::new();
+    let mut named_after: IndexMap<String, Vec<TransitionDefinition>> = IndexMap::new();
     if let Some(mut val) = v {
         match &mut val {
             Value::Object(map) => {
                 for (k, val) in core::mem::take(map) {
-                    if let Ok(delay) = k.parse::<u64>() {
-                        let transitions = parse_transition_list(Some(val));
-                        result.entry(delay).or_default().extend(transitions);
+                    let transitions = parse_transition_list(Some(val));
+                    if let Ok(ms) = k.parse::<u64>() {
+                        num_after.entry(ms).or_default().extend(transitions);
+                    } else {
+                        named_after.entry(k).or_default().extend(transitions);
                     }
                 }
             }
@@ -583,14 +829,21 @@ fn parse_after(v: Option<Value>) -> IndexMap<u64, Vec<TransitionDefinition>> {
                 for item in core::mem::take(arr) {
                     if let Some(mut map) = item.into_object() {
                         if let Some(delay_val) = map.swap_remove("delay") {
-                            let delay_opt = match &delay_val {
-                                Value::Number(n) => Some(*n as u64),
-                                Value::String(s) => s.parse::<u64>().ok(),
-                                _ => None,
-                            };
-                            if let Some(delay) = delay_opt {
-                                let transition = parse_transition_object(map);
-                                result.entry(delay).or_default().push(transition);
+                            let transition = parse_transition_object(map);
+                            match &delay_val {
+                                Value::Number(n) => {
+                                    num_after.entry(*n as u64).or_default().push(transition);
+                                }
+                                Value::String(s) => {
+                                    if let Ok(ms) = s.parse::<u64>() {
+                                        num_after.entry(ms).or_default().push(transition);
+                                    } else {
+                                        named_after.entry(s.clone()).or_default().push(transition);
+                                    }
+                                }
+                                _ => {
+                                    num_after.entry(0).or_default().push(transition);
+                                }
                             }
                         }
                     }
@@ -599,7 +852,7 @@ fn parse_after(v: Option<Value>) -> IndexMap<u64, Vec<TransitionDefinition>> {
             _ => {}
         }
     }
-    result
+    (num_after, named_after)
 }
 
 fn parse_invoke_list(v: Option<Value>) -> Vec<InvokeDefinition> {

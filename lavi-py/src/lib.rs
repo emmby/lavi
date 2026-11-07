@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};

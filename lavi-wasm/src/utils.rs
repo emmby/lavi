@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use lavi::{IndexMap, IndexMapExt};
 use lavi::Value;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;

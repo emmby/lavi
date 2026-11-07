@@ -1,4 +1,4 @@
-use lavi::{create_machine, RuntimeMachine, Value};
+use lavi::{create_machine, IndexMap, IndexMapExt, RuntimeMachine, Value};
 
 #[test]
 fn test_parallel_deep_history_repro() {
@@ -80,8 +80,8 @@ fn test_parallel_deep_history_repro() {
         }
     }
 
-    let guards = indexmap::IndexMap::new();
-    let actions = indexmap::IndexMap::new();
+    let guards = IndexMap::new();
+    let actions = IndexMap::new();
     machine.start(&guards, &actions);
 
     // 1. SWITCH -> on

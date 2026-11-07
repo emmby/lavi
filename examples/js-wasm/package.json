@@ -1,0 +1,12 @@
+{
+  "name": "lavi-example-js-wasm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "lavi-wasm": "file:../../lavi-wasm/pkg-npm"
+  }
+}

@@ -272,7 +272,7 @@ describe('delayed transitions', () => {
   });
 
   describe('delay expressions', () => {
-    it.skip('should evaluate the expression (function) to determine the delay', () => {
+    it('should evaluate the expression (function) to determine the delay', () => {
       vi.useFakeTimers();
       const spy = vi.fn();
       const context = {
@@ -311,7 +311,7 @@ describe('delayed transitions', () => {
       expect(actor.getSnapshot().value).toBe('active');
     });
 
-    it.skip('should evaluate the expression (string) to determine the delay', () => {
+    it('should evaluate the expression (string) to determine the delay', () => {
       vi.useFakeTimers();
       const spy = vi.fn();
       const machine = createMachine(

@@ -58,7 +58,88 @@ void verify_assign_cb(const char* action_name, const fsm_value_t* context, const
     *verified_flag = true;
 }
 
+uint64_t c_named_delay_cb(const char* delay_name, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
+    (void)context;
+    (void)event;
+    (void)user_data;
+    assert(strcmp(delay_name, "myNamedDelay") == 0);
+    return 750;
+}
+
+bool c_guard_with_params_cb(const char* guard_name, const fsm_value_t* context, const fsm_value_t* event, const fsm_value_t* params, void* user_data) {
+    (void)guard_name;
+    (void)event;
+    (void)user_data;
+    assert(params != NULL);
+    const fsm_value_t* min_val = fsm_value_get_property(params, "min");
+    assert(min_val != NULL && fsm_value_is_number(min_val));
+    double min_num = fsm_value_get_number(min_val);
+    const fsm_value_t* count_val = fsm_value_get_property(context, "count");
+    assert(count_val != NULL && fsm_value_is_number(count_val));
+    double count_num = fsm_value_get_number(count_val);
+    return count_num >= min_num;
+}
+
+static bool c_input_verified = false;
+static void inspect_input_cb(const char* action_name, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
+    (void)action_name;
+    (void)context;
+    (void)user_data;
+    assert(event != NULL);
+    const fsm_value_t* inp = fsm_value_get_property(event, "input");
+    assert(inp != NULL);
+    assert(fsm_value_is_object(inp));
+    const fsm_value_t* count_val = fsm_value_get_property(inp, "startCount");
+    assert(count_val != NULL && fsm_value_is_number(count_val));
+    assert(fsm_value_get_number(count_val) == 42.0);
+    const fsm_value_t* user_val = fsm_value_get_property(inp, "user");
+    assert(user_val != NULL && fsm_value_is_string(user_val));
+    char user_buf[16];
+    fsm_value_get_string(user_val, user_buf, sizeof(user_buf));
+    assert(strcmp(user_buf, "alice") == 0);
+    c_input_verified = true;
+}
+
+static uint64_t dynamic_delay_calc_cb(const char* delay_name, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
+    (void)event;
+    (void)user_data;
+    assert(strcmp(delay_name, "dynamicTimeout") == 0);
+    const fsm_value_t* base_v = fsm_value_get_property(context, "base");
+    const fsm_value_t* factor_v = fsm_value_get_property(context, "factor");
+    assert(base_v != NULL && fsm_value_is_number(base_v));
+    assert(factor_v != NULL && fsm_value_is_number(factor_v));
+    return (uint64_t)(fsm_value_get_number(base_v) * fsm_value_get_number(factor_v)); // 200 * 3 = 600 ms
+}
+
+static bool c_json_event_payload_verified = false;
+static void inspect_json_event_cb(const char* action_name, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
+    (void)action_name;
+    (void)context;
+    (void)user_data;
+    assert(event != NULL);
+    const fsm_value_t* score_v = fsm_value_get_property(event, "score");
+    assert(score_v != NULL && fsm_value_is_number(score_v));
+    assert(fsm_value_get_number(score_v) == 95.0);
+    c_json_event_payload_verified = true;
+}
+
+static bool c_action_params_verified = false;
+static void inspect_action_params_cb(const char* action_name, const fsm_value_t* context, const fsm_value_t* event, const fsm_value_t* params, void* user_data) {
+    (void)action_name;
+    (void)context;
+    (void)event;
+    (void)user_data;
+    assert(params != NULL);
+    const fsm_value_t* tag_v = fsm_value_get_property(params, "actionTag");
+    assert(tag_v != NULL && fsm_value_is_string(tag_v));
+    char tag_buf[16];
+    fsm_value_get_string(tag_v, tag_buf, sizeof(tag_buf));
+    assert(strcmp(tag_buf, "critical") == 0);
+    c_action_params_verified = true;
+}
+
 int main() {
+
     printf("Starting C Integration Test...\n");
 
     MachineContext* machine = fsm_create(STOPLIGHT_JSON);
@@ -481,6 +562,292 @@ int main() {
     fsm_free(sm_stop);
     fsm_free(sm_stop_res);
 
+    // Milestone 3: Named delay test via fsm_register_delay
+    const char* NAMED_DELAY_JSON = "{"
+      "\"id\": \"namedDelayFsm\","
+      "\"initial\": \"waiting\","
+      "\"states\": {"
+        "\"waiting\": {"
+          "\"after\": { \"myNamedDelay\": \"expired\" }"
+        "},"
+        "\"expired\": {}"
+      "}"
+    "}";
+
+    SimulatedClock* delay_clock = fsm_simulated_clock_create(0);
+    MachineContext* delay_fsm = fsm_create(NAMED_DELAY_JSON);
+    assert(delay_fsm != NULL);
+    assert(fsm_register_delay(delay_fsm, "myNamedDelay", c_named_delay_cb, NULL) == 0);
+    assert(fsm_register_simulated_clock(delay_fsm, delay_clock) == 0);
+    assert(fsm_start(delay_fsm) == 0);
+    assert(fsm_matches(delay_fsm, "waiting"));
+    uint64_t dl = 0;
+    assert(fsm_get_next_deadline(delay_fsm, &dl) == true);
+    assert(dl == 750);
+    assert(fsm_simulated_clock_set(delay_clock, 750) == 0);
+    assert(fsm_matches(delay_fsm, "expired"));
+    fsm_simulated_clock_free(delay_clock);
+    fsm_free(delay_fsm);
+
+    // Milestone 3: Higher-order guards and guard with params via fsm_register_guard_with_params
+    const char* GUARD_PARAMS_JSON = "{"
+      "\"id\": \"guardParamsFsm\","
+      "\"initial\": \"low\","
+      "\"context\": { \"count\": 3 },"
+      "\"states\": {"
+        "\"low\": {"
+          "\"on\": {"
+            "\"CHECK\": {"
+              "\"target\": \"high\","
+              "\"guard\": { \"type\": \"checkMin\", \"params\": { \"min\": 5 } }"
+            "}"
+          "}"
+        "},"
+        "\"high\": {}"
+      "}"
+    "}";
+
+    MachineContext* gp_fsm = fsm_create(GUARD_PARAMS_JSON);
+    assert(gp_fsm != NULL);
+    assert(fsm_register_guard_with_params(gp_fsm, "checkMin", c_guard_with_params_cb, NULL) == 0);
+    assert(fsm_start(gp_fsm) == 0);
+    // count is 3, min is 5 -> transition disabled
+    fsm_send_event(gp_fsm, "CHECK");
+    assert(fsm_matches(gp_fsm, "low"));
+    fsm_free(gp_fsm);
+
+    // ==========================================
+    // Milestone 5: Input & Context Initialization
+    // ==========================================
+    const char* INPUT_MACHINE_JSON = "{"
+      "\"id\": \"inputTestFsm\","
+      "\"initial\": \"init\","
+      "\"context\": { \"cycles\": 0 },"
+      "\"states\": {"
+        "\"init\": {"
+          "\"entry\": [\"inspectInput\"],"
+          "\"on\": { \"NEXT\": \"done\" }"
+        "},"
+        "\"done\": { \"type\": \"final\" }"
+      "}"
+    "}";
+
+    // Error & null parameter handling
+    assert(fsm_create_with_input(NULL, "{\"startCount\": 42}") == NULL);
+    assert(fsm_create_with_input(INPUT_MACHINE_JSON, "{ invalid json") == NULL);
+
+    // Null input fallback -> equivalent to fsm_create
+    MachineContext* m_null_inp = fsm_create_with_input(INPUT_MACHINE_JSON, NULL);
+    assert(m_null_inp != NULL);
+    fsm_destroy(m_null_inp);
+
+    // Valid creation with input
+    MachineContext* m_inp = fsm_create_with_input(INPUT_MACHINE_JSON, "{\"startCount\": 42, \"user\": \"alice\"}");
+    assert(m_inp != NULL);
+    fsm_register_action(m_inp, "inspectInput", inspect_input_cb, NULL);
+    assert(fsm_start(m_inp) == 0);
+    assert(c_input_verified == true);
+    fsm_destroy(m_inp);
+
+    // ==========================================
+    // Milestone 5: Machine Output Retrieval
+    // ==========================================
+    const char* OUTPUT_MACHINE_JSON = "{"
+      "\"id\": \"outputFsm\","
+      "\"initial\": \"working\","
+      "\"output\": { \"result\": \"success\", \"code\": 200 },"
+      "\"states\": {"
+        "\"working\": {"
+          "\"on\": { \"FINISH\": \"completed\" }"
+        "},"
+        "\"completed\": {"
+          "\"type\": \"final\""
+        "}"
+      "}"
+    "}";
+
+    MachineContext* out_m = fsm_create(OUTPUT_MACHINE_JSON);
+    assert(out_m != NULL);
+    assert(fsm_start(out_m) == 0);
+
+    // Uncompleted machine must return -4
+    char temp_buf[64];
+    assert(fsm_get_output_json(out_m, temp_buf, sizeof(temp_buf)) == -4);
+    assert(fsm_get_output_json(NULL, temp_buf, sizeof(temp_buf)) == -1);
+
+    // Transition to final state
+    fsm_send_event(out_m, "FINISH");
+    assert(fsm_is_in_state(out_m, "completed"));
+    assert(fsm_is_done(out_m) == 1);
+
+    // Sizing query when done
+    int32_t out_req = fsm_get_output_json(out_m, NULL, 0);
+    assert(out_req > 0);
+
+    // Buffer too small test with canary validation
+    char small_out[4] = { 0x55, 0x55, 0x55, 0x55 };
+    assert(fsm_get_output_json(out_m, small_out, sizeof(small_out)) == -2);
+    assert(small_out[3] == 0x55); // No canary clobbering
+
+    // Buffer retrieval
+    char* out_buf = (char*)malloc((size_t)out_req);
+    assert(out_buf != NULL);
+    int32_t out_written = fsm_get_output_json(out_m, out_buf, (size_t)out_req);
+    assert(out_written > 0 && out_written == out_req - 1);
+    assert(strstr(out_buf, "\"result\":\"success\"") != NULL);
+    assert(strstr(out_buf, "\"code\":200") != NULL);
+    free(out_buf);
+    fsm_destroy(out_m);
+
+    // ==========================================
+    // Milestone 5: Metadata Aggregation & Inspection
+    // ==========================================
+    const char* META_MACHINE_JSON = "{"
+      "\"id\": \"metaFsm\","
+      "\"initial\": \"phaseA\","
+      "\"meta\": { \"version\": \"2.1\" },"
+      "\"states\": {"
+        "\"phaseA\": {"
+          "\"meta\": { \"tag\": \"A\", \"limit\": 10 },"
+          "\"on\": { \"NEXT\": \"phaseB\" }"
+        "},"
+        "\"phaseB\": {"
+          "\"meta\": { \"tag\": \"B\", \"limit\": 20 }"
+        "}"
+      "}"
+    "}";
+
+    MachineContext* meta_m = fsm_create(META_MACHINE_JSON);
+    assert(meta_m != NULL);
+    assert(fsm_start(meta_m) == 0);
+
+    // Null checks
+    assert(fsm_get_meta_json(NULL, temp_buf, sizeof(temp_buf)) == -1);
+    assert(fsm_get_state_meta_json(NULL, "phaseA", temp_buf, sizeof(temp_buf)) == -1);
+    assert(fsm_get_state_meta_json(meta_m, NULL, temp_buf, sizeof(temp_buf)) == -2);
+
+    // Aggregated meta query (root + active state phaseA)
+    int32_t meta_req = fsm_get_meta_json(meta_m, NULL, 0);
+    assert(meta_req > 0);
+    char* meta_buf = (char*)malloc((size_t)meta_req);
+    int32_t meta_written = fsm_get_meta_json(meta_m, meta_buf, (size_t)meta_req);
+    assert(meta_written > 0);
+    assert(strstr(meta_buf, "\"version\":\"2.1\"") != NULL);
+    assert(strstr(meta_buf, "\"tag\":\"A\"") != NULL);
+    free(meta_buf);
+
+    // State-specific meta query for phaseA
+    int32_t sm_req = fsm_get_state_meta_json(meta_m, "phaseA", NULL, 0);
+    assert(sm_req > 0);
+    char* sm_buf = (char*)malloc((size_t)sm_req);
+    int32_t sm_written = fsm_get_state_meta_json(meta_m, "phaseA", sm_buf, (size_t)sm_req);
+    assert(sm_written > 0);
+    assert(strstr(sm_buf, "\"limit\":10") != NULL);
+    free(sm_buf);
+
+    // State-specific meta query for inactive state phaseB
+    int32_t sm_b_req = fsm_get_state_meta_json(meta_m, "phaseB", NULL, 0);
+    assert(sm_b_req > 0);
+    char* sm_b_buf = (char*)malloc((size_t)sm_b_req);
+    int32_t sm_b_written = fsm_get_state_meta_json(meta_m, "phaseB", sm_b_buf, (size_t)sm_b_req);
+    assert(sm_b_written > 0);
+    assert(strstr(sm_b_buf, "\"limit\":20") != NULL);
+    free(sm_b_buf);
+
+    // Non-existent state meta returns -4
+    assert(fsm_get_state_meta_json(meta_m, "does_not_exist", temp_buf, sizeof(temp_buf)) == -4);
+
+    // Buffer too small returns -3 per lavi.h contract
+    assert(fsm_get_state_meta_json(meta_m, "phaseA", small_out, sizeof(small_out)) == -3);
+    fsm_destroy(meta_m);
+
+    // ==========================================
+    // Milestone 5: Dynamic Delay Calculation in C
+    // ==========================================
+    const char* DYN_DELAY_JSON = "{"
+      "\"id\": \"dynDelayC\","
+      "\"initial\": \"waiting\","
+      "\"context\": { \"base\": 200, \"factor\": 3 },"
+      "\"states\": {"
+        "\"waiting\": {"
+          "\"after\": { \"dynamicTimeout\": \"expired\" }"
+        "},"
+        "\"expired\": {}"
+      "}"
+    "}";
+
+    SimulatedClock* dyn_clk = fsm_simulated_clock_create(0);
+    MachineContext* dyn_m = fsm_create(DYN_DELAY_JSON);
+    assert(dyn_m != NULL);
+    assert(fsm_register_delay(dyn_m, "dynamicTimeout", dynamic_delay_calc_cb, NULL) == 0);
+    assert(fsm_register_simulated_clock(dyn_m, dyn_clk) == 0);
+    assert(fsm_start(dyn_m) == 0);
+    assert(fsm_is_in_state(dyn_m, "waiting"));
+
+    uint64_t dyn_dl = 0;
+    assert(fsm_get_next_deadline(dyn_m, &dyn_dl) == true);
+    assert(dyn_dl == 600);
+
+    // Advance to 599 ms -> still waiting
+    assert(fsm_simulated_clock_set(dyn_clk, 599) == 0);
+    assert(fsm_is_in_state(dyn_m, "waiting"));
+
+    // Advance to 600 ms -> transitions to expired
+    assert(fsm_simulated_clock_set(dyn_clk, 600) == 0);
+    assert(fsm_is_in_state(dyn_m, "expired"));
+
+    fsm_simulated_clock_free(dyn_clk);
+    fsm_destroy(dyn_m);
+
+    // ==========================================
+    // Milestone 5: Structured JSON Events & Action Params
+    // ==========================================
+    const char* JSON_EVENT_FSM = "{"
+      "\"id\": \"jsonEventFsm\","
+      "\"initial\": \"ready\","
+      "\"states\": {"
+        "\"ready\": {"
+          "\"on\": {"
+            "\"UPDATE_SCORE\": {"
+              "\"target\": \"scored\","
+              "\"actions\": ["
+                "\"inspectEvent\","
+                "{ \"type\": \"paramAction\", \"params\": { \"actionTag\": \"critical\" } }"
+              "]"
+            "}"
+          "}"
+        "},"
+        "\"scored\": {}"
+      "}"
+    "}";
+
+    MachineContext* je_m = fsm_create(JSON_EVENT_FSM);
+    assert(je_m != NULL);
+    fsm_register_action(je_m, "inspectEvent", inspect_json_event_cb, NULL);
+    fsm_register_action_with_params(je_m, "paramAction", inspect_action_params_cb, NULL);
+
+    // Pre-start event is dropped without buffering
+    assert(fsm_send_json_event(je_m, "{\"type\": \"UPDATE_SCORE\", \"score\": 95}") == 0);
+    assert(c_json_event_payload_verified == false);
+
+    assert(fsm_start(je_m) == 0);
+    assert(fsm_is_in_state(je_m, "ready"));
+
+    // Active state serialization
+    char state_buf[32];
+    int32_t st_len = fsm_get_state(je_m, state_buf, sizeof(state_buf));
+    assert(st_len > 0);
+    assert(strcmp(state_buf, "\"ready\"") == 0);
+
+    // Send valid JSON event with payload
+    assert(fsm_send_json_event(je_m, "{\"type\": \"UPDATE_SCORE\", \"score\": 95}") == 0);
+    assert(c_json_event_payload_verified == true);
+    assert(c_action_params_verified == true);
+    assert(fsm_is_in_state(je_m, "scored"));
+
+    fsm_destroy(je_m);
+
     printf("C Test Passed!\n");
     return 0;
 }
+

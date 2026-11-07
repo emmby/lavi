@@ -611,7 +611,7 @@ describe('entry/exit actions', () => {
       expect(called).toBe(true);
     });
 
-    it.skip('root entry/exit actions should be called on root reentering transitions', () => {
+    it('root entry/exit actions should be called on root reentering transitions', () => {
       let entrySpy = vi.fn();
       let exitSpy = vi.fn();
 
@@ -936,7 +936,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should exit current node and reenter target node when target is ancestor of current', () => {
+    it('should exit current node and reenter target node when target is ancestor of current', () => {
       const machine = createMachine({
         initial: 'A',
         states: {
@@ -1155,7 +1155,7 @@ describe('entry/exit actions', () => {
       expect(flushTracked()).toEqual(['exit: a.a1', 'enter: a.a1']);
     });
 
-    it.skip('should not enter exited state when targeting its ancestor and when its former descendant gets selected through initial state', () => {
+    it('should not enter exited state when targeting its ancestor and when its former descendant gets selected through initial state', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1194,7 +1194,7 @@ describe('entry/exit actions', () => {
       ]);
     });
 
-    it.skip('should not enter exited state when targeting its ancestor and when its latter descendant gets selected through initial state', () => {
+    it('should not enter exited state when targeting its ancestor and when its latter descendant gets selected through initial state', () => {
       const m = createMachine({
         initial: 'a',
         states: {
@@ -1367,7 +1367,7 @@ describe('entry/exit actions', () => {
   });
 
   describe('targetless transitions', () => {
-    it.skip("shouldn't exit a state on a parent's targetless transition", () => {
+    it("shouldn't exit a state on a parent's targetless transition", () => {
       const parent = createMachine({
         initial: 'one',
         on: {
@@ -1488,7 +1488,7 @@ describe('entry/exit actions', () => {
       expect(childSpy).not.toHaveBeenCalled();
     });
 
-    it.skip('an exit action executed when an interpreter reaches its final state should be called with the last received event', () => {
+    it('an exit action executed when an interpreter reaches its final state should be called with the last received event', () => {
       let receivedEvent;
       const machine = createMachine({
         initial: 'a',
@@ -1918,7 +1918,7 @@ describe('initial actions', () => {
     expect(actual).toEqual(['initialA', 'entryA']);
   });
 
-  it.skip('should support initial actions from transition', () => {
+  it('should support initial actions from transition', () => {
     const actual: string[] = [];
     const machine = createMachine({
       initial: 'a',
@@ -2032,7 +2032,7 @@ describe('initial actions', () => {
     `);
   });
 
-  it.skip('should execute actions of the initial transition when taking a root reentering self-transition', () => {
+  it('should execute actions of the initial transition when taking a root reentering self-transition', () => {
     const spy = vi.fn();
     const machine = createMachine({
       id: 'root',
@@ -2535,7 +2535,7 @@ describe('forwardTo()', () => {
 });
 
 describe('log()', () => {
-  it.skip('should log a string', () => {
+  it('should log a string', () => {
     const consoleSpy = vi.fn();
     console.log = consoleSpy;
     const machine = createMachine({
@@ -2553,7 +2553,7 @@ describe('log()', () => {
     `);
   });
 
-  it.skip('should log an expression', () => {
+  it('should log an expression', () => {
     const consoleSpy = vi.fn();
     console.log = consoleSpy;
     const machine = createMachine({
@@ -2576,7 +2576,7 @@ describe('log()', () => {
 });
 
 describe('enqueueActions', () => {
-  it.skip('should execute a simple referenced action', () => {
+  it('should execute a simple referenced action', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2597,7 +2597,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should execute multiple different referenced actions', () => {
+  it('should execute multiple different referenced actions', () => {
     const spy1 = vi.fn();
     const spy2 = vi.fn();
 
@@ -2622,7 +2622,7 @@ describe('enqueueActions', () => {
     expect(spy2).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should execute multiple same referenced actions', () => {
+  it('should execute multiple same referenced actions', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2644,7 +2644,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
-  it.skip('should execute a parameterized action', () => {
+  it('should execute a parameterized action', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2676,7 +2676,7 @@ describe('enqueueActions', () => {
     `);
   });
 
-  it.skip('should execute a function', () => {
+  it('should execute a function', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -2690,7 +2690,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should execute a builtin action using its own action creator', () => {
+  it('should execute a builtin action using its own action creator', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -2717,7 +2717,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should execute a builtin action using its bound action creator', () => {
+  it('should execute a builtin action using its bound action creator', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -2742,7 +2742,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should execute assigns when resolving the initial snapshot', () => {
+  it('should execute assigns when resolving the initial snapshot', () => {
     const machine = createMachine({
       context: {
         count: 0
@@ -2759,7 +2759,7 @@ describe('enqueueActions', () => {
     expect(snapshot.context).toEqual({ count: 42 });
   });
 
-  it.skip('should be able to check a simple referenced guard', () => {
+  it('should be able to check a simple referenced guard', () => {
     const spy = vi.fn().mockImplementation(() => true);
     const machine = createMachine(
       {
@@ -2782,7 +2782,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should be able to check a parameterized guard', () => {
+  it('should be able to check a parameterized guard', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2822,7 +2822,7 @@ describe('enqueueActions', () => {
     `);
   });
 
-  it.skip('should provide self', () => {
+  it('should provide self', () => {
     expect.assertions(1);
     const machine = createMachine({
       entry: enqueueActions(({ self }) => {
@@ -3385,7 +3385,7 @@ Event: {"type":"PING"}",
 });
 
 describe('raise', () => {
-  it.skip('should be able to send a delayed event to itself', () => {
+  it('should be able to send a delayed event to itself', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const machine = createMachine({
       initial: 'a',
@@ -3421,7 +3421,7 @@ describe('raise', () => {
     return promise;
   });
 
-  it.skip('should be able to send a delayed event to itself with delay = 0', async () => {
+  it('should be able to send a delayed event to itself with delay = 0', async () => {
     const machine = createMachine({
       initial: 'a',
       states: {
@@ -3471,7 +3471,7 @@ describe('raise', () => {
     expect(service.getSnapshot().value).toEqual('b');
   });
 
-  it.skip('should be able to raise a delayed event and respond to it in the same state', async () => {
+  it('should be able to raise a delayed event and respond to it in the same state', async () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const machine = createMachine({
       initial: 'a',
@@ -3505,7 +3505,7 @@ describe('raise', () => {
     return promise;
   });
 
-  it.skip('should accept event expression', () => {
+  it('should accept event expression', () => {
     const machine = createMachine({
       initial: 'a',
       states: {
@@ -3528,7 +3528,7 @@ describe('raise', () => {
     expect(actor.getSnapshot().value).toBe('b');
   });
 
-  it.skip('should be possible to access context in the event expression', () => {
+  it('should be possible to access context in the event expression', () => {
     type MachineEvent =
       | {
           type: 'RAISED';
@@ -3567,7 +3567,7 @@ describe('raise', () => {
     expect(actor.getSnapshot().value).toBe('b');
   });
 
-  it.skip('should error if given a string', () => {
+  it('should error if given a string', () => {
     const machine = createMachine({
       entry: raise(
         // @ts-ignore
@@ -3863,7 +3863,7 @@ describe('assign action order', () => {
     expect(captured).toEqual([0, 1, 2]);
   });
 
-  it.skip('should deeply preserve action order', () => {
+  it('should deeply preserve action order', () => {
     const captured: number[] = [];
 
     interface CountCtx {

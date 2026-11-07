@@ -1,7 +1,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::Write;
-use indexmap::IndexMap;
+use crate::{IndexMap, IndexMapExt};
 use crate::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,10 +385,13 @@ fn attach_value(stack: &mut [ContainerFrame], val: Value) {
 fn serialize_number(n: f64, out: &mut String) {
     if !n.is_finite() {
         out.push_str("null");
-    } else if n.fract() == 0.0 && n.abs() < ((1i64 << 53) as f64) {
-        let _ = write!(out, "{}", n as i64);
     } else {
-        let _ = write!(out, "{}", n);
+        let abs_n = if n < 0.0 { -n } else { n };
+        if abs_n < ((1i64 << 53) as f64) && (n as i64 as f64 == n) {
+            let _ = write!(out, "{}", n as i64);
+        } else {
+            let _ = write!(out, "{}", n);
+        }
     }
 }
 

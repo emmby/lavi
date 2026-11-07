@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use lavi::{
     assign, create_machine, setup, value_to_state_value, Action, HistoryType,
-    RuntimeMachine, StateType, StateValue, TransitionGuard, Value,
+    IndexMap, IndexMapExt, RuntimeMachine, StateType, StateValue, TransitionGuard, Value,
 };
 
 #[test]
@@ -96,7 +96,7 @@ fn test_deep_machine_on_small_stack() {
         .stack_size(64 * 1024)
         .spawn(move || {
             let mut machine = RuntimeMachine::from_json(&json).expect("should build on small stack");
-            machine.start(&indexmap::IndexMap::new(), &indexmap::IndexMap::new());
+            machine.start(&IndexMap::new(), &IndexMap::new());
             let expected_path = (0..depth)
                 .map(|i| format!("s{}", i))
                 .collect::<Vec<_>>()
@@ -138,7 +138,7 @@ fn test_xstate_v5_params_event_and_assignment() {
     }"#;
 
     let mut machine = RuntimeMachine::from_json(json).expect("should parse XState v5 serialized config");
-    machine.start(&indexmap::IndexMap::new(), &indexmap::IndexMap::new());
+    machine.start(&IndexMap::new(), &IndexMap::new());
 
     assert!(machine.matches("doneState"));
     let ctx = machine.context.as_object().expect("context object");
