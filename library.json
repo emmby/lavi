@@ -1,6 +1,6 @@
 {
   "name": "lavi",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "Lavi statechart runtime for C/C++ and PlatformIO (XState v5 compatible), powered by Rust.",
   "keywords": [
     "lavi",

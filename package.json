@@ -1,5 +1,6 @@
 {
   "name": "lavi",
+  "version": "0.1.0",
   "license": "MIT",
   "scripts": {
     "build": "npm run build:npm && npm run build:web && npm run build:c-cpp && npm run build:py && npm run build:jvm && npm run build:examples",

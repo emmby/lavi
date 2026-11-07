@@ -30,7 +30,7 @@
 
 ## Phase 1: Version Synchronization & Core Registry Metadata [flowos: e0101eae-7880-45ba-b4fa-605c9629dcf9]
 
-### Task 1: Cross-Ecosystem Version Sync Script (`scripts/sync-version.mjs`) [flowos: 5405527a-2875-4ed2-bef3-a1efacf6e0da]
+### Task 1: Cross-Ecosystem Version Sync Script (`scripts/sync-version.mjs`) [x] [flowos: 5405527a-2875-4ed2-bef3-a1efacf6e0da]
 
 **Files:**
 - Create: `scripts/sync-version.mjs`
@@ -46,7 +46,7 @@
   - `checkVersions(options?: { rootDir?: string, expectedVersion?: string }): { ok: boolean, version: string | null, mismatches: Array<{ file: string, actual: string, expected: string }> }`
   - `syncVersions(newVersion: string, options?: { rootDir?: string }): { version: string, updatedFiles: string[] }`
 
-- [ ] **Step 1: Write the failing test in `tests/integration/sync_version.test.ts`**
+- [x] **Step 1: Write the failing test in `tests/integration/sync_version.test.ts`**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -111,21 +111,21 @@ describe('sync-version script', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/integration/sync_version.test.ts`
 Expected: FAIL with cannot find module `../../scripts/sync-version.mjs`
 
-- [ ] **Step 3: Implement `scripts/sync-version.mjs` and sync `package.json` and `library.json` to `0.1.0`**
+- [x] **Step 3: Implement `scripts/sync-version.mjs` and sync `package.json` and `library.json` to `0.1.0`**
 
 Implement `normalizeVersion`, `readAllManifestVersions`, `checkVersions`, and `syncVersions` in `scripts/sync-version.mjs` with CLI support (`--check [expectedVersion]` and `<newVersion>`), scoped `[package]` / `[project]` TOML replacement, and run `node scripts/sync-version.mjs 0.1.0` so `package.json` (`"version": "0.1.0"`) and `library.json` (`"version": "0.1.0"`) match all other workspace manifests.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/integration/sync_version.test.ts`
 Expected: PASS (3 passed)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/sync-version.mjs package.json library.json tests/integration/sync_version.test.ts
@@ -134,7 +134,7 @@ git commit -m "feat(release): add cross-ecosystem version sync script and tests"
 
 ---
 
-### Task 2: `crates.io` (`lavi`) & `PyPI` (`lavi-py`) Packaging Metadata [flowos: e7ae0ae7-7073-4f9c-aa86-77c4e6840db7]
+### Task 2: `crates.io` (`lavi`) & `PyPI` (`lavi-py`) Packaging Metadata [~] [flowos: e7ae0ae7-7073-4f9c-aa86-77c4e6840db7]
 
 **Files:**
 - Modify: `lavi/Cargo.toml`
