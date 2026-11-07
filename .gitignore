@@ -13,4 +13,13 @@ __pycache__/
 .pytest_cache/
 lavi-jvm/.gradle/
 lavi-jvm/build/
+examples/rust/target/
+examples/rust/Cargo.lock
+examples/c/build/
+examples/cpp/build/
+examples/java/.gradle/
+examples/java/build/
+examples/kotlin/.gradle/
+examples/kotlin/build/
+.superpowers/
 
