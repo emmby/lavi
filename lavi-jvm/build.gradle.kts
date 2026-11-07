@@ -3,6 +3,9 @@ plugins {
     kotlin("jvm") version "2.1.10"
 }
 
+group = "io.lavi"
+version = "0.1.0"
+
 repositories {
     mavenCentral()
 }
