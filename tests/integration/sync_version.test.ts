@@ -16,7 +16,7 @@ describe('sync-version script', () => {
   });
 
   it('updates [package] version in Cargo.toml without modifying [dependencies] versions', () => {
-    const tmpRoot = path.resolve('.tmp', `sync-ver-${Date.now()}`);
+    const tmpRoot = path.resolve('.tmp', 'sync-ver-test');
     fs.mkdirSync(path.join(tmpRoot, 'lavi'), { recursive: true });
     fs.mkdirSync(path.join(tmpRoot, 'lavi-wasm'), { recursive: true });
     fs.mkdirSync(path.join(tmpRoot, 'lavi-c-cpp'), { recursive: true });

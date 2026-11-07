@@ -17,7 +17,8 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(wf).toContain('node scripts/build-release-natives.mjs --execute');
     expect(wf).toContain('zipMavenCentralBundle');
     expect(wf).toContain('cargo publish -p lavi');
-    expect(wf).toContain('npm publish --provenance --access public');
+    expect(wf).toContain('npm publish ./lavi-fsm-*.tgz --provenance --access public');
+    expect(wf).not.toContain('rm -f');
     expect(wf).toContain('pypa/gh-action-pypi-publish@release/v1');
     expect(wf).toContain('https://central.sonatype.com/api/v1/publisher/upload');
   });

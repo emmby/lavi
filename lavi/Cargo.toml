@@ -10,7 +10,7 @@ documentation = "https://docs.rs/lavi"
 readme = "README.md"
 keywords = ["statechart", "xstate", "fsm", "state-machine", "no-std"]
 categories = ["no-std", "embedded", "simulation", "algorithms"]
-include = ["src/**/*", "Cargo.toml", "README.md"]
+include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
 # We don't want to have any dependencies in this package, except basic data structures

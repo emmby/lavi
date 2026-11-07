@@ -29,7 +29,7 @@ describe('build-npm-package (lavi-fsm)', () => {
   });
 
   it('strips nested .gitignore and package.json files from node/, bundler/, and web/ subdirectories', () => {
-    const tmpOut = path.resolve('.tmp', `npm-dist-${Date.now()}`);
+    const tmpOut = path.resolve('.tmp', 'npm-dist-test');
     for (const sub of ['node', 'bundler', 'web']) {
       const subDir = path.join(tmpOut, sub);
       fs.mkdirSync(subDir, { recursive: true });

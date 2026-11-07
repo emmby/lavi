@@ -198,9 +198,7 @@ jobs:
         working-directory: release-artifacts/npm-package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          rm -f *.tgz
-          npm publish --provenance --access public
+        run: npm publish ./lavi-fsm-*.tgz --provenance --access public
 
       - name: Publish lavi to PyPI (Trusted Publishing OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1

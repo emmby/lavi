@@ -21,16 +21,18 @@ describe('crates.io and PyPI registry metadata', () => {
     });
     expect(pkgList.status).toBe(0);
     expect(pkgList.stdout).toContain('README.md');
+    expect(pkgList.stdout).toContain('LICENSE');
     expect(pkgList.stdout).toContain('Cargo.toml');
     expect(pkgList.stdout).toContain('src/lib.rs');
   });
 
-  it('includes README.md and [project.urls] in lavi-py/pyproject.toml', () => {
+  it('includes README.md, LICENSE, and [project.urls] in lavi-py/pyproject.toml', () => {
     const pyproject = fs.readFileSync(path.join(rootDir, 'lavi-py', 'pyproject.toml'), 'utf8');
     expect(pyproject).toContain('name = "lavi"');
     expect(pyproject).toContain('readme = "README.md"');
     expect(pyproject).toContain('[project.urls]');
     expect(pyproject).toContain('Repository = "https://github.com/emmby/lavi"');
     expect(fs.existsSync(path.join(rootDir, 'lavi-py', 'README.md'))).toBe(true);
+    expect(fs.existsSync(path.join(rootDir, 'lavi-py', 'LICENSE'))).toBe(true);
   });
 });

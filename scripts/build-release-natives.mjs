@@ -217,10 +217,20 @@ export function buildReleasePlan(options = {}) {
 </manifest>
 `;
 
+  let pkgVersion = '0.1.0';
+  const pkgJsonPath = path.join(rootDir, 'package.json');
+  if (fs.existsSync(pkgJsonPath)) {
+    try {
+      pkgVersion = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')).version || '0.1.0';
+    } catch {
+      pkgVersion = '0.1.0';
+    }
+  }
+
   const aarPackage = {
     aarPath: path.join(outDir, 'aar', 'lavi-release.aar'),
     stagingDir: path.join(outDir, 'aar', 'staging'),
-    classesJar: path.join(rootDir, 'lavi-jvm', 'build', 'libs', 'lavi-jvm.jar'),
+    classesJar: path.join(rootDir, 'lavi-jvm', 'build', 'libs', `lavi-jvm-${pkgVersion}.jar`),
     manifestPath: path.join(outDir, 'aar', 'staging', 'AndroidManifest.xml'),
     manifestContent: aarManifest,
     entries: [

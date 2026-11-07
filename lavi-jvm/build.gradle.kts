@@ -102,6 +102,7 @@ val generateMavenChecksums = tasks.register("generateMavenChecksums") {
     dependsOn("publishMavenJavaPublicationToStagingRepository")
     val stagingDir = layout.buildDirectory.dir("staging-deploy")
     outputs.dir(stagingDir)
+    outputs.upToDateWhen { false }
 
     doLast {
         val root = stagingDir.get().asFile
@@ -116,15 +117,16 @@ val generateMavenChecksums = tasks.register("generateMavenChecksums") {
 
         root.walkTopDown().filter { it.isFile }.forEach { file ->
             val name = file.name
+            if (name.startsWith("maven-metadata")) {
+                file.delete()
+                return@forEach
+            }
             if (name.endsWith(".md5") ||
                 name.endsWith(".sha1") ||
                 name.endsWith(".sha256") ||
                 name.endsWith(".sha512") ||
-                name.startsWith("maven-metadata")
+                name.endsWith(".asc")
             ) {
-                if (name.startsWith("maven-metadata")) {
-                    file.delete()
-                }
                 return@forEach
             }
             val bytes = file.readBytes()
