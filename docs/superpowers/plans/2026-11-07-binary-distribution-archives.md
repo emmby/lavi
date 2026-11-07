@@ -312,7 +312,7 @@ git commit -m "feat(wasm): add unified lavi-fsm npm package builder for node, bu
 
 ---
 
-### Task 4: Maven Central (`io.github.emmby:lavi`) Gradle Publishing & Bundle Task [~] [flowos: dfa00b54-746e-4eea-9c13-b1ccc2fa1506]
+### Task 4: Maven Central (`io.github.emmby:lavi`) Gradle Publishing & Bundle Task [x] [flowos: dfa00b54-746e-4eea-9c13-b1ccc2fa1506]
 
 **Files:**
 - Modify: `lavi-jvm/build.gradle.kts`
@@ -329,7 +329,7 @@ git commit -m "feat(wasm): add unified lavi-fsm npm package builder for node, bu
   - Maven coordinates `io.github.emmby:lavi:<version>` in `lavi-jvm/build.gradle.kts` with `-sources.jar`, `-javadoc.jar`, POM metadata, and conditional PGP signing (`MAVEN_GPG_PRIVATE_KEY` & `MAVEN_GPG_PASSPHRASE`)
   - Gradle task `zipMavenCentralBundle` producing `dist/maven/lavi-maven-central-bundle.zip` with `io/github/emmby/lavi/<version>/` layout and `.md5`, `.sha1`, `.sha256`, `.sha512` checksum files
 
-- [ ] **Step 1: Write the failing test in `tests/integration/maven_bundle.test.ts`**
+- [x] **Step 1: Write the failing test in `tests/integration/maven_bundle.test.ts`**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -377,12 +377,12 @@ describe('Maven Central bundle packaging (io.github.emmby:lavi)', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/integration/maven_bundle.test.ts`
 Expected: FAIL (`Task 'zipMavenCentralBundle' not found in root project 'lavi-jvm'`)
 
-- [ ] **Step 3: Configure `lavi-jvm/build.gradle.kts` and update `examples/{java,kotlin}` coordinates**
+- [x] **Step 3: Configure `lavi-jvm/build.gradle.kts` and update `examples/{java,kotlin}` coordinates**
 
 In `lavi-jvm/build.gradle.kts`:
 - Add `maven-publish` and `signing` plugins; set `group = "io.github.emmby"`.
@@ -393,12 +393,12 @@ In `lavi-jvm/build.gradle.kts`:
 - Add `generateMavenChecksums` task (computing `.md5`, `.sha1`, `.sha256`, `.sha512` for all files in `build/staging-deploy` except existing checksum/signature files) and `zipMavenCentralBundle` (`Zip` task archiving `build/staging-deploy` into `../dist/maven/lavi-maven-central-bundle.zip`).
 - Update `examples/java/settings.gradle.kts`, `examples/kotlin/settings.gradle.kts`, `examples/java/build.gradle.kts`, and `examples/kotlin/build.gradle.kts` to use `io.github.emmby:lavi:0.1.0` with composite-build `dependencySubstitution`.
 
-- [ ] **Step 4: Run tests to verify Maven bundle and Java/Kotlin examples pass**
+- [x] **Step 4: Run tests to verify Maven bundle and Java/Kotlin examples pass**
 
 Run: `npx vitest run tests/integration/maven_bundle.test.ts tests/integration/sync_version.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lavi-jvm/build.gradle.kts examples/java/settings.gradle.kts examples/java/build.gradle.kts examples/kotlin/settings.gradle.kts examples/kotlin/build.gradle.kts scripts/sync-version.mjs tests/integration/maven_bundle.test.ts
@@ -409,7 +409,7 @@ git commit -m "feat(jvm): configure io.github.emmby:lavi Maven Central publishin
 
 ## Phase 3: GitHub Actions Release Pipeline & Setup Documentation [flowos: ea245602-1e2e-4e85-84df-5feaf06c3122]
 
-### Task 5: GitHub Actions Release Workflow (`.github/workflows/release.yml`), GPG Script & `RELEASING.md` [flowos: f0cb5744-260f-4ea2-bba2-389854aacc5f]
+### Task 5: GitHub Actions Release Workflow (`.github/workflows/release.yml`), GPG Script & `RELEASING.md` [~] [flowos: f0cb5744-260f-4ea2-bba2-389854aacc5f]
 
 **Files:**
 - Create: `.github/workflows/release.yml`
