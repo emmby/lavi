@@ -179,37 +179,94 @@ public final class Value {
         return sb.toString();
     }
 
-    private void toJson(StringBuilder sb) {
-        switch (type) {
-            case NULL -> sb.append("null");
-            case BOOLEAN -> sb.append(boolVal);
-            case NUMBER -> {
-                if (numVal == Math.floor(numVal) && !Double.isInfinite(numVal) && numVal >= Long.MIN_VALUE && numVal <= Long.MAX_VALUE) {
-                    sb.append(numVal.longValue());
+    private enum SerializeMode { ARRAY, OBJECT }
+
+    private static final class SerializeFrame {
+        final SerializeMode mode;
+        final Iterator<?> iterator;
+
+        SerializeFrame(SerializeMode mode, Iterator<?> iterator) {
+            this.mode = mode;
+            this.iterator = iterator;
+        }
+    }
+
+    public void toJson(StringBuilder sb) {
+        Deque<SerializeFrame> stack = new ArrayDeque<>();
+        Value nextVal = this;
+
+        while (true) {
+            if (nextVal != null) {
+                Value val = nextVal;
+                nextVal = null;
+                switch (val.type) {
+                    case NULL -> sb.append("null");
+                    case BOOLEAN -> sb.append(val.boolVal);
+                    case NUMBER -> {
+                        double n = val.numVal;
+                        if (n == Math.floor(n) && !Double.isInfinite(n) && n >= Long.MIN_VALUE && n <= Long.MAX_VALUE) {
+                            sb.append(val.numVal.longValue());
+                        } else {
+                            sb.append(val.numVal);
+                        }
+                    }
+                    case STRING -> escapeJsonString(val.strVal, sb);
+                    case ARRAY -> {
+                        sb.append("[");
+                        Iterator<Value> it = val.arrayVal.iterator();
+                        if (it.hasNext()) {
+                            stack.push(new SerializeFrame(SerializeMode.ARRAY, it));
+                            nextVal = it.next();
+                            continue;
+                        } else {
+                            sb.append("]");
+                        }
+                    }
+                    case OBJECT -> {
+                        sb.append("{");
+                        Iterator<Map.Entry<String, Value>> it = val.objVal.entrySet().iterator();
+                        if (it.hasNext()) {
+                            Map.Entry<String, Value> first = it.next();
+                            escapeJsonString(first.getKey(), sb);
+                            sb.append(":");
+                            stack.push(new SerializeFrame(SerializeMode.OBJECT, it));
+                            nextVal = first.getValue();
+                            continue;
+                        } else {
+                            sb.append("}");
+                        }
+                    }
+                }
+            }
+
+            if (stack.isEmpty()) {
+                break;
+            }
+
+            SerializeFrame top = stack.peek();
+            if (top.mode == SerializeMode.ARRAY) {
+                @SuppressWarnings("unchecked")
+                Iterator<Value> it = (Iterator<Value>) top.iterator;
+                if (it.hasNext()) {
+                    sb.append(",");
+                    nextVal = it.next();
                 } else {
-                    sb.append(numVal);
+                    sb.append("]");
+                    stack.pop();
                 }
-            }
-            case STRING -> escapeJsonString(strVal, sb);
-            case ARRAY -> {
-                sb.append("[");
-                for (int i = 0; i < arrayVal.size(); i++) {
-                    if (i > 0) sb.append(",");
-                    arrayVal.get(i).toJson(sb);
-                }
-                sb.append("]");
-            }
-            case OBJECT -> {
-                sb.append("{");
-                boolean first = true;
-                for (Map.Entry<String, Value> entry : objVal.entrySet()) {
-                    if (!first) sb.append(",");
-                    first = false;
+            } else {
+                @SuppressWarnings("unchecked")
+                Iterator<Map.Entry<String, Value>> it = (Iterator<Map.Entry<String, Value>>) top.iterator;
+                if (it.hasNext()) {
+                    sb.append(",");
+                    Map.Entry<String, Value> entry = it.next();
                     escapeJsonString(entry.getKey(), sb);
                     sb.append(":");
-                    entry.getValue().toJson(sb);
+                    nextVal = entry.getValue();
+                } else {
+                    sb.append("}");
+                    stack.pop();
                 }
-                sb.append("}");
             }
         }
     }

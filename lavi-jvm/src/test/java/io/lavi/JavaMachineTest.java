@@ -189,4 +189,45 @@ class JavaMachineTest {
         assertEquals(extracted1, extracted2);
         assertEquals(content, Files.readString(extracted2));
     }
+
+    @Test
+    void simulatedClockWithClosedMachineDoesNotCauseUseAfterFree() {
+        try (SimulatedClock clock = new SimulatedClock(0)) {
+            Machine m1 = new Machine(MACHINE_JSON, clock);
+            Machine m2 = new Machine(MACHINE_JSON, clock);
+            m1.start();
+            m2.start();
+
+            // Close m1 while m2 remains active and registered
+            m1.close();
+            assertTrue(m1.isClosed());
+            assertFalse(m2.isClosed());
+
+            // Stepping clock must not dereference m1 or crash
+            assertDoesNotThrow(() -> clock.set(1000));
+            assertEquals(1000L, clock.now());
+            assertTrue(m2.matches("yellow"));
+
+            m2.close();
+        }
+    }
+
+    @Test
+    void deepValueToJsonIterativeNoStackOverflow() {
+        // Build deeply nested JSON
+        StringBuilder sb = new StringBuilder();
+        int depth = 500;
+        for (int i = 0; i < depth; i++) {
+            sb.append("{\"child\":");
+        }
+        sb.append("42");
+        for (int i = 0; i < depth; i++) {
+            sb.append("}");
+        }
+        Value val = Value.fromJson(sb.toString());
+        assertFalse(val.isNull());
+        String serialized = val.toJson();
+        assertNotNull(serialized);
+        assertTrue(serialized.contains("42"));
+    }
 }

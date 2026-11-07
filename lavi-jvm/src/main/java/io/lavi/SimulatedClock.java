@@ -48,7 +48,12 @@ public final class SimulatedClock implements AutoCloseable {
 
     public synchronized void set(long targetMs) {
         checkClosed();
-        Machine[] active = machines.toArray(new Machine[0]);
+        Machine[] active;
+        synchronized (machines) {
+            active = machines.stream()
+                .filter(m -> m != null && !m.isClosed())
+                .toArray(Machine[]::new);
+        }
         nativeSet(nativeHandle, active, targetMs);
     }
 
@@ -69,6 +74,10 @@ public final class SimulatedClock implements AutoCloseable {
     synchronized void registerMachine(Machine m) {
         checkClosed();
         machines.add(m);
+    }
+
+    synchronized void unregisterMachine(Machine m) {
+        machines.remove(m);
     }
 
     long getNativeHandle() {

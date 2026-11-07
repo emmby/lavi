@@ -850,6 +850,7 @@ impl MachineState {
     fn check_and_raise_error(&self) -> PyResult<()> {
         if self.aborted.get() {
             self.aborted.set(false);
+            self.pending_commands.borrow_mut().clear();
             if let Some(err) = self.last_error.borrow_mut().take() {
                 return Err(err);
             }
@@ -961,6 +962,7 @@ impl MachineState {
     fn drain_pending_commands(&self) -> PyResult<()> {
         loop {
             if self.aborted.get() {
+                self.pending_commands.borrow_mut().clear();
                 break;
             }
             let next_cmd = self.pending_commands.borrow_mut().pop_front();

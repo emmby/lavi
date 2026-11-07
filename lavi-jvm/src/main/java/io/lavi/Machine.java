@@ -24,7 +24,7 @@ public final class Machine implements AutoCloseable {
         }
     }
 
-    private final long nativeHandle;
+    private long nativeHandle;
     private final NativeState state;
     private final Cleaner.Cleanable cleanable;
     private final Map<String, ActionCallback> actions = new HashMap<>();
@@ -32,6 +32,10 @@ public final class Machine implements AutoCloseable {
     private ClockCallback clockCallback;
     private SimulatedClock simulatedClock;
     private boolean closed = false;
+
+    public synchronized boolean isClosed() {
+        return closed;
+    }
 
     public Machine(String jsonConfig) {
         this(jsonConfig, null);
@@ -77,8 +81,11 @@ public final class Machine implements AutoCloseable {
         if (cb == null) {
             throw new IllegalArgumentException("ClockCallback cannot be null");
         }
+        if (this.simulatedClock != null) {
+            this.simulatedClock.unregisterMachine(this);
+            this.simulatedClock = null;
+        }
         this.clockCallback = cb;
-        this.simulatedClock = null;
         nativeRegisterClockCallback(nativeHandle);
         return this;
     }
@@ -90,6 +97,9 @@ public final class Machine implements AutoCloseable {
         }
         if (this.simulatedClock == clock) {
             return this; // Deduplicate registration
+        }
+        if (this.simulatedClock != null) {
+            this.simulatedClock.unregisterMachine(this);
         }
         this.simulatedClock = clock;
         this.clockCallback = null;
@@ -114,10 +124,14 @@ public final class Machine implements AutoCloseable {
         if (closed) return;
         closed = true;
         cleanable.clean();
+        nativeHandle = 0L;
+        if (simulatedClock != null) {
+            simulatedClock.unregisterMachine(this);
+            simulatedClock = null;
+        }
         actions.clear();
         guards.clear();
         clockCallback = null;
-        simulatedClock = null;
     }
 
     public synchronized boolean matches(String statePath) {

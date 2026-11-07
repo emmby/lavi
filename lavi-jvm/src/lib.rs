@@ -25,6 +25,7 @@ pub struct MachinePeer {
     pub active_machine: Cell<*const lavi::RuntimeMachine>,
     pub callback_depth: Cell<usize>,
     pub aborted: Cell<bool>,
+    pub is_draining: Cell<bool>,
     pub pending_commands: RefCell<VecDeque<PendingCommand>>,
     pub guards: RefCell<IndexMap<String, lavi::GuardFunction>>,
     pub actions: RefCell<IndexMap<String, lavi::ActionFunction>>,
@@ -77,6 +78,14 @@ impl<'a> Drop for CallbackGuard<'a> {
         if current > 0 {
             self.depth.set(current - 1);
         }
+    }
+}
+
+struct DrainGuard<'a>(&'a Cell<bool>);
+
+impl<'a> Drop for DrainGuard<'a> {
+    fn drop(&mut self) {
+        self.0.set(false);
     }
 }
 
@@ -135,6 +144,11 @@ impl MachinePeer {
 
         if self.aborted.get() || env.exception_check()? {
             self.aborted.set(false);
+            self.pending_commands.borrow_mut().clear();
+            return Ok(());
+        }
+
+        if self.is_draining.get() {
             return Ok(());
         }
 
@@ -175,6 +189,11 @@ impl MachinePeer {
 
         if self.aborted.get() || env.exception_check()? {
             self.aborted.set(false);
+            self.pending_commands.borrow_mut().clear();
+            return Ok(());
+        }
+
+        if self.is_draining.get() {
             return Ok(());
         }
 
@@ -210,6 +229,11 @@ impl MachinePeer {
 
         if self.aborted.get() || env.exception_check()? {
             self.aborted.set(false);
+            self.pending_commands.borrow_mut().clear();
+            return Ok(());
+        }
+
+        if self.is_draining.get() {
             return Ok(());
         }
 
@@ -228,15 +252,18 @@ impl MachinePeer {
         env: &mut JNIEnv<'_>,
         obj: jobject,
     ) -> Result<(), jni::errors::Error> {
-        loop {
+        if self.is_draining.get() {
+            return Ok(());
+        }
+        self.is_draining.set(true);
+        let _guard = DrainGuard(&self.is_draining);
+
+        while let Some(cmd) = self.pending_commands.borrow_mut().pop_front() {
             if self.aborted.get() || env.exception_check()? {
                 self.aborted.set(false);
+                self.pending_commands.borrow_mut().clear();
                 break;
             }
-            let next_cmd = self.pending_commands.borrow_mut().pop_front();
-            let Some(cmd) = next_cmd else {
-                break;
-            };
 
             match cmd {
                 PendingCommand::Send {
@@ -338,7 +365,9 @@ pub extern "system" fn Java_io_lavi_SimulatedClock_nativeSet(
         };
         if handle_val != 0 {
             let m_peer = handle_val as *const MachinePeer;
-            machine_entries.push((elem.into_raw(), m_peer));
+            if !unsafe { (*m_peer).is_closed.get() } {
+                machine_entries.push((elem.into_raw(), m_peer));
+            }
         }
     }
 
@@ -467,6 +496,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeCreate(
         active_machine: Cell::new(std::ptr::null()),
         callback_depth: Cell::new(0),
         aborted: Cell::new(false),
+        is_draining: Cell::new(false),
         pending_commands: RefCell::new(VecDeque::new()),
         guards: RefCell::new(IndexMap::new()),
         actions: RefCell::new(IndexMap::new()),
@@ -514,7 +544,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterAction(
         let env = unsafe { &mut *env_ptr };
         let _guard = CallbackGuard::new(&peer.callback_depth);
 
-        let res = (|| -> Result<(), jni::errors::Error> {
+        let res = env.with_local_frame(16, |env| -> Result<(), jni::errors::Error> {
             let ctx_json = ctx.to_json_string();
             let evt_json = evt.to_json_string();
 
@@ -550,7 +580,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterAction(
             )?;
 
             Ok(())
-        })();
+        });
 
         if res.is_err() || env.exception_check().unwrap_or(false) {
             peer.aborted.set(true);
@@ -596,7 +626,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterGuard(
         let env = unsafe { &mut *env_ptr };
         let _guard = CallbackGuard::new(&peer.callback_depth);
 
-        let res = (|| -> Result<bool, jni::errors::Error> {
+        let res = env.with_local_frame(16, |env| -> Result<bool, jni::errors::Error> {
             let ctx_json = ctx.to_json_string();
             let evt_json = evt.to_json_string();
 
@@ -632,7 +662,7 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterGuard(
             )?;
 
             ret.z()
-        })();
+        });
 
         match res {
             Ok(b) => {
