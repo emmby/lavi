@@ -107,6 +107,49 @@ export const ANDROID_TARGETS = [
 ];
 
 /**
+ * Embedded microcontroller targets for unified Arduino IDE & PlatformIO release archive.
+ * Maps Arduino/PlatformIO {build.mcu} tokens to ESP Rust target triples.
+ */
+export const EMBEDDED_TARGETS = [
+  {
+    mcu: 'esp32',
+    triple: 'xtensa-esp32-espidf',
+    isRiscv: false,
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'esp32s2',
+    triple: 'xtensa-esp32s2-espidf',
+    isRiscv: false,
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'esp32s3',
+    triple: 'xtensa-esp32s3-espidf',
+    isRiscv: false,
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'esp32c3',
+    triple: 'riscv32imc-esp-espidf',
+    isRiscv: true,
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'esp32c6',
+    triple: 'riscv32imac-esp-espidf',
+    isRiscv: true,
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'esp32h2',
+    triple: 'riscv32imac-esp-espidf',
+    isRiscv: true,
+    libName: 'liblavi_c_cpp.a'
+  }
+];
+
+/**
  * Validates that all ELF LOAD program headers in readelf / llvm-readelf -l output
  * have an alignment of at least 0x4000 (16 KB).
  */
@@ -230,13 +273,53 @@ export function buildReleasePlan(options = {}) {
     ]
   };
 
+  const embeddedCommands = [];
+  for (const target of EMBEDDED_TARGETS) {
+    embeddedCommands.push({
+      mcu: target.mcu,
+      triple: target.triple,
+      isRiscv: target.isRiscv,
+      command: 'cargo',
+      args: [
+        'build',
+        '--manifest-path',
+        path.join(rootDir, 'lavi-c-cpp', 'Cargo.toml'),
+        '--release',
+        '-Z',
+        'build-std=std,panic_abort',
+        '--target',
+        target.triple
+      ],
+      srcBinary: path.join(rootDir, 'target', target.triple, 'release', target.libName),
+      zipEntryPath: `lavi/src/${target.mcu}/${target.libName}`
+    });
+  }
+
+  const embeddedPackage = {
+    zipPath: path.join(outDir, 'embedded', 'lavi-embedded.zip'),
+    stagingDir: path.join(outDir, 'embedded', 'staging'),
+    entries: [
+      'lavi/library.properties',
+      'lavi/library.json',
+      'lavi/build_rust.py',
+      'lavi/LICENSE',
+      'lavi/README.md',
+      'lavi/src/lavi.h',
+      'lavi/src/lavi.hpp',
+      ...EMBEDDED_TARGETS.map((t) => `lavi/src/${t.mcu}/${t.libName}`),
+      'lavi/examples/Stoplight/Stoplight.ino'
+    ]
+  };
+
   return {
     rootDir,
     outDir,
     dryRun,
     desktopCommands,
     androidCommands,
-    aarPackage
+    aarPackage,
+    embeddedCommands,
+    embeddedPackage
   };
 }
 
@@ -392,6 +475,73 @@ export function packageAndroidAar({ classesJarPath, jniLibsDir, outputAarPath, p
 }
 
 /**
+ * Packages a unified Arduino IDE & PlatformIO zip archive containing:
+ * - lavi/library.properties
+ * - lavi/library.json
+ * - lavi/build_rust.py
+ * - lavi/LICENSE
+ * - lavi/README.md
+ * - lavi/src/lavi.h & lavi/src/lavi.hpp
+ * - lavi/src/<mcu>/liblavi_c_cpp.a
+ * - lavi/examples/Stoplight/Stoplight.ino
+ */
+export function packageEmbeddedZip({ rootDir = ROOT_DIR, prebuiltLibsDir, outputZipPath }) {
+  const entries = [];
+  const cCppDir = path.join(rootDir, 'lavi-c-cpp');
+
+  const staticFiles = [
+    { zipPath: 'lavi/library.properties', srcPath: path.join(cCppDir, 'library.properties') },
+    { zipPath: 'lavi/library.json', srcPath: path.join(cCppDir, 'library.json') },
+    { zipPath: 'lavi/build_rust.py', srcPath: path.join(cCppDir, 'build_rust.py') },
+    { zipPath: 'lavi/LICENSE', srcPath: path.join(rootDir, 'LICENSE') },
+    { zipPath: 'lavi/README.md', srcPath: path.join(rootDir, 'README.md') },
+    { zipPath: 'lavi/src/lavi.h', srcPath: path.join(cCppDir, 'include', 'lavi.h') },
+    { zipPath: 'lavi/src/lavi.hpp', srcPath: path.join(cCppDir, 'include', 'lavi.hpp') },
+    {
+      zipPath: 'lavi/examples/Stoplight/Stoplight.ino',
+      srcPath: path.join(rootDir, 'examples', 'esp32', 'Stoplight', 'Stoplight.ino')
+    }
+  ];
+
+  for (const item of staticFiles) {
+    if (fs.existsSync(item.srcPath)) {
+      entries.push({ path: item.zipPath, data: fs.readFileSync(item.srcPath) });
+    }
+  }
+
+  if (prebuiltLibsDir && fs.existsSync(prebuiltLibsDir)) {
+    const stack = [prebuiltLibsDir];
+    while (stack.length > 0) {
+      const dir = stack.pop();
+      const files = fs.readdirSync(dir, { withFileTypes: true });
+      for (const file of files) {
+        const fullPath = path.join(dir, file.name);
+        if (file.isDirectory()) {
+          stack.push(fullPath);
+        } else if (file.name.endsWith('.a')) {
+          const rel = path.relative(prebuiltLibsDir, fullPath).replace(/\\/g, '/');
+          const entryPath = rel.startsWith('lavi/src/')
+            ? rel
+            : rel.startsWith('src/')
+              ? `lavi/${rel}`
+              : `lavi/src/${rel}`;
+          entries.push({ path: entryPath, data: fs.readFileSync(fullPath) });
+        }
+      }
+    }
+  }
+
+  const zipBuf = createZipArchive(entries);
+  fs.mkdirSync(path.dirname(outputZipPath), { recursive: true });
+  fs.writeFileSync(outputZipPath, zipBuf);
+
+  return {
+    zipPath: outputZipPath,
+    entries: entries.map((e) => e.path)
+  };
+}
+
+/**
  * Executes commands in the release plan via child_process.spawnSync when
  * --execute or dryRun: false is specified.
  */
@@ -468,6 +618,37 @@ export function executeReleasePlan(plan, options = {}) {
     packageName: 'io.lavi'
   });
 
+  // 4. Embedded MCU compilation & unified Arduino/PlatformIO zip packaging
+  const stagingEmbedded = path.join(plan.outDir, 'embedded', 'staging', 'src');
+  for (const cmd of plan.embeddedCommands || []) {
+    if (options.verbose) {
+      console.log(`Executing embedded MCU build (${cmd.mcu}): ${cmd.command} ${cmd.args.join(' ')}`);
+    }
+    const res = spawnSync(cmd.command, cmd.args, {
+      stdio: 'inherit',
+      cwd: plan.rootDir,
+      env: process.env
+    });
+    if (res.status !== 0) {
+      throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+    }
+    commandsRun++;
+
+    if (fs.existsSync(cmd.srcBinary)) {
+      const targetDir = path.join(stagingEmbedded, cmd.mcu);
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.copyFileSync(cmd.srcBinary, path.join(targetDir, 'liblavi_c_cpp.a'));
+    }
+  }
+
+  if (plan.embeddedPackage) {
+    packageEmbeddedZip({
+      rootDir: plan.rootDir,
+      prebuiltLibsDir: stagingEmbedded,
+      outputZipPath: plan.embeddedPackage.zipPath
+    });
+  }
+
   return {
     executed: true,
     commandsRun,
@@ -495,6 +676,11 @@ if (isMain) {
   }
   console.log(`\nAAR Output: ${plan.aarPackage.aarPath}`);
   console.log(`AAR Entries: ${plan.aarPackage.entries.join(', ')}`);
+  console.log(`\nEmbedded MCU Targets (${EMBEDDED_TARGETS.length}):`);
+  for (const t of EMBEDDED_TARGETS) {
+    console.log(`  - ${t.mcu} (${t.triple}) -> lavi/src/${t.mcu}/${t.libName}`);
+  }
+  console.log(`Embedded Archive Output: ${plan.embeddedPackage.zipPath}`);
 
   if (shouldExecute) {
     console.log('\n🚀 Executing release compilation plan...');

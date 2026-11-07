@@ -58,14 +58,12 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Split `lavi/src/lib.rs` into focused submodules: `types.rs` (`StateValue`, `StateType`, `Action`, `TransitionGuard`, `MachineDefinition`), `runtime.rs` (`RuntimeMachine`, microstep/macrostep engine, LCCA resolution), `snapshot.rs` (snapshot serialization/hydration), and `clock.rs` (`SimulatedClock`, `Clock`).
   - Split `lavi-wasm/src/lib.rs` into `state_node.rs` (`StateNode`, `createMachine`, `setup`), `actor.rs` (`Actor`, `createActor`, subscriptions, timer bridging), `actions.rs` (`assign`, `raise`, `log`, `cancel`, `enqueueActions`), and `value_bridge.rs` (`Value` $\leftrightarrow$ `JsValue` conversion).
 
-### `TD-15`: Workspace `[profile.release]` Flash/WASM Size Optimization & `library.json` Export Pruning
-- **Files**: [`Cargo.toml`](./Cargo.toml), [`library.json`](./library.json)
+### `TD-15`: Workspace `[profile.release]` Flash/WASM Size Optimization
+- **Files**: [`Cargo.toml`](./Cargo.toml), [`lavi-c-cpp/library.json`](./lavi-c-cpp/library.json)
 - **Problem**:
   1. The root workspace `Cargo.toml` does not configure `[profile.release]` for size (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`), leaving `.wasm` (~752 KB) and embedded staticlibs larger than necessary.
-  2. `library.json` `export.include` currently lists `"lavi-wasm/**"`, which is unnecessary in PlatformIO microcontroller archives.
 - **Required Fix**:
   - Add `[profile.release]` size optimizations (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`) in the workspace `Cargo.toml`.
-  - Remove `"lavi-wasm/**"` from `library.json` `export.include`.
 
 ### `TD-16`: Strict XState 5 `assign` vs. `action` Separation & Zero-Copy `const fsm_value_t*` Accessors in Rust/C/C++
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-c-cpp/src/lib.rs`](./lavi-c-cpp/src/lib.rs), [`lavi-c-cpp/include/lavi.h`](./lavi-c-cpp/include/lavi.h), [`lavi-c-cpp/include/lavi.hpp`](./lavi-c-cpp/include/lavi.hpp)

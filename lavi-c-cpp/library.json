@@ -1,7 +1,7 @@
 {
   "name": "lavi",
   "version": "0.1.1",
-  "description": "Lavi statechart runtime for C/C++ and PlatformIO (XState v5 compatible), powered by Rust.",
+  "description": "Lavi statechart runtime for C/C++, PlatformIO, and Arduino IDE (XState v5 compatible), powered by Rust.",
   "keywords": [
     "lavi",
     "xstate",
@@ -9,7 +9,8 @@
     "state-machine",
     "statechart",
     "rust",
-    "ffi"
+    "ffi",
+    "arduino"
   ],
   "repository": {
     "type": "git",
@@ -17,23 +18,21 @@
   },
   "build": {
     "extraScript": "build_rust.py",
-    "includeDir": "lavi-c-cpp/include",
+    "includeDir": "src",
     "srcFilter": [
       "-<*>"
     ]
   },
   "export": {
     "include": [
-      "Cargo.toml",
-      "Cargo.lock",
+      "library.json",
+      "library.properties",
       "build_rust.py",
-      "lavi/**",
-      "lavi-c-cpp/Cargo.toml",
-      "lavi-c-cpp/src/**",
-      "lavi-c-cpp/include/**",
-      "lavi-wasm/Cargo.toml",
-      "lavi-wasm/src/**",
-      "examples/esp32/**"
+      "LICENSE",
+      "README.md",
+      "include/**",
+      "src/**",
+      "examples/**"
     ]
   },
   "frameworks": [

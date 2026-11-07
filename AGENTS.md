@@ -2,7 +2,7 @@
 
 **Violating the letter of these rules is violating the spirit of these rules.**
 
-`lavi` reproduces XState 5 state machine behavior and API semantics across `#![no_std]` Rust (`lavi`), WebAssembly/JS (`lavi-wasm`), and C/C++ for embedded microcontrollers (`lavi-c-cpp` / PlatformIO).
+`lavi` reproduces XState 5 state machine behavior and API semantics across `#![no_std]` Rust (`lavi`), WebAssembly/JS (`lavi-wasm`), and C/C++ for embedded microcontrollers (`lavi-c-cpp` / PlatformIO / Arduino IDE).
 
 ---
 
@@ -80,11 +80,11 @@ Every statechart feature applies across **all three targets** (`lavi`, `lavi-was
 
 ---
 
-## 4. PlatformIO Integration Maintenance (`library.json` & `build_rust.py`)
+## 4. PlatformIO & Arduino IDE Integration Maintenance (`lavi-c-cpp/`)
 
-PlatformIO support lives directly in this repository (`library.json`, `build_rust.py`, `lavi-c-cpp/tests/test_build_rust.py`, and `examples/esp32`):
-- **Build Script & Manifest**: If crate names, directory paths, Cargo flags, or static library names in `lavi-c-cpp` change, update `library.json`, `build_rust.py`, and `lavi-c-cpp/tests/test_build_rust.py` in lockstep.
-- **Headers & Examples**: Keep `lavi-c-cpp/include/lavi.h`, `lavi.hpp`, and `examples/esp32` aligned with any C/C++ API changes.
+PlatformIO and Arduino IDE support lives in `lavi-c-cpp/` (`lavi-c-cpp/library.json`, `lavi-c-cpp/library.properties`, `lavi-c-cpp/build_rust.py`, `lavi-c-cpp/tests/test_build_rust.py`, `scripts/build-release-natives.mjs`, and `examples/esp32`):
+- **Build Script & Manifests**: If crate names, directory paths, Cargo flags, or static library names in `lavi-c-cpp` change, update `lavi-c-cpp/library.json`, `lavi-c-cpp/library.properties`, `lavi-c-cpp/build_rust.py`, `scripts/build-release-natives.mjs`, and `lavi-c-cpp/tests/test_build_rust.py` in lockstep.
+- **Headers & Examples**: Keep `lavi-c-cpp/include/lavi.h`, `lavi.hpp`, `examples/esp32/src/main.cpp`, and `examples/esp32/Stoplight/Stoplight.ino` aligned with any C/C++ API changes.
 - **Verification**: Always run `npm run test:c-cpp` (which executes C, C++, and `test_build_rust.py` unit tests) before claiming completion.
 
 ---
