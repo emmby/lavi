@@ -1,0 +1,16 @@
+[package]
+name = "lavi-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lavi_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+lavi = { workspace = true }
+indexmap = "2.2"
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
+
+[build-dependencies]
+pyo3-build-config = "0.22"

@@ -3,6 +3,7 @@ members = [
     "lavi",
     "lavi-wasm",
     "lavi-c-cpp",
+    "lavi-py",
 ]
 resolver = "2"
 

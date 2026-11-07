@@ -15,7 +15,9 @@
     "test:c-cpp:c": "mkdir -p lavi-c-cpp/tests/out && clang lavi-c-cpp/tests/c_test.c -o lavi-c-cpp/tests/out/c_test -I lavi-c-cpp/include -L target/debug -llavi_c_cpp && ./lavi-c-cpp/tests/out/c_test",
     "test:c-cpp:cpp": "mkdir -p lavi-c-cpp/tests/out && clang++ lavi-c-cpp/tests/cpp_test.cpp -o lavi-c-cpp/tests/out/cpp_test -I lavi-c-cpp/include -L target/debug -llavi_c_cpp -std=c++11 && ./lavi-c-cpp/tests/out/cpp_test",
     "test:c-cpp:pio": "python3 -m unittest lavi-c-cpp/tests/test_build_rust.py -v",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "build:py": "cargo build --package lavi-py && node scripts/stage-py-native.mjs",
+    "test:py": "npm run build:py && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests"
   },
   "dependencies": {
     "xstate": "^5.25.0"
