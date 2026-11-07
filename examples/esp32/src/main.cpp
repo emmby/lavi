@@ -34,10 +34,6 @@ const char* MACHINE_JSON = R"({
 
 std::unique_ptr<lavi::Machine> machine;
 
-uint64_t clock_millis() {
-  return static_cast<uint64_t>(millis());
-}
-
 void set_leds(bool red, bool yellow, bool green) {
   digitalWrite(PIN_RED, red ? HIGH : LOW);
   digitalWrite(PIN_YELLOW, yellow ? HIGH : LOW);
@@ -75,7 +71,7 @@ void setup() {
       return cycles >= 1.0;
     });
 
-    machine->registerClock(clock_millis);
+    machine->registerClock([]() -> uint64_t { return millis(); });
 
     machine->start();
     Serial.println("Machine Initialized.");
