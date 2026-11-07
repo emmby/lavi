@@ -39,13 +39,6 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: In C FFI, `fsm_get_snapshot_json` allocates the full serialized JSON `String` on the heap during the pass-1 size query (`buffer == NULL` or `buffer_len == 0`) and serializes/allocates it a second time on pass 2 when copying into the caller's buffer (such as in `lavi::Machine::getSnapshot()`).
 - **Required Fix**: Implement a streaming or counting length calculation (e.g. a zero-allocation byte-counting visitor over `RuntimeMachine` / `Value`) or write directly into the caller's buffer slice when `buffer != NULL` so pass-1 size queries perform zero heap string allocations.
 
-### `TD-12`: Publish `lavi-wasm` to npm with Node & Browser Bundler Exports [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
-- **Files**: [`lavi-wasm/Cargo.toml`](./lavi-wasm/Cargo.toml), [`package.json`](./package.json), [`README.md`](./README.md)
-- **Problem**:
-  1. `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
-  2. `npm run build:npm` currently builds only `--target nodejs` (which uses CommonJS `require('fs').readFileSync` to load `.wasm`), while `npm run build:web` builds `--target web` (which requires calling `await init()` in raw `<script type="module">` HTML pages). There is no `--target bundler` build or conditional `exports` map for browser bundlers (Vite, Webpack, Rollup, esbuild).
-- **Resolution**: Build `--target nodejs`, `--target bundler`, and `--target web` outputs with conditional `package.json` `"exports"` (`"node"`, `"bundler"`/`"import"`, and `"browser"`) and publish `lavi-wasm` to npm so both Node.js and browser bundler users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly without `await init()`.
-
 ### `TD-13`: Replace Recursive `#[derive(Clone, PartialEq)]` on `StateValue` with Iterative Heap Work-Stacks [flowos: 1695ba29-a50c-4f0f-8a21-05ecb6f02ed0]
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs) (lines 19–24)
 - **Problem**: While `StateValue::drop`, `StateValue::to_value`, `StateValue::collect_paths`, `StateValue::matches`, `Value::clone`, and `Value::eq` use iterative heap work-stacks (`Vec`), `StateValue` still derives `Clone` and `PartialEq` (`#[derive(Debug, Clone, PartialEq)]`). Comparing or cloning deeply nested `StateValue` trees (e.g., `finalized_state != self.current_state` in `transition_internal` or `self.current_state.clone()` when recording `history_value`) recurses on the CPU call stack proportional to state nesting depth $O(D)$.
@@ -104,6 +97,10 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 ---
 
 ## Resolved Cleanup Items
+
+### `TD-12`: Publish `lavi-wasm` (`lavi-fsm`) to npm with Node & Browser Bundler Exports [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
+- **Files Modified**: [`scripts/build-npm-package.mjs`](./scripts/build-npm-package.mjs), [`.github/workflows/release.yml`](./.github/workflows/release.yml), [`lavi-wasm/README.md`](./lavi-wasm/README.md), [`README.md`](./README.md), [`RELEASING.md`](./RELEASING.md)
+- **Resolution**: Implemented `scripts/build-npm-package.mjs` to assemble a unified `lavi-fsm` npm package directory (`dist/npm`) containing `--target nodejs`, `--target bundler`, and `--target web` WASM builds with conditional `package.json` `"exports"` (`"node"`, `"browser"`, `"import"`, `"default"`, and `"./web"`), wired into the tag-triggered `.github/workflows/release.yml` pipeline alongside crates.io (`lavi`), PyPI (`lavi`), and Maven Central (`io.github.emmby:lavi`).
 
 ### `TD-1`: Restore Unmodified Upstream `tests/after.test.ts` and Fake-Timer / `SimulatedClock` Bridging (Resolved in Milestone 3)
 - **Files Modified**: [`tests/after.test.ts`](./tests/after.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs), [`tests/integration/timer_execution.test.ts`](./tests/integration/timer_execution.test.ts)

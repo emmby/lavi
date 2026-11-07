@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 // In a standalone project using the published package:
-// import { createMachine, createActor, SimulatedClock } from 'lavi-wasm';
+// import { createMachine, createActor, SimulatedClock } from 'lavi-fsm';
 import { createMachine, createActor, SimulatedClock } from '../../lavi-wasm/pkg-npm/lavi.js';
 
 let transitions = 0;

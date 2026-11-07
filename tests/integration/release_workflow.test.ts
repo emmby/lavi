@@ -1,0 +1,37 @@
+import { describe, it, expect } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+describe('GitHub Actions release pipeline & documentation', () => {
+  const rootDir = path.resolve(__dirname, '../..');
+
+  it('defines .github/workflows/release.yml triggered on v* tags and workflow_dispatch with all 4 registries', () => {
+    const wfPath = path.join(rootDir, '.github', 'workflows', 'release.yml');
+    expect(fs.existsSync(wfPath)).toBe(true);
+    const wf = fs.readFileSync(wfPath, 'utf8');
+
+    expect(wf).toContain("- 'v*'");
+    expect(wf).toContain('workflow_dispatch:');
+    expect(wf).toContain('node scripts/sync-version.mjs --check');
+    expect(wf).toContain('node scripts/build-npm-package.mjs');
+    expect(wf).toContain('node scripts/build-release-natives.mjs --execute');
+    expect(wf).toContain('zipMavenCentralBundle');
+    expect(wf).toContain('cargo publish -p lavi');
+    expect(wf).toContain('npm publish --provenance --access public');
+    expect(wf).toContain('pypa/gh-action-pypi-publish@release/v1');
+    expect(wf).toContain('https://central.sonatype.com/api/v1/publisher/upload');
+  });
+
+  it('provides RELEASING.md and scripts/setup-maven-gpg.sh for registry onboarding', () => {
+    const releasingPath = path.join(rootDir, 'RELEASING.md');
+    const gpgScriptPath = path.join(rootDir, 'scripts', 'setup-maven-gpg.sh');
+    expect(fs.existsSync(releasingPath)).toBe(true);
+    expect(fs.existsSync(gpgScriptPath)).toBe(true);
+
+    const releasing = fs.readFileSync(releasingPath, 'utf8');
+    expect(releasing).toContain('crates.io');
+    expect(releasing).toContain('PyPI');
+    expect(releasing).toContain('lavi-fsm');
+    expect(releasing).toContain('io.github.emmby');
+  });
+});

@@ -409,7 +409,7 @@ git commit -m "feat(jvm): configure io.github.emmby:lavi Maven Central publishin
 
 ## Phase 3: GitHub Actions Release Pipeline & Setup Documentation [flowos: ea245602-1e2e-4e85-84df-5feaf06c3122]
 
-### Task 5: GitHub Actions Release Workflow (`.github/workflows/release.yml`), GPG Script & `RELEASING.md` [~] [flowos: f0cb5744-260f-4ea2-bba2-389854aacc5f]
+### Task 5: GitHub Actions Release Workflow (`.github/workflows/release.yml`), GPG Script & `RELEASING.md` [x] [flowos: f0cb5744-260f-4ea2-bba2-389854aacc5f]
 
 **Files:**
 - Create: `.github/workflows/release.yml`
@@ -427,7 +427,7 @@ git commit -m "feat(jvm): configure io.github.emmby:lavi Maven Central publishin
   - `scripts/setup-maven-gpg.sh` executable helper script
   - `RELEASING.md` registry setup and release runbook
 
-- [ ] **Step 1: Write the failing test in `tests/integration/release_workflow.test.ts`**
+- [x] **Step 1: Write the failing test in `tests/integration/release_workflow.test.ts`**
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -469,21 +469,21 @@ describe('GitHub Actions release pipeline & documentation', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/integration/release_workflow.test.ts`
 Expected: FAIL (`.github/workflows/release.yml` does not exist)
 
-- [ ] **Step 3: Create `.github/workflows/release.yml`, `scripts/setup-maven-gpg.sh`, `RELEASING.md`, and update `README.md` & `TECH_DEBT.md`**
+- [x] **Step 3: Create `.github/workflows/release.yml`, `scripts/setup-maven-gpg.sh`, `RELEASING.md`, and update `README.md` & `TECH_DEBT.md`**
 
 Create `.github/workflows/release.yml` implementing the 4 jobs (`verify`, `build-wasm-npm`, `build-natives-py-jvm`, `publish`), create `scripts/setup-maven-gpg.sh` (`chmod +x`), create `RELEASING.md` with step-by-step setup instructions for crates.io, PyPI OIDC Trusted Publisher, npm (`lavi-fsm`), and Sonatype Central Portal (`io.github.emmby:lavi`), update `README.md` and `examples/js-wasm/index.mjs` comments to reference `lavi-fsm` and `io.github.emmby:lavi`, and move `TD-12` to Resolved Cleanup Items in `TECH_DEBT.md`.
 
-- [ ] **Step 4: Run test to verify it passes and run the full repository test suite**
+- [x] **Step 4: Run test to verify it passes and run the full repository test suite**
 
 Run: `npx vitest run tests/integration/release_workflow.test.ts && npm test`
 Expected: PASS across all test suites (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, `test:py`, `test:jvm`, `test:examples`, `test:unit`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github/workflows/release.yml scripts/setup-maven-gpg.sh RELEASING.md README.md examples/js-wasm/index.mjs TECH_DEBT.md tests/integration/release_workflow.test.ts
