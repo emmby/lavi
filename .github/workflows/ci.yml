@@ -31,6 +31,19 @@ jobs:
         node-version: 20
         cache: 'npm'
 
+    - name: Install Python & pytest
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - run: python3 -m pip install pytest
+
+    - name: Install Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+        cache: 'gradle'
+
     - name: Install Dependencies
       run: npm ci
 

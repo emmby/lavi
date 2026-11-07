@@ -44,14 +44,19 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
 - **Resolution**: Publish `lavi-wasm` (or `lavi`) to npm so JavaScript/TypeScript users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly.
 
-### `TD-13`: Split Monolithic `lavi/src/lib.rs` and `lavi-wasm/src/lib.rs` into Focused Submodules
+### `TD-13`: Replace Recursive `#[derive(Clone, PartialEq)]` on `StateValue` with Iterative Heap Work-Stacks [flowos: 1695ba29-a50c-4f0f-8a21-05ecb6f02ed0]
+- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs) (lines 19–24)
+- **Problem**: While `StateValue::drop`, `StateValue::to_value`, `StateValue::collect_paths`, `StateValue::matches`, `Value::clone`, and `Value::eq` use iterative heap work-stacks (`Vec`), `StateValue` still derives `Clone` and `PartialEq` (`#[derive(Debug, Clone, PartialEq)]`). Comparing or cloning deeply nested `StateValue` trees (e.g., `finalized_state != self.current_state` in `transition_internal` or `self.current_state.clone()` when recording `history_value`) recurses on the CPU call stack proportional to state nesting depth $O(D)$.
+- **Required Fix**: Implement manual iterative `Clone` and `PartialEq` for `StateValue` using explicit heap `Vec` work-stacks (matching `impl Clone for Value` and `impl PartialEq for Value`), and audit remaining state-value helpers (`resolve_state_value_from_path`, `merge_state_value`) to ensure 100% bounded $O(1)$ call-stack usage.
+
+### `TD-14`: Split Monolithic `lavi/src/lib.rs` and `lavi-wasm/src/lib.rs` into Focused Submodules
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
 - **Problem**: `lavi/src/lib.rs` (~5,020 lines) and `lavi-wasm/src/lib.rs` (~5,080 lines) have grown into single-file monoliths, increasing compile times and cognitive load.
 - **Required Fix**:
   - Split `lavi/src/lib.rs` into focused submodules: `types.rs` (`StateValue`, `StateType`, `Action`, `TransitionGuard`, `MachineDefinition`), `runtime.rs` (`RuntimeMachine`, microstep/macrostep engine, LCCA resolution), `snapshot.rs` (snapshot serialization/hydration), and `clock.rs` (`SimulatedClock`, `Clock`).
   - Split `lavi-wasm/src/lib.rs` into `state_node.rs` (`StateNode`, `createMachine`, `setup`), `actor.rs` (`Actor`, `createActor`, subscriptions, timer bridging), `actions.rs` (`assign`, `raise`, `log`, `cancel`, `enqueueActions`), and `value_bridge.rs` (`Value` $\leftrightarrow$ `JsValue` conversion).
 
-### `TD-14`: Workspace `[profile.release]` Flash/WASM Size Optimization & `library.json` Export Pruning
+### `TD-15`: Workspace `[profile.release]` Flash/WASM Size Optimization & `library.json` Export Pruning
 - **Files**: [`Cargo.toml`](./Cargo.toml), [`library.json`](./library.json)
 - **Problem**:
   1. The root workspace `Cargo.toml` does not configure `[profile.release]` for size (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`), leaving `.wasm` (~752 KB) and embedded staticlibs larger than necessary.
@@ -60,7 +65,7 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Add `[profile.release]` size optimizations (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`) in the workspace `Cargo.toml`.
   - Remove `"lavi-wasm/**"` from `library.json` `export.include`.
 
-### `TD-15`: Strict XState 5 `assign` vs. `action` Separation & Zero-Copy `const fsm_value_t*` Accessors in Rust/C/C++
+### `TD-16`: Strict XState 5 `assign` vs. `action` Separation & Zero-Copy `const fsm_value_t*` Accessors in Rust/C/C++
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-c-cpp/src/lib.rs`](./lavi-c-cpp/src/lib.rs), [`lavi-c-cpp/include/lavi.h`](./lavi-c-cpp/include/lavi.h), [`lavi-c-cpp/include/lavi.hpp`](./lavi-c-cpp/include/lavi.hpp)
 - **Problem**:
   1. In XState 5, context updates happen exclusively inside pure `assign(...)` actions (which execute during pure `transition()`), while `entry` / `exit` / `actions` callbacks are read-only side-effect handlers (which are collected, not executed, during pure `transition()`). Currently, Rust `ActionFunction` takes `&mut Value` for `context`, while C `fsm_action_callback_t` takes read-only `const fsm_value_t* context` and has no `fsm_register_assign` or `fsm_value_set_*` mutators for dynamic context updates.
@@ -73,7 +78,7 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
     - Expose `const fsm_value_t* fsm_get_context(const MachineContext* ctx)`, `const fsm_value_t* fsm_get_output(const MachineContext* ctx)`, and `const fsm_value_t* fsm_get_state_meta(const MachineContext* ctx, const char* state_path)` in C (`lavi.h`) and `lavi::Value` wrappers (`getContext()`, `getOutputValue()`, `getStateMetaValue()`) in C++ (`lavi.hpp`).
     - Update `RuntimeMachine::get_output(&self)` to return `Option<Cow<'_, Value>>` (or cache dynamic output on `self.machine_output` when entering the final state) so static/cached outputs can be borrowed with zero heap allocation. Retain `fsm_get_meta_json` for aggregated multi-state metadata serialization.
 
-### `TD-16`: Wire Dynamic Action `params` Resolver in `Actor`, `setup()` `enqueueActions`, and Single-Pass `create_machine`
+### `TD-17`: Wire Dynamic Action `params` Resolver in `Actor`, `setup()` `enqueueActions`, and Single-Pass `create_machine`
 - **Files**: [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
 - **Problem**:
   1. Dynamic action `params: ({ context, event }) => ...` functions bridged as `__params_fn_id` in `extract_action_value` are evaluated inside `StateNode::resolve_pure_actions`, but are not yet evaluated before invoking the action in the live `Actor` execution path (`parse_implementations`).
@@ -85,7 +90,7 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Support `xstate.enqueueActions` (and other built-in action descriptors) inside `setup({ actions: ... })`, and extract a single helper for constructing the `enqueue` object in `resolve_pure_actions`.
   - Consolidate `process_config` and `extract_and_replace_inline_actions` into a single iterative pass and replace `_get_internal_state() -> f64` with safe `StateNode` borrowing.
 
-### `TD-17`: Iterative Work-Stack for Nested `parse_guard` / `parse_action` & Richer TypeScript Generics in `lavi-wasm`
+### `TD-18`: Iterative Work-Stack for Nested `parse_guard` / `parse_action` & Richer TypeScript Generics in `lavi-wasm`
 - **Files**: [`lavi/src/parser.rs`](./lavi/src/parser.rs), [`lavi-wasm/pkg-npm/lavi.d.ts`](./lavi-wasm/pkg-npm/lavi.d.ts)
 - **Problem**:
   1. While `parse_states_iterative`, `Value`, and `StateValue` use explicit heap `Vec` work-stacks, `parse_guard` (for nested `and`/`or`/`not` combinators) and `parse_action` (for action arrays) in `lavi/src/parser.rs` still use recursion.

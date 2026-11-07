@@ -1,0 +1,13 @@
+[package]
+name = "lavi-jvm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lavi_jvm"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+lavi = { workspace = true }
+indexmap = { version = "2.2", default-features = false }

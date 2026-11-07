@@ -3,6 +3,8 @@ members = [
     "lavi",
     "lavi-wasm",
     "lavi-c-cpp",
+    "lavi-py",
+    "lavi-jvm",
 ]
 resolver = "2"
 
@@ -10,5 +12,9 @@ resolver = "2"
 wasm-bindgen = "0.2"
 lavi = { path = "./lavi" }
 
+[profile.dev]
+opt-level = 1
 
+[profile.test]
+opt-level = 1
 

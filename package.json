@@ -2,10 +2,10 @@
   "name": "lavi",
   "license": "MIT",
   "scripts": {
-    "build": "npm run build:npm && npm run build:web && npm run build:c-cpp",
+    "build": "npm run build:npm && npm run build:web && npm run build:c-cpp && npm run build:py && npm run build:jvm",
     "build:web": "cd lavi-wasm && wasm-pack build --target web --out-name lavi",
     "build:npm": "cd lavi-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name lavi",
-    "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:unit",
+    "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:py && npm run test:jvm && npm run test:unit",
     "test:conformance-check": "node scripts/check-conformance-tests.mjs",
     "test:native": "cargo test",
     "test:wasm": "cd lavi-wasm && CHROMEDRIVER_ARGS=--disable-build-check wasm-pack test --headless --chrome",
@@ -15,7 +15,11 @@
     "test:c-cpp:c": "mkdir -p lavi-c-cpp/tests/out && clang lavi-c-cpp/tests/c_test.c -o lavi-c-cpp/tests/out/c_test -I lavi-c-cpp/include -L target/debug -llavi_c_cpp && ./lavi-c-cpp/tests/out/c_test",
     "test:c-cpp:cpp": "mkdir -p lavi-c-cpp/tests/out && clang++ lavi-c-cpp/tests/cpp_test.cpp -o lavi-c-cpp/tests/out/cpp_test -I lavi-c-cpp/include -L target/debug -llavi_c_cpp -std=c++11 && ./lavi-c-cpp/tests/out/cpp_test",
     "test:c-cpp:pio": "python3 -m unittest lavi-c-cpp/tests/test_build_rust.py -v",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "build:py": "cargo build --package lavi-py && node scripts/stage-py-native.mjs",
+    "test:py": "npm run build:py && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests",
+    "build:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm assemble || gradle -p lavi-jvm assemble)",
+    "test:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm test || gradle -p lavi-jvm test)"
   },
   "dependencies": {
     "xstate": "^5.25.0"

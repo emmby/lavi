@@ -5,6 +5,7 @@
 #include <string>
 #include <stdexcept>
 #include <functional>
+#include <type_traits>
 #include <map>
 #include <vector>
 
@@ -799,6 +800,23 @@ public:
         if (machine) {
             fsm_register_clock_with_data(machine, c_clock_thunk, this);
         }
+    }
+
+    /**
+     * @brief Disambiguate captureless lambdas convertible to both fsm_clock_callback_t
+     *        and ClockCallback, routing them to the zero-allocation C function pointer overload.
+     */
+    template <
+        typename F,
+        typename Decayed = typename std::decay<F>::type,
+        typename std::enable_if<
+            !std::is_same<Decayed, fsm_clock_callback_t>::value &&
+            !std::is_same<Decayed, std::nullptr_t>::value &&
+            !std::is_integral<Decayed>::value &&
+            std::is_convertible<Decayed, fsm_clock_callback_t>::value,
+            int>::type = 0>
+    void registerClock(F&& callback) {
+        registerClock(static_cast<fsm_clock_callback_t>(callback));
     }
 
     /**

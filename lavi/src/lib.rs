@@ -4708,7 +4708,14 @@ impl RuntimeMachine {
               self.completed_states.retain(|s| s != path && !s.starts_with(&format!("{}.", path)));
         }
 
-        if selected_transitions.iter().any(|st| st.reenters_root) {
+        let reenters_root = selected_transitions.iter().any(|st| st.reenters_root);
+        let has_targets = selected_transitions.iter().any(|st| {
+            st.t.reenter || st.t.target.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        });
+        let entered_paths = Self::calculate_entered_paths(&active_leaves, &next_leaves, &selected_transitions);
+        drop(selected_transitions);
+
+        if reenters_root {
             for action in &self.definition.exit {
                 exec_action!(action);
             }
@@ -4718,11 +4725,14 @@ impl RuntimeMachine {
         }
         
         self.active_timers.retain(|(p, _, _)| !exited_paths.contains(p));
+        let changed = has_targets || (finalized_state != self.current_state);
+        self.current_state = finalized_state;
+        self.last_received_event = event_payload.clone();
         
         for action in &all_transition_actions { exec_action!(action); }
         for action in &all_collected_actions { exec_action!(action); }
 
-        if selected_transitions.iter().any(|st| st.reenters_root) {
+        if reenters_root {
             for (delay, t_defs) in &self.definition.after {
                 let delay_ms = self.resolve_delay(delay, event_payload);
                 self.active_timers.push(("".to_string(), now + delay_ms, t_defs.clone()));
@@ -4750,7 +4760,6 @@ impl RuntimeMachine {
             }
         }
 
-        let entered_paths = Self::calculate_entered_paths(&active_leaves, &next_leaves, &selected_transitions);
         for path in &entered_paths {
             if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
                 for action in &def.entry { exec_action!(action); }
@@ -4810,13 +4819,6 @@ impl RuntimeMachine {
                 }
             }
         }
-        let has_targets = selected_transitions.iter().any(|st| {
-            st.t.reenter || st.t.target.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-        });
-        drop(selected_transitions);
-        let changed = has_targets || (finalized_state != self.current_state);
-        self.current_state = finalized_state;
-        self.last_received_event = event_payload.clone();
         self.refresh_status();
         self.handle_machine_completion(event_payload, actions, guards, action_collector);
         Some(changed)
