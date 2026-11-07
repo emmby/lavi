@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 lavi = { workspace = true }
 indexmap = "2.2"
-pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
 
 [build-dependencies]
 pyo3-build-config = "0.22"

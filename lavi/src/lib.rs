@@ -2313,6 +2313,9 @@ impl RuntimeMachine {
         
         self.active_timers.retain(|(p, _, _)| !exited_paths.contains(p));
         
+        let _changed = finalized_state != self.current_state;
+        self.current_state = finalized_state.clone();
+
         for action in &all_transition_actions { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
         for action in &all_collected_actions { Self::execute_action(&mut self.context, action, event_payload, actions, &mut self.internal_queue); }
 
@@ -2360,8 +2363,6 @@ impl RuntimeMachine {
               }
           }
          }
-        let _changed = finalized_state != self.current_state;
-        self.current_state = finalized_state;
 
         let has_transition_or_actions = !selected_transitions.is_empty();
         self.refresh_status();

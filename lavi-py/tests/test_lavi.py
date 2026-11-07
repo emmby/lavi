@@ -1,3 +1,5 @@
+import gc
+import weakref
 import pytest
 from lavi import Machine, SimulatedClock, Value
 
@@ -71,3 +73,129 @@ def test_stop_and_closed_machine_behavior():
     m.close()
     with pytest.raises(RuntimeError):
         m.send("TIMER")
+
+CALLBACK_MACHINE_JSON = """{
+  "id": "cbMachine",
+  "initial": "idle",
+  "context": {
+    "count": 2,
+    "ratio": 1.5,
+    "name": "sensor",
+    "ready": true,
+    "nothing": null,
+    "items": [10, 20],
+    "meta": { "tag": "v1" }
+  },
+  "states": {
+    "idle": {
+      "on": {
+        "CHECK": [
+          { "target": "active", "guard": "canActivate", "actions": ["onActivate", "secondAction"] },
+          { "target": "fallback" }
+        ]
+      }
+    },
+    "active": {
+      "after": {
+        "100": { "target": "step2", "actions": ["onTick100"] }
+      },
+      "on": { " Chain": "done" }
+    },
+    "step2": {
+      "after": {
+        "100": { "target": "done", "actions": ["onTick200"] }
+      }
+    },
+    "fallback": {},
+    "done": { "type": "final" }
+  }
+}"""
+
+def test_callbacks_value_ergonomics_and_retained_value_safety():
+    retained = {}
+    with Machine(CALLBACK_MACHINE_JSON) as m:
+        @m.guard("canActivate")
+        def check(ctx, evt):
+            assert ctx["count"] == 2
+            assert ctx["count"].as_int() == 2
+            assert ctx["count"].is_number()
+            assert ctx["ratio"].as_float() == 1.5
+            assert ctx["ratio"].is_number()
+            assert ctx["name"].as_str() == "sensor"
+            assert ctx["name"].is_str()
+            assert bool(ctx["ready"]) is True
+            assert ctx["ready"].is_bool()
+            assert bool(ctx["nothing"]) is False
+            assert ctx["nothing"].is_null()
+            assert ctx["missing"]["deep"].is_null()
+            assert bool(ctx["missing"]) is False
+            assert ctx["items"].is_array()
+            assert ctx["items"][1].as_int() == 20
+            assert ctx["items"][99].is_null()
+            assert len(ctx["items"]) == 2
+            assert ctx["items"][-1].as_int() == 20
+            assert ctx["items"][-2].as_int() == 10
+            assert ctx["items"][-99].is_null()
+            assert bool(ctx["items"][-99]) is False
+            assert "meta" in ctx
+            assert ctx["meta"].is_object()
+            assert ctx["meta"]["tag"] == "v1"
+            assert ctx.get("meta")["tag"] == "v1"
+            assert ctx.get("nonexistent", "fallback") == "fallback"
+            assert evt["type"] == "CHECK"
+            assert evt["attempt"].as_int() == 3
+            retained["ctx"] = ctx
+            retained["evt"] = evt
+            return True
+
+        m.register_action("onActivate", lambda ctx, evt: retained.setdefault("activated", ctx.to_python()))
+        m.start()
+        m.send("CHECK", payload={"attempt": 3})
+        assert m.matches("active")
+
+    # Retained Value objects remain safe after Machine is closed
+    assert retained["ctx"]["name"].as_str() == "sensor"
+    assert retained["evt"]["attempt"].as_int() == 3
+    assert retained["activated"]["items"] == [10, 20]
+
+def test_reentrant_send_matches_and_stop_inside_action_callback():
+    with Machine(CALLBACK_MACHINE_JSON) as m:
+        m.register_guard("canActivate", lambda ctx, evt: True)
+        def reentrant_action(ctx, evt):
+            assert m.matches("active")
+            m.send({"type": " Chain"})
+        m.register_action("onActivate", reentrant_action)
+        m.start()
+        m.send("CHECK")
+        assert m.matches("done")
+        assert m.is_done()
+
+def test_callback_exception_short_circuits_step_and_simulated_clock():
+    clock = SimulatedClock(0)
+    second_called = False
+    tick200_called = False
+    with Machine(CALLBACK_MACHINE_JSON, clock=clock) as m:
+        m.register_guard("canActivate", lambda ctx, evt: True)
+        def fail_on_tick100(ctx, evt):
+            raise RuntimeError("boom at 100ms")
+        def on_tick200(ctx, evt):
+            nonlocal tick200_called
+            tick200_called = True
+        m.register_action("onTick100", fail_on_tick100)
+        m.register_action("onTick200", on_tick200)
+        m.start()
+        m.send("CHECK")
+        with pytest.raises(RuntimeError, match="boom at 100ms"):
+            clock.set(500)
+        assert clock.now() == 100
+        assert not tick200_called
+
+def test_gc_collects_reference_cycle_between_machine_and_callback():
+    def make_cycle():
+        m = Machine(CALLBACK_MACHINE_JSON)
+        m.register_action("onActivate", lambda ctx, evt: m.send(" Chain"))
+        return weakref.ref(m)
+    ref = make_cycle()
+    gc.collect()
+    assert ref() is None
+

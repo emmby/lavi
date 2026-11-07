@@ -1,11 +1,14 @@
 #![allow(clippy::useless_conversion)]
 #![allow(clippy::arc_with_non_send_sync)]
 
+extern crate alloc;
+
 use indexmap::IndexMap;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 
@@ -526,13 +529,18 @@ impl Value {
     fn __getitem__(&self, key: &Bound<'_, PyAny>) -> Value {
         if let Ok(idx) = key.extract::<isize>() {
             if let lavi::Value::Array(arr) = &*self.0 {
-                let actual_idx = if idx < 0 {
-                    (arr.len() as isize + idx) as usize
+                let resolved_idx = if idx < 0 {
+                    (arr.len() as isize)
+                        .checked_add(idx)
+                        .filter(|&p| p >= 0)
+                        .map(|p| p as usize)
                 } else {
-                    idx as usize
+                    Some(idx as usize)
                 };
-                if actual_idx < arr.len() {
-                    return Value(Arc::new(arr[actual_idx].clone()));
+                if let Some(actual_idx) = resolved_idx {
+                    if actual_idx < arr.len() {
+                        return Value(Arc::new(arr[actual_idx].clone()));
+                    }
                 }
             }
             return Value(Arc::new(lavi::Value::Null));
@@ -637,7 +645,7 @@ impl Value {
 pub struct SimulatedClockInner {
     pub clock: lavi::SimulatedClock,
     pub closed: bool,
-    pub machines: Vec<Weak<RefCell<Option<MachineInner>>>>,
+    pub machines: Vec<Weak<MachineState>>,
 }
 
 #[pyclass(unsendable)]
@@ -680,24 +688,15 @@ impl SimulatedClock {
                     return Err(PyRuntimeError::new_err("SimulatedClock is closed"));
                 }
                 guard.machines.retain(|weak| weak.upgrade().is_some());
-                let current: Vec<Rc<RefCell<Option<MachineInner>>>> =
+                let current: Vec<Rc<MachineState>> =
                     guard.machines.iter().filter_map(|w| w.upgrade()).collect();
                 (guard.clock.clone(), current)
             };
 
             let mut min_deadline: Option<u64> = None;
-            for m_rc in &machines_to_step {
-                let inner_borrow = m_rc.borrow();
-                if let Some(inner) = inner_borrow.as_ref() {
-                    if inner.machine.is_started
-                        && inner.machine.status != lavi::MachineStatus::Stopped
-                        && !inner.machine.is_done()
-                        && inner.machine.status != lavi::MachineStatus::Done
-                    {
-                        if let Some(d) = inner.machine.next_timer_deadline() {
-                            min_deadline = Some(min_deadline.map_or(d, |curr| curr.min(d)));
-                        }
-                    }
+            for m_state in &machines_to_step {
+                if let Ok(Some(d)) = m_state.get_next_deadline() {
+                    min_deadline = Some(min_deadline.map_or(d, |curr| curr.min(d)));
                 }
             }
 
@@ -727,17 +726,8 @@ impl SimulatedClock {
 
             clock.set_now_raw(next_deadline);
 
-            for m_rc in &machines_to_step {
-                let mut inner_borrow = m_rc.borrow_mut();
-                if let Some(inner) = inner_borrow.as_mut() {
-                    if inner.machine.is_started
-                        && inner.machine.status != lavi::MachineStatus::Stopped
-                        && !inner.machine.is_done()
-                        && inner.machine.status != lavi::MachineStatus::Done
-                    {
-                        let _ = inner.machine.tick(&inner.guards, &inner.actions);
-                    }
-                }
+            for m_state in &machines_to_step {
+                m_state.step_tick()?;
             }
         }
 
@@ -775,22 +765,217 @@ impl SimulatedClock {
     ) -> PyResult<()> {
         self.close()
     }
+
+    fn __traverse__(&self, _visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        let mut guard = self.inner.lock().unwrap();
+        guard.machines.clear();
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Machine pyclass
+// Machine pyclass and MachineState
 // ---------------------------------------------------------------------------
 
-pub struct MachineInner {
-    pub machine: lavi::RuntimeMachine,
-    pub guards: IndexMap<String, lavi::GuardFunction>,
-    pub actions: IndexMap<String, lavi::ActionFunction>,
-    pub clock: Option<SimulatedClock>,
+pub enum PendingCommand {
+    Send {
+        event_name: String,
+        payload_val: lavi::Value,
+    },
+    Stop,
 }
 
-#[pyclass(unsendable)]
+pub struct MachineState {
+    pub machine: RefCell<Option<lavi::RuntimeMachine>>,
+    pub active_machine: Cell<*const lavi::RuntimeMachine>,
+    pub in_callback: Cell<bool>,
+    pub aborted: Cell<bool>,
+    pub pending_commands: RefCell<VecDeque<PendingCommand>>,
+    pub python_actions: RefCell<IndexMap<String, Py<PyAny>>>,
+    pub python_guards: RefCell<IndexMap<String, Py<PyAny>>>,
+    pub python_clock: RefCell<Option<Py<PyAny>>>,
+    pub guards: RefCell<IndexMap<String, lavi::GuardFunction>>,
+    pub actions: RefCell<IndexMap<String, lavi::ActionFunction>>,
+    pub clock: RefCell<Option<SimulatedClock>>,
+    pub last_error: RefCell<Option<PyErr>>,
+    pub is_closed: Cell<bool>,
+}
+
+impl MachineState {
+    fn with_machine<R>(&self, f: impl FnOnce(&lavi::RuntimeMachine) -> R) -> PyResult<R> {
+        if self.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        if self.in_callback.get() {
+            let ptr = self.active_machine.get();
+            if !ptr.is_null() {
+                let m = unsafe { &*ptr };
+                return Ok(f(m));
+            }
+        }
+        let guard = self.machine.borrow();
+        match guard.as_ref() {
+            Some(m) => Ok(f(m)),
+            None => Err(PyRuntimeError::new_err("Machine is closed")),
+        }
+    }
+
+    fn check_and_raise_error(&self) -> PyResult<()> {
+        if self.aborted.get() {
+            if let Some(err) = self.last_error.borrow_mut().take() {
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
+    fn step_transition(&self, event_name: &str, payload_val: &lavi::Value) -> PyResult<()> {
+        if self.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        if self.aborted.get() {
+            return self.check_and_raise_error();
+        }
+
+        let guards = self.guards.borrow().clone();
+        let actions = self.actions.borrow().clone();
+
+        {
+            let mut guard = self.machine.borrow_mut();
+            let machine_ref = guard
+                .as_mut()
+                .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
+            if !machine_ref.is_started || machine_ref.status == lavi::MachineStatus::Stopped {
+                return Ok(());
+            }
+            self.active_machine
+                .set(machine_ref as *const lavi::RuntimeMachine);
+            machine_ref.transition(event_name, payload_val, &guards, &actions);
+            self.active_machine.set(std::ptr::null());
+        }
+
+        self.check_and_raise_error()?;
+        self.drain_pending_commands()
+    }
+
+    fn step_tick(&self) -> PyResult<()> {
+        if self.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        if self.aborted.get() {
+            return self.check_and_raise_error();
+        }
+
+        let guards = self.guards.borrow().clone();
+        let actions = self.actions.borrow().clone();
+
+        {
+            let mut guard = self.machine.borrow_mut();
+            let machine_ref = guard
+                .as_mut()
+                .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
+            if !machine_ref.is_started
+                || machine_ref.status == lavi::MachineStatus::Stopped
+                || machine_ref.is_done()
+                || machine_ref.status == lavi::MachineStatus::Done
+            {
+                return Ok(());
+            }
+            self.active_machine
+                .set(machine_ref as *const lavi::RuntimeMachine);
+            let _ = machine_ref.tick(&guards, &actions);
+            self.active_machine.set(std::ptr::null());
+        }
+
+        self.check_and_raise_error()?;
+        self.drain_pending_commands()
+    }
+
+    fn step_start(&self) -> PyResult<()> {
+        if self.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        if self.aborted.get() {
+            return self.check_and_raise_error();
+        }
+
+        let guards = self.guards.borrow().clone();
+        let actions = self.actions.borrow().clone();
+
+        {
+            let mut guard = self.machine.borrow_mut();
+            let machine_ref = guard
+                .as_mut()
+                .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
+            if !machine_ref.is_started {
+                self.active_machine
+                    .set(machine_ref as *const lavi::RuntimeMachine);
+                machine_ref.start(&guards, &actions);
+                self.active_machine.set(std::ptr::null());
+            }
+        }
+
+        self.check_and_raise_error()?;
+        self.drain_pending_commands()
+    }
+
+    fn step_stop(&self) -> PyResult<()> {
+        if self.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        let mut guard = self.machine.borrow_mut();
+        if let Some(ref mut m) = *guard {
+            m.stop();
+        }
+        Ok(())
+    }
+
+    fn drain_pending_commands(&self) -> PyResult<()> {
+        loop {
+            if self.aborted.get() {
+                break;
+            }
+            let next_cmd = self.pending_commands.borrow_mut().pop_front();
+            let Some(cmd) = next_cmd else {
+                break;
+            };
+
+            match cmd {
+                PendingCommand::Send {
+                    event_name,
+                    payload_val,
+                } => {
+                    self.step_transition(&event_name, &payload_val)?;
+                }
+                PendingCommand::Stop => {
+                    self.step_stop()?;
+                }
+            }
+        }
+        self.check_and_raise_error()
+    }
+
+    fn get_next_deadline(&self) -> PyResult<Option<u64>> {
+        self.with_machine(|m| {
+            if m.is_started
+                && m.status != lavi::MachineStatus::Stopped
+                && !m.is_done()
+                && m.status != lavi::MachineStatus::Done
+            {
+                m.next_timer_deadline()
+            } else {
+                None
+            }
+        })
+    }
+}
+
+#[pyclass(unsendable, weakref)]
 pub struct Machine {
-    inner: Rc<RefCell<Option<MachineInner>>>,
+    state: Rc<MachineState>,
 }
 
 #[pymethods]
@@ -811,71 +996,299 @@ impl Machine {
             runtime_machine.register_clock(guard.clock.as_clock_fn());
         }
 
-        let inner = Rc::new(RefCell::new(Some(MachineInner {
-            machine: runtime_machine,
-            guards: IndexMap::new(),
-            actions: IndexMap::new(),
-            clock: clock.clone(),
-        })));
+        let state = Rc::new(MachineState {
+            machine: RefCell::new(Some(runtime_machine)),
+            active_machine: Cell::new(std::ptr::null()),
+            in_callback: Cell::new(false),
+            aborted: Cell::new(false),
+            pending_commands: RefCell::new(VecDeque::new()),
+            python_actions: RefCell::new(IndexMap::new()),
+            python_guards: RefCell::new(IndexMap::new()),
+            python_clock: RefCell::new(None),
+            guards: RefCell::new(IndexMap::new()),
+            actions: RefCell::new(IndexMap::new()),
+            clock: RefCell::new(clock.clone()),
+            last_error: RefCell::new(None),
+            is_closed: Cell::new(false),
+        });
 
         if let Some(ref c) = clock {
             let mut guard = c.inner.lock().unwrap();
-            guard.machines.push(Rc::downgrade(&inner));
+            guard.machines.push(Rc::downgrade(&state));
         }
 
-        Ok(Machine { inner })
+        Ok(Machine { state })
+    }
+
+    fn register_action<'py>(
+        slf: &Bound<'py, Self>,
+        name: &str,
+        callback: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let machine_self = slf.borrow();
+        if machine_self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+
+        let py_fn = callback.clone().unbind();
+        machine_self
+            .state
+            .python_actions
+            .borrow_mut()
+            .insert(name.to_string(), py_fn);
+
+        let weak_state = Rc::downgrade(&machine_self.state);
+        let action_name = name.to_string();
+
+        let action_fn: lavi::ActionFunction = alloc::rc::Rc::new(move |ctx, evt, _params| {
+            let Some(state) = weak_state.upgrade() else {
+                return;
+            };
+            if state.aborted.get() {
+                return;
+            }
+
+            state.in_callback.set(true);
+            let result = Python::with_gil(|py| -> PyResult<()> {
+                let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
+                let evt_val = Value(Arc::new(evt.clone())).into_py(py);
+                let actions_map = state.python_actions.borrow();
+                let Some(py_fn) = actions_map.get(&action_name) else {
+                    return Ok(());
+                };
+                let _ = py_fn.bind(py).call1((ctx_val, evt_val))?;
+                Ok(())
+            });
+            state.in_callback.set(false);
+
+            if let Err(err) = result {
+                state.aborted.set(true);
+                *state.last_error.borrow_mut() = Some(err);
+            }
+        });
+
+        machine_self
+            .state
+            .actions
+            .borrow_mut()
+            .insert(name.to_string(), action_fn);
+
+        drop(machine_self);
+        Ok(slf.clone())
+    }
+
+    fn register_guard<'py>(
+        slf: &Bound<'py, Self>,
+        name: &str,
+        callback: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let machine_self = slf.borrow();
+        if machine_self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+
+        let py_fn = callback.clone().unbind();
+        machine_self
+            .state
+            .python_guards
+            .borrow_mut()
+            .insert(name.to_string(), py_fn);
+
+        let weak_state = Rc::downgrade(&machine_self.state);
+        let guard_name = name.to_string();
+
+        let guard_fn: lavi::GuardFunction = alloc::rc::Rc::new(move |ctx, evt, _params| {
+            let Some(state) = weak_state.upgrade() else {
+                return false;
+            };
+            if state.aborted.get() {
+                return false;
+            }
+
+            state.in_callback.set(true);
+            let result = Python::with_gil(|py| -> PyResult<bool> {
+                let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
+                let evt_val = Value(Arc::new(evt.clone())).into_py(py);
+                let guards_map = state.python_guards.borrow();
+                let Some(py_fn) = guards_map.get(&guard_name) else {
+                    return Ok(false);
+                };
+                let ret = py_fn.bind(py).call1((ctx_val, evt_val))?;
+                ret.is_truthy()
+            });
+            state.in_callback.set(false);
+
+            match result {
+                Ok(b) => b,
+                Err(err) => {
+                    state.aborted.set(true);
+                    *state.last_error.borrow_mut() = Some(err);
+                    false
+                }
+            }
+        });
+
+        machine_self
+            .state
+            .guards
+            .borrow_mut()
+            .insert(name.to_string(), guard_fn);
+
+        drop(machine_self);
+        Ok(slf.clone())
+    }
+
+    fn register_clock<'py>(
+        slf: &Bound<'py, Self>,
+        callback: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let machine_self = slf.borrow();
+        if machine_self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+
+        if let Ok(sim_clock) = callback.extract::<PyRef<SimulatedClock>>() {
+            let clock_clone = (*sim_clock).clone();
+            let guard = clock_clone.inner.lock().unwrap();
+            if guard.closed {
+                return Err(PyRuntimeError::new_err("SimulatedClock is closed"));
+            }
+            let clock_fn = guard.clock.as_clock_fn();
+            drop(guard);
+
+            if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+                m.register_clock(clock_fn);
+            }
+            *machine_self.state.clock.borrow_mut() = Some(clock_clone.clone());
+            let mut guard = clock_clone.inner.lock().unwrap();
+            guard.machines.push(Rc::downgrade(&machine_self.state));
+        } else if callback.is_callable() {
+            let py_fn = callback.clone().unbind();
+            *machine_self.state.python_clock.borrow_mut() = Some(py_fn);
+            let weak_state = Rc::downgrade(&machine_self.state);
+            let clock_fn: alloc::rc::Rc<dyn Fn() -> u64> = alloc::rc::Rc::new(move || {
+                let Some(state) = weak_state.upgrade() else {
+                    return 0;
+                };
+                Python::with_gil(|py| {
+                    let clock_opt = state.python_clock.borrow();
+                    if let Some(ref py_fn) = *clock_opt {
+                        if let Ok(res) = py_fn.bind(py).call0() {
+                            if let Ok(ms) = res.extract::<u64>() {
+                                return ms;
+                            }
+                        }
+                    }
+                    0
+                })
+            });
+            if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+                m.register_clock(clock_fn);
+            }
+        } else {
+            return Err(PyTypeError::new_err(
+                "clock must be a SimulatedClock or callable returning int",
+            ));
+        }
+
+        drop(machine_self);
+        Ok(slf.clone())
+    }
+
+    #[pyo3(signature = (name))]
+    fn action<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        let slf_obj = slf.clone().into_any();
+        let locals = PyDict::new_bound(py);
+        locals.set_item("m", slf_obj)?;
+        locals.set_item("name", name)?;
+        py.eval_bound(
+            "(lambda m, name: lambda fn: (m.register_action(name, fn), fn)[1])(m, name)",
+            Some(&locals),
+            None,
+        )
+    }
+
+    #[pyo3(signature = (name))]
+    fn guard<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        let slf_obj = slf.clone().into_any();
+        let locals = PyDict::new_bound(py);
+        locals.set_item("m", slf_obj)?;
+        locals.set_item("name", name)?;
+        py.eval_bound(
+            "(lambda m, name: lambda fn: (m.register_guard(name, fn), fn)[1])(m, name)",
+            Some(&locals),
+            None,
+        )
+    }
+
+    #[pyo3(signature = (callback=None))]
+    fn clock<'py>(
+        slf: &Bound<'py, Self>,
+        callback: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        match callback {
+            Some(cb) => {
+                slf.call_method1("register_clock", (cb,))?;
+                Ok(cb.clone())
+            }
+            None => {
+                let slf_obj = slf.clone().into_any();
+                let locals = PyDict::new_bound(py);
+                locals.set_item("m", slf_obj)?;
+                py.eval_bound(
+                    "(lambda m: lambda fn: (m.register_clock(fn), fn)[1])(m)",
+                    Some(&locals),
+                    None,
+                )
+            }
+        }
     }
 
     fn start<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, Self>> {
         let machine_self = slf.borrow();
-        let mut inner_guard = machine_self.inner.borrow_mut();
-        let inner = inner_guard
-            .as_mut()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started {
-            inner.machine.start(&inner.guards, &inner.actions);
-        }
-        drop(inner_guard);
+        machine_self.state.step_start()?;
         drop(machine_self);
         Ok(slf.clone())
     }
 
     fn stop(&self) -> PyResult<()> {
-        let mut inner_guard = self.inner.borrow_mut();
-        let inner = inner_guard
-            .as_mut()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        inner.machine.stop();
-        Ok(())
+        if self.state.in_callback.get() {
+            self.state
+                .pending_commands
+                .borrow_mut()
+                .push_back(PendingCommand::Stop);
+            return Ok(());
+        }
+        self.state.step_stop()
     }
 
     fn close(&self) -> PyResult<()> {
-        let mut inner_guard = self.inner.borrow_mut();
-        *inner_guard = None;
+        self.state.is_closed.set(true);
+        *self.state.machine.borrow_mut() = None;
+        self.state.python_actions.borrow_mut().clear();
+        self.state.python_guards.borrow_mut().clear();
+        *self.state.python_clock.borrow_mut() = None;
+        self.state.guards.borrow_mut().clear();
+        self.state.actions.borrow_mut().clear();
+        self.state.pending_commands.borrow_mut().clear();
         Ok(())
     }
 
     fn matches(&self, state_path: &str) -> PyResult<bool> {
-        let inner_guard = self.inner.borrow();
-        let inner = inner_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started {
-            return Ok(false);
-        }
-        Ok(inner.machine.matches(state_path))
+        self.state.with_machine(|m| {
+            if !m.is_started {
+                false
+            } else {
+                m.matches(state_path)
+            }
+        })
     }
 
     #[pyo3(signature = (event, payload=None))]
     fn can(&self, event: &str, payload: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let inner_guard = self.inner.borrow();
-        let inner = inner_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started || inner.machine.status == lavi::MachineStatus::Stopped {
-            return Ok(false);
-        }
-
         let payload_val = match payload {
             None => lavi::Value::event(event),
             Some(p) => {
@@ -904,31 +1317,34 @@ impl Machine {
             }
         };
 
-        Ok(inner
-            .machine
-            .can_with_guards(event, &payload_val, &inner.guards))
+        let guards = self.state.guards.borrow().clone();
+        self.state.with_machine(|m| {
+            if !m.is_started || m.status == lavi::MachineStatus::Stopped {
+                false
+            } else {
+                m.can_with_guards(event, &payload_val, &guards)
+            }
+        })
     }
 
     fn has_tag(&self, tag: &str) -> PyResult<bool> {
-        let inner_guard = self.inner.borrow();
-        let inner = inner_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started {
-            return Ok(false);
-        }
-        Ok(inner.machine.has_tag(tag))
+        self.state.with_machine(|m| {
+            if !m.is_started {
+                false
+            } else {
+                m.has_tag(tag)
+            }
+        })
     }
 
     fn is_done(&self) -> PyResult<bool> {
-        let inner_guard = self.inner.borrow();
-        let inner = inner_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started {
-            return Ok(false);
-        }
-        Ok(inner.machine.is_done())
+        self.state.with_machine(|m| {
+            if !m.is_started {
+                false
+            } else {
+                m.is_done()
+            }
+        })
     }
 
     #[pyo3(signature = (event, payload=None))]
@@ -937,11 +1353,15 @@ impl Machine {
         event: &Bound<'_, PyAny>,
         payload: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let mut inner_guard = self.inner.borrow_mut();
-        let inner = inner_guard
-            .as_mut()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started || inner.machine.status == lavi::MachineStatus::Stopped {
+        if self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+
+        let is_running = self.state.with_machine(|m| {
+            m.is_started && m.status != lavi::MachineStatus::Stopped
+        })?;
+
+        if !is_running {
             return Ok(());
         }
 
@@ -1000,49 +1420,38 @@ impl Machine {
             return Err(PyTypeError::new_err("Event must be a string or a dict"));
         };
 
-        inner
-            .machine
-            .transition(&event_name, &payload_val, &inner.guards, &inner.actions);
-        Ok(())
+        if self.state.in_callback.get() {
+            self.state
+                .pending_commands
+                .borrow_mut()
+                .push_back(PendingCommand::Send {
+                    event_name,
+                    payload_val,
+                });
+            return Ok(());
+        }
+
+        self.state.step_transition(&event_name, &payload_val)
     }
 
     fn tick(&self) -> PyResult<()> {
-        let mut inner_guard = self.inner.borrow_mut();
-        let inner = inner_guard
-            .as_mut()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if inner.machine.is_started && inner.machine.status != lavi::MachineStatus::Stopped {
-            let _ = inner.machine.tick(&inner.guards, &inner.actions);
-        }
-        Ok(())
+        self.state.step_tick()
     }
 
     fn get_next_deadline(&self) -> PyResult<Option<u64>> {
-        let inner_guard = self.inner.borrow();
-        let inner = inner_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        if !inner.machine.is_started {
-            return Ok(None);
-        }
-        Ok(inner.machine.next_timer_deadline())
+        self.state.get_next_deadline()
     }
 
     fn get_snapshot(&self) -> PyResult<String> {
-        let inner_guard = self.inner.borrow();
-        let inner = inner_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
-        Ok(inner.machine.get_persisted_snapshot_json())
+        self.state.with_machine(|m: &lavi::RuntimeMachine| m.get_persisted_snapshot_json())
     }
 
     fn restore_snapshot(&self, snapshot_json: &str) -> PyResult<()> {
-        let mut inner_guard = self.inner.borrow_mut();
-        let inner = inner_guard
+        let mut guard = self.state.machine.borrow_mut();
+        let inner = guard
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("Machine is closed"))?;
         inner
-            .machine
             .restore_from_snapshot_json(snapshot_json)
             .map_err(|e| PyValueError::new_err(format!("Invalid snapshot: {e}")))?;
         Ok(())
@@ -1060,6 +1469,31 @@ impl Machine {
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         self.close()
+    }
+
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        let actions = self.state.python_actions.borrow();
+        for py_fn in actions.values() {
+            visit.call(py_fn)?;
+        }
+        let guards = self.state.python_guards.borrow();
+        for py_fn in guards.values() {
+            visit.call(py_fn)?;
+        }
+        let clock = self.state.python_clock.borrow();
+        if let Some(ref py_fn) = *clock {
+            visit.call(py_fn)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.state.python_actions.borrow_mut().clear();
+        self.state.python_guards.borrow_mut().clear();
+        *self.state.python_clock.borrow_mut() = None;
+        self.state.guards.borrow_mut().clear();
+        self.state.actions.borrow_mut().clear();
+        self.state.pending_commands.borrow_mut().clear();
     }
 }
 
