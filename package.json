@@ -21,9 +21,6 @@
     "build:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm assemble || gradle -p lavi-jvm assemble)",
     "test:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm test || gradle -p lavi-jvm test)"
   },
-  "dependencies": {
-    "xstate": "^5.25.0"
-  },
   "devDependencies": {
     "@playwright/test": "^1.40.0",
     "@vitest/ui": "^4.0.16",

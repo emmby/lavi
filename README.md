@@ -78,7 +78,17 @@ Or run individual suites:
 
 ## Usage Examples
 
-### JavaScript / TypeScript (WASM)
+### JavaScript / TypeScript (WASM) — Drop-In Replacement for XState v5
+
+In Node.js and bundler projects, `lavi-wasm` is a **1-line import replacement** for `xstate`:
+
+```diff
+- import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'xstate';
++ import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'lavi-wasm';
+```
+
+*(In raw, unbundled browser `<script type="module">` pages using `wasm-pack build --target web`, call `await init()` once before creating machines—see [`examples/simple.html`](./examples/simple.html).)*
+
 ```javascript
 // TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
 import { createMachine, createActor, assign } from 'lavi-wasm';
@@ -109,6 +119,13 @@ actor.send({ type: 'START' });
 console.log(actor.getSnapshot().value); // "running"
 console.log(actor.getSnapshot().context.count); // 1
 ```
+
+#### Drop-In Compatibility & Boundaries
+- **Verified Against Upstream XState v5 Tests**: The conformance suites in [`tests/*.test.ts`](./tests/) are unmodified upstream `statelyai/xstate@5.25.0` tests with only the module import line swapped to `lavi-wasm`, verified mechanically on every test run by `npm run test:conformance-check`.
+- **Supported Out-of-the-Box**: `createMachine`, `createActor`, `setup`, `assign` (object and function updaters), `raise`, `SimulatedClock`, nested/compound states, parallel states, shallow & deep `history`, `final` states, `always` (eventless) transitions, `after` delayed transitions (automatically bridged to host `setTimeout`), inline & named `entry`/`exit`/transition actions, inline & named `guard`s, wildcard (`*` / `prefix.*`) transitions, `actor.subscribe()`, `.matches()`, `.can()`, `.hasTag()`, `getPersistedSnapshot()`, `machine.provide()`, and `inspect`.
+- **Known Differences / Not Yet Implemented** (tracked in [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)):
+  - **Pre-start events are dropped**: Events sent via `actor.send()` *before* `actor.start()` are intentionally dropped rather than buffered in an unbounded queue (microcontroller memory safety invariant).
+  - **Async Actor Model (`invoke` / `spawn`)**: `fromPromise`, `fromCallback`, `fromObservable`, and `spawnChild` are not yet implemented.
 
 ### C++11 (ESP32 / PlatformIO / Native)
 ```cpp
