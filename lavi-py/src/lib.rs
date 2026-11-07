@@ -791,7 +791,7 @@ pub enum PendingCommand {
 pub struct MachineState {
     pub machine: RefCell<Option<lavi::RuntimeMachine>>,
     pub active_machine: Cell<*const lavi::RuntimeMachine>,
-    pub in_callback: Cell<bool>,
+    pub callback_depth: Cell<usize>,
     pub aborted: Cell<bool>,
     pub pending_commands: RefCell<VecDeque<PendingCommand>>,
     pub python_actions: RefCell<IndexMap<String, Py<PyAny>>>,
@@ -804,12 +804,36 @@ pub struct MachineState {
     pub is_closed: Cell<bool>,
 }
 
+struct CallbackGuard<'a> {
+    depth: &'a Cell<usize>,
+}
+
+impl<'a> CallbackGuard<'a> {
+    fn new(depth: &'a Cell<usize>) -> Self {
+        depth.set(depth.get().saturating_add(1));
+        Self { depth }
+    }
+}
+
+impl<'a> Drop for CallbackGuard<'a> {
+    fn drop(&mut self) {
+        let current = self.depth.get();
+        if current > 0 {
+            self.depth.set(current - 1);
+        }
+    }
+}
+
 impl MachineState {
+    fn is_in_callback(&self) -> bool {
+        self.callback_depth.get() > 0
+    }
+
     fn with_machine<R>(&self, f: impl FnOnce(&lavi::RuntimeMachine) -> R) -> PyResult<R> {
         if self.is_closed.get() {
             return Err(PyRuntimeError::new_err("Machine is closed"));
         }
-        if self.in_callback.get() {
+        if self.is_in_callback() {
             let ptr = self.active_machine.get();
             if !ptr.is_null() {
                 let m = unsafe { &*ptr };
@@ -825,6 +849,7 @@ impl MachineState {
 
     fn check_and_raise_error(&self) -> PyResult<()> {
         if self.aborted.get() {
+            self.aborted.set(false);
             if let Some(err) = self.last_error.borrow_mut().take() {
                 return Err(err);
             }
@@ -973,6 +998,62 @@ impl MachineState {
     }
 }
 
+#[pyclass(unsendable, name = "_ActionDecorator")]
+pub struct ActionDecorator {
+    machine: Py<Machine>,
+    name: String,
+}
+
+#[pymethods]
+impl ActionDecorator {
+    fn __call__<'py>(
+        &self,
+        py: Python<'py>,
+        func: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let machine_bound = self.machine.bind(py);
+        Machine::register_action(machine_bound, &self.name, &func)?;
+        Ok(func)
+    }
+}
+
+#[pyclass(unsendable, name = "_GuardDecorator")]
+pub struct GuardDecorator {
+    machine: Py<Machine>,
+    name: String,
+}
+
+#[pymethods]
+impl GuardDecorator {
+    fn __call__<'py>(
+        &self,
+        py: Python<'py>,
+        func: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let machine_bound = self.machine.bind(py);
+        Machine::register_guard(machine_bound, &self.name, &func)?;
+        Ok(func)
+    }
+}
+
+#[pyclass(unsendable, name = "_ClockDecorator")]
+pub struct ClockDecorator {
+    machine: Py<Machine>,
+}
+
+#[pymethods]
+impl ClockDecorator {
+    fn __call__<'py>(
+        &self,
+        py: Python<'py>,
+        func: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let machine_bound = self.machine.bind(py);
+        Machine::register_clock(machine_bound, &func)?;
+        Ok(func)
+    }
+}
+
 #[pyclass(unsendable, weakref)]
 pub struct Machine {
     state: Rc<MachineState>,
@@ -999,7 +1080,7 @@ impl Machine {
         let state = Rc::new(MachineState {
             machine: RefCell::new(Some(runtime_machine)),
             active_machine: Cell::new(std::ptr::null()),
-            in_callback: Cell::new(false),
+            callback_depth: Cell::new(0),
             aborted: Cell::new(false),
             pending_commands: RefCell::new(VecDeque::new()),
             python_actions: RefCell::new(IndexMap::new()),
@@ -1014,7 +1095,10 @@ impl Machine {
 
         if let Some(ref c) = clock {
             let mut guard = c.inner.lock().unwrap();
-            guard.machines.push(Rc::downgrade(&state));
+            let weak_state = Rc::downgrade(&state);
+            if !guard.machines.iter().any(|w| w.ptr_eq(&weak_state)) {
+                guard.machines.push(weak_state);
+            }
         }
 
         Ok(Machine { state })
@@ -1048,7 +1132,7 @@ impl Machine {
                 return;
             }
 
-            state.in_callback.set(true);
+            let _guard = CallbackGuard::new(&state.callback_depth);
             let result = Python::with_gil(|py| -> PyResult<()> {
                 let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
                 let evt_val = Value(Arc::new(evt.clone())).into_py(py);
@@ -1059,7 +1143,6 @@ impl Machine {
                 let _ = py_fn.bind(py).call1((ctx_val, evt_val))?;
                 Ok(())
             });
-            state.in_callback.set(false);
 
             if let Err(err) = result {
                 state.aborted.set(true);
@@ -1105,7 +1188,7 @@ impl Machine {
                 return false;
             }
 
-            state.in_callback.set(true);
+            let _guard = CallbackGuard::new(&state.callback_depth);
             let result = Python::with_gil(|py| -> PyResult<bool> {
                 let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
                 let evt_val = Value(Arc::new(evt.clone())).into_py(py);
@@ -1116,7 +1199,6 @@ impl Machine {
                 let ret = py_fn.bind(py).call1((ctx_val, evt_val))?;
                 ret.is_truthy()
             });
-            state.in_callback.set(false);
 
             match result {
                 Ok(b) => b,
@@ -1161,7 +1243,10 @@ impl Machine {
             }
             *machine_self.state.clock.borrow_mut() = Some(clock_clone.clone());
             let mut guard = clock_clone.inner.lock().unwrap();
-            guard.machines.push(Rc::downgrade(&machine_self.state));
+            let weak_state = Rc::downgrade(&machine_self.state);
+            if !guard.machines.iter().any(|w| w.ptr_eq(&weak_state)) {
+                guard.machines.push(weak_state);
+            }
         } else if callback.is_callable() {
             let py_fn = callback.clone().unbind();
             *machine_self.state.python_clock.borrow_mut() = Some(py_fn);
@@ -1170,12 +1255,23 @@ impl Machine {
                 let Some(state) = weak_state.upgrade() else {
                     return 0;
                 };
+                if state.aborted.get() {
+                    return 0;
+                }
                 Python::with_gil(|py| {
                     let clock_opt = state.python_clock.borrow();
                     if let Some(ref py_fn) = *clock_opt {
-                        if let Ok(res) = py_fn.bind(py).call0() {
-                            if let Ok(ms) = res.extract::<u64>() {
-                                return ms;
+                        match py_fn.bind(py).call0() {
+                            Ok(res) => match res.extract::<u64>() {
+                                Ok(ms) => return ms,
+                                Err(err) => {
+                                    state.aborted.set(true);
+                                    *state.last_error.borrow_mut() = Some(err);
+                                }
+                            },
+                            Err(err) => {
+                                state.aborted.set(true);
+                                *state.last_error.borrow_mut() = Some(err);
                             }
                         }
                     }
@@ -1196,31 +1292,19 @@ impl Machine {
     }
 
     #[pyo3(signature = (name))]
-    fn action<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<Bound<'py, PyAny>> {
-        let py = slf.py();
-        let slf_obj = slf.clone().into_any();
-        let locals = PyDict::new_bound(py);
-        locals.set_item("m", slf_obj)?;
-        locals.set_item("name", name)?;
-        py.eval_bound(
-            "(lambda m, name: lambda fn: (m.register_action(name, fn), fn)[1])(m, name)",
-            Some(&locals),
-            None,
-        )
+    fn action<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<ActionDecorator> {
+        Ok(ActionDecorator {
+            machine: slf.clone().unbind(),
+            name: name.to_string(),
+        })
     }
 
     #[pyo3(signature = (name))]
-    fn guard<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<Bound<'py, PyAny>> {
-        let py = slf.py();
-        let slf_obj = slf.clone().into_any();
-        let locals = PyDict::new_bound(py);
-        locals.set_item("m", slf_obj)?;
-        locals.set_item("name", name)?;
-        py.eval_bound(
-            "(lambda m, name: lambda fn: (m.register_guard(name, fn), fn)[1])(m, name)",
-            Some(&locals),
-            None,
-        )
+    fn guard<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<GuardDecorator> {
+        Ok(GuardDecorator {
+            machine: slf.clone().unbind(),
+            name: name.to_string(),
+        })
     }
 
     #[pyo3(signature = (callback=None))]
@@ -1231,18 +1315,14 @@ impl Machine {
         let py = slf.py();
         match callback {
             Some(cb) => {
-                slf.call_method1("register_clock", (cb,))?;
+                Self::register_clock(slf, cb)?;
                 Ok(cb.clone())
             }
             None => {
-                let slf_obj = slf.clone().into_any();
-                let locals = PyDict::new_bound(py);
-                locals.set_item("m", slf_obj)?;
-                py.eval_bound(
-                    "(lambda m: lambda fn: (m.register_clock(fn), fn)[1])(m)",
-                    Some(&locals),
-                    None,
-                )
+                let decorator = ClockDecorator {
+                    machine: slf.clone().unbind(),
+                };
+                Ok(Bound::new(py, decorator)?.into_any())
             }
         }
     }
@@ -1255,7 +1335,7 @@ impl Machine {
     }
 
     fn stop(&self) -> PyResult<()> {
-        if self.state.in_callback.get() {
+        if self.state.is_in_callback() {
             self.state
                 .pending_commands
                 .borrow_mut()
@@ -1322,7 +1402,17 @@ impl Machine {
             if !m.is_started || m.status == lavi::MachineStatus::Stopped {
                 false
             } else {
-                m.can_with_guards(event, &payload_val, &guards)
+                let prev_active = self.state.active_machine.get();
+                if prev_active.is_null() {
+                    self.state
+                        .active_machine
+                        .set(m as *const lavi::RuntimeMachine);
+                }
+                let res = m.can_with_guards(event, &payload_val, &guards);
+                if prev_active.is_null() {
+                    self.state.active_machine.set(std::ptr::null());
+                }
+                res
             }
         })
     }
@@ -1420,7 +1510,7 @@ impl Machine {
             return Err(PyTypeError::new_err("Event must be a string or a dict"));
         };
 
-        if self.state.in_callback.get() {
+        if self.state.is_in_callback() {
             self.state
                 .pending_commands
                 .borrow_mut()
@@ -1506,5 +1596,8 @@ fn _lavi_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Value>()?;
     m.add_class::<SimulatedClock>()?;
     m.add_class::<Machine>()?;
+    m.add_class::<ActionDecorator>()?;
+    m.add_class::<GuardDecorator>()?;
+    m.add_class::<ClockDecorator>()?;
     Ok(())
 }

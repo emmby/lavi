@@ -1,4 +1,5 @@
 import gc
+import json
 import weakref
 import pytest
 from lavi import Machine, SimulatedClock, Value
@@ -198,4 +199,189 @@ def test_gc_collects_reference_cycle_between_machine_and_callback():
     ref = make_cycle()
     gc.collect()
     assert ref() is None
+
+def test_nested_callback_can_query_and_reentrant_send():
+    nested_machine_json = json.dumps({
+        "id": "nested",
+        "initial": "idle",
+        "states": {
+            "idle": {
+                "on": {
+                    "START": {
+                        "target": "active",
+                        "actions": ["onStart"]
+                    }
+                }
+            },
+            "active": {
+                "on": {
+                    "CHECK": {
+                        "guard": "checkGuard",
+                        "target": "active"
+                    },
+                    "NEXT": {
+                        "target": "finished"
+                    }
+                }
+            },
+            "finished": {
+                "type": "final"
+            }
+        }
+    })
+
+    guard_called = False
+    action_completed = False
+
+    with Machine(nested_machine_json) as m:
+        @m.guard("checkGuard")
+        def check_guard(ctx, evt):
+            nonlocal guard_called
+            guard_called = True
+            assert m.matches("active")
+            return True
+
+        @m.action("onStart")
+        def on_start(ctx, evt):
+            nonlocal action_completed
+            can_check = m.can("CHECK")
+            assert can_check is True
+            # If in_callback was reset by check_guard, this will panic with BorrowError!
+            assert m.matches("active")
+            m.send("NEXT")
+            action_completed = True
+
+        m.start()
+        assert m.matches("idle")
+        m.send("START")
+        assert guard_called
+        assert action_completed
+        assert m.matches("finished")
+
+def test_simulated_clock_deduplication():
+    timer_json = json.dumps({
+        "id": "timer",
+        "initial": "a",
+        "states": {
+            "a": {
+                "after": {
+                    "100": {
+                        "target": "b",
+                        "actions": ["onTick"]
+                    }
+                }
+            },
+            "b": {}
+        }
+    })
+    ticks = 0
+    clock = SimulatedClock(0)
+    with Machine(timer_json, clock=clock) as m:
+        m.register_clock(clock)
+
+        @m.action("onTick")
+        def on_tick(ctx, evt):
+            nonlocal ticks
+            ticks += 1
+
+        m.start()
+        clock.set(150)
+        assert m.matches("b")
+        assert ticks == 1
+
+def test_clock_callable_exception_propagation_and_recovery():
+    timer_json = json.dumps({
+        "id": "timer_err",
+        "initial": "idle",
+        "states": {
+            "idle": {
+                "on": {
+                    "GO": "waiting"
+                }
+            },
+            "waiting": {
+                "after": {
+                    "100": "done"
+                }
+            },
+            "done": {
+                "type": "final"
+            }
+        }
+    })
+    should_fail = False
+    def failing_clock():
+        if should_fail:
+            raise ValueError("clock broken")
+        return 100
+
+    with Machine(timer_json) as m:
+        m.register_clock(failing_clock)
+        m.start()
+        assert m.matches("idle")
+
+        should_fail = True
+        with pytest.raises(ValueError, match="clock broken"):
+            m.send("GO")
+
+        # Machine aborted state was reset when error was raised,
+        # so subsequent operations work once clock is healthy:
+        should_fail = False
+        # Can query matches and can() without exception
+        assert not m.is_done()
+
+def test_decorators_action_guard_and_clock_syntax():
+    machine_json = json.dumps({
+        "id": "dec",
+        "initial": "a",
+        "states": {
+            "a": {
+                "on": {
+                    "STEP": {
+                        "guard": "isStepAllowed",
+                        "target": "b",
+                        "actions": ["onStep"]
+                    }
+                }
+            },
+            "b": {
+                "after": {
+                    "50": "c"
+                }
+            },
+            "c": {
+                "type": "final"
+            }
+        }
+    })
+    step_action_called = False
+    with Machine(machine_json) as m:
+        @m.guard("isStepAllowed")
+        def check(ctx, evt):
+            return True
+
+        @m.action("onStep")
+        def act(ctx, evt):
+            nonlocal step_action_called
+            step_action_called = True
+
+        @m.clock
+        def my_clock():
+            return 100
+
+        m.start()
+        assert m.can("STEP")
+        m.send("STEP")
+        assert step_action_called
+        assert m.matches("b")
+
+def test_clock_decorator_with_parens():
+    with Machine(STOPLIGHT_JSON) as m:
+        @m.clock()
+        def my_clock():
+            return 42
+        m.start()
+        assert m.matches("green")
+
+
 
