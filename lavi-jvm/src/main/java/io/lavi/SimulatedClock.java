@@ -71,13 +71,17 @@ public final class SimulatedClock implements AutoCloseable {
         machines.clear();
     }
 
-    synchronized void registerMachine(Machine m) {
+    void registerMachine(Machine m) {
         checkClosed();
-        machines.add(m);
+        synchronized (machines) {
+            machines.add(m);
+        }
     }
 
-    synchronized void unregisterMachine(Machine m) {
-        machines.remove(m);
+    void unregisterMachine(Machine m) {
+        synchronized (machines) {
+            machines.remove(m);
+        }
     }
 
     long getNativeHandle() {

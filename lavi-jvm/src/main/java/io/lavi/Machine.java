@@ -31,9 +31,9 @@ public final class Machine implements AutoCloseable {
     private final Map<String, GuardCallback> guards = new HashMap<>();
     private ClockCallback clockCallback;
     private SimulatedClock simulatedClock;
-    private boolean closed = false;
+    private volatile boolean closed = false;
 
-    public synchronized boolean isClosed() {
+    public boolean isClosed() {
         return closed;
     }
 
