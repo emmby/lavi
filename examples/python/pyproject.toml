@@ -13,3 +13,6 @@ dependencies = [
 
 [project.scripts]
 example = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]

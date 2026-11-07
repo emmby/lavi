@@ -6,7 +6,7 @@ LDFLAGS ?= -L../../target/debug -llavi_c_cpp -lpthread -ldl -lm
 
 all: build/example_c
 
-build/example_c: main.c ../../lavi-c-cpp/include/lavi.h
+build/example_c: main.c ../../lavi-c-cpp/include/lavi.h ../../target/debug/liblavi_c_cpp.a
 	mkdir -p build
 	$(CC) $(CFLAGS) main.c $(LDFLAGS) -o build/example_c
 
