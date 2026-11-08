@@ -13,7 +13,7 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
 - **Server JVM & Android (Java & Kotlin)**: Embed statecharts in server backends or Android mobile apps with zero-friction native loading (`.jar`) and 16 KB page-aligned AAR packaging (`.aar`) using `lavi-jvm`.
 
 ### Why the Name "Lavi"?
-Statecharts were invented in 1983–1987 by computer scientist **David Harel** in collaboration with systems engineering pioneer **Dr. Jonah Z. Lavi** while designing the avionics software for the **Lavi** aircraft—where complex embedded flight-control logic needed a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "young lion" in Hebrew.
+**Lavi** is named in honor of systems engineering pioneer **Dr. Jonah Z. Lavi**, who partnered with computer scientist **David Harel** in 1983–1987 to invent **Harel Statecharts** while specifying the embedded avionics software for the *Lavi* aircraft—where complex flight-control logic required a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "lion" in Hebrew.
 
 ## Core Principles
 
