@@ -166,8 +166,43 @@ jobs:
             dist/maven/lavi-maven-central-bundle.zip
             dist/aar/lavi-release.aar
 
+  build-embedded:
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install ESP Rust Toolchain (espup)
+        run: |
+          cargo install espup --locked
+          espup install
+
+      - name: Build Precompiled ESP32 Static Libraries & Package lavi-embedded.zip
+        run: |
+          if [ -f "$HOME/export-esp.sh" ]; then
+            . "$HOME/export-esp.sh"
+          fi
+          node scripts/build-release-natives.mjs --execute --embedded-only
+
+      - name: Upload Embedded Archive (Arduino IDE & PlatformIO)
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-dist
+          path: dist/embedded/lavi-embedded.zip
+
   publish:
-    needs: [verify, build-wasm-npm, build-natives-py-jvm]
+    needs: [verify, build-wasm-npm, build-natives-py-jvm, build-embedded]
     if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-24.04
     steps:
@@ -228,4 +263,5 @@ jobs:
             release-artifacts/python-dist/* \
             release-artifacts/jvm-dist/lavi-maven-central-bundle.zip \
             release-artifacts/jvm-dist/lavi-release.aar \
+            release-artifacts/embedded-dist/lavi-embedded.zip \
             --clobber

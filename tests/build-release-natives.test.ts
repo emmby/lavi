@@ -130,5 +130,14 @@ describe('build-release-natives', () => {
     expect(result.entries).toContain('lavi/src/esp32/liblavi_c_cpp.a');
     expect(result.entries).toContain('lavi/src/esp32s3/liblavi_c_cpp.a');
     expect(result.entries).toContain('lavi/examples/Stoplight/Stoplight.ino');
+
+    // Verify missing static files throw an explicit error
+    expect(() =>
+      packageEmbeddedZip({
+        rootDir: path.join(tmpDir, 'nonexistent-root'),
+        prebuiltLibsDir: prebuiltDir,
+        outputZipPath: path.join(tmpDir, 'output', 'should-fail.zip'),
+      })
+    ).toThrow(/Missing required embedded static file/);
   });
 });

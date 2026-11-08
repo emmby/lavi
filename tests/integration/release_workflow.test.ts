@@ -15,6 +15,11 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(wf).toContain('node scripts/sync-version.mjs --check');
     expect(wf).toContain('node scripts/build-npm-package.mjs');
     expect(wf).toContain('node scripts/build-release-natives.mjs --execute');
+    expect(wf).toContain('build-embedded:');
+    expect(wf).toContain('espup install');
+    expect(wf).toContain('node scripts/build-release-natives.mjs --execute --embedded-only');
+    expect(wf).toContain('dist/embedded/lavi-embedded.zip');
+    expect(wf).toContain('release-artifacts/embedded-dist/lavi-embedded.zip');
     expect(wf).toContain('zipMavenCentralBundle');
     expect(wf).toContain('cargo publish -p lavi');
     expect(wf).toContain('npm publish ./lavi-fsm-*.tgz --provenance --access public');
@@ -34,5 +39,6 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(releasing).toContain('PyPI');
     expect(releasing).toContain('lavi-fsm');
     expect(releasing).toContain('io.github.emmby');
+    expect(releasing).toContain('lavi-embedded.zip');
   });
 });

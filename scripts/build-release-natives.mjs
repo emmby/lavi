@@ -563,75 +563,88 @@ export function executeReleasePlan(plan, options = {}) {
   }
 
   let commandsRun = 0;
+  const embeddedOnly = Boolean(options.embeddedOnly);
 
-  // 1. Desktop compilation
-  for (const cmd of plan.desktopCommands) {
-    if (options.verbose) {
-      console.log(`Executing desktop command: ${cmd.command} ${cmd.args.join(' ')}`);
-    }
-    const res = spawnSync(cmd.command, cmd.args, {
-      stdio: 'inherit',
-      cwd: plan.rootDir,
-      env: process.env
-    });
-    if (res.status !== 0) {
-      throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
-    }
-    commandsRun++;
+  if (!embeddedOnly) {
+    // 1. Desktop compilation
+    for (const cmd of plan.desktopCommands) {
+      if (options.verbose) {
+        console.log(`Executing desktop command: ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      const res = spawnSync(cmd.command, cmd.args, {
+        stdio: 'inherit',
+        cwd: plan.rootDir,
+        env: process.env
+      });
+      if (res.status !== 0) {
+        throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      commandsRun++;
 
-    if (cmd.destResource && cmd.srcBinary && fs.existsSync(cmd.srcBinary)) {
-      fs.mkdirSync(path.dirname(cmd.destResource), { recursive: true });
-      fs.copyFileSync(cmd.srcBinary, cmd.destResource);
-    }
-  }
-
-  // 2. Android compilation
-  for (const cmd of plan.androidCommands) {
-    if (options.verbose) {
-      console.log(`Executing Android build: ${cmd.command} ${cmd.args.join(' ')}`);
-    }
-    const env = { ...process.env };
-    if (cmd.rustflags) {
-      env.RUSTFLAGS = cmd.rustflags;
-    }
-    const res = spawnSync(cmd.command, cmd.args, {
-      stdio: 'inherit',
-      cwd: plan.rootDir,
-      env
-    });
-    if (res.status !== 0) {
-      throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
-    }
-    commandsRun++;
-
-    if (cmd.verifyAlignment && fs.existsSync(cmd.srcBinary)) {
-      const readelf = spawnSync('llvm-readelf', ['-l', cmd.srcBinary], { encoding: 'utf8' });
-      if (readelf.status === 0 && !verifyElf16KbAlignmentOutput(readelf.stdout)) {
-        throw new Error(`ELF segment alignment verification failed for 16 KB pages: ${cmd.srcBinary}`);
+      if (cmd.destResource && cmd.srcBinary && fs.existsSync(cmd.srcBinary)) {
+        fs.mkdirSync(path.dirname(cmd.destResource), { recursive: true });
+        fs.copyFileSync(cmd.srcBinary, cmd.destResource);
       }
     }
-  }
 
-  // 3. Package AAR
-  const stagingJni = path.join(plan.outDir, 'aar', 'staging', 'jni');
-  for (const cmd of plan.androidCommands) {
-    if (fs.existsSync(cmd.srcBinary)) {
-      const targetDir = path.join(stagingJni, cmd.abi);
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.copyFileSync(cmd.srcBinary, path.join(targetDir, 'liblavi_jvm.so'));
+    // 2. Android compilation
+    for (const cmd of plan.androidCommands) {
+      if (options.verbose) {
+        console.log(`Executing Android build: ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      const env = { ...process.env };
+      if (cmd.rustflags) {
+        env.RUSTFLAGS = cmd.rustflags;
+      }
+      const res = spawnSync(cmd.command, cmd.args, {
+        stdio: 'inherit',
+        cwd: plan.rootDir,
+        env
+      });
+      if (res.status !== 0) {
+        throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      commandsRun++;
+
+      if (cmd.verifyAlignment && fs.existsSync(cmd.srcBinary)) {
+        const readelf = spawnSync('llvm-readelf', ['-l', cmd.srcBinary], { encoding: 'utf8' });
+        if (readelf.status === 0 && !verifyElf16KbAlignmentOutput(readelf.stdout)) {
+          throw new Error(`ELF segment alignment verification failed for 16 KB pages: ${cmd.srcBinary}`);
+        }
+      }
     }
+
+    // 3. Package AAR
+    const stagingJni = path.join(plan.outDir, 'aar', 'staging', 'jni');
+    for (const cmd of plan.androidCommands) {
+      if (fs.existsSync(cmd.srcBinary)) {
+        const targetDir = path.join(stagingJni, cmd.abi);
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.copyFileSync(cmd.srcBinary, path.join(targetDir, 'liblavi_jvm.so'));
+      }
+    }
+
+    packageAndroidAar({
+      classesJarPath: plan.aarPackage.classesJar,
+      jniLibsDir: stagingJni,
+      outputAarPath: plan.aarPackage.aarPath,
+      packageName: 'io.lavi'
+    });
   }
 
-  packageAndroidAar({
-    classesJarPath: plan.aarPackage.classesJar,
-    jniLibsDir: stagingJni,
-    outputAarPath: plan.aarPackage.aarPath,
-    packageName: 'io.lavi'
-  });
-
-  // 4. Embedded MCU compilation & unified Arduino/PlatformIO zip packaging (when --include-embedded or includeEmbedded is set)
-  if (options.includeEmbedded) {
+  // 4. Embedded MCU compilation & unified Arduino/PlatformIO zip packaging
+  if (options.includeEmbedded || embeddedOnly) {
     const stagingEmbedded = path.join(plan.outDir, 'embedded', 'staging', 'src');
+    const embeddedEnv = { ...process.env };
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    const espBin = homeDir ? path.join(homeDir, '.rustup', 'toolchains', 'esp', 'bin') : '';
+    if (espBin && fs.existsSync(espBin)) {
+      const curPath = embeddedEnv.PATH || '';
+      if (!curPath.split(path.delimiter).includes(espBin)) {
+        embeddedEnv.PATH = `${espBin}${path.delimiter}${curPath}`;
+      }
+    }
+
     for (const cmd of plan.embeddedCommands || []) {
       if (options.verbose) {
         console.log(`Executing embedded MCU build (${cmd.mcu}): ${cmd.command} ${cmd.args.join(' ')}`);
@@ -639,7 +652,7 @@ export function executeReleasePlan(plan, options = {}) {
       const res = spawnSync(cmd.command, cmd.args, {
         stdio: 'inherit',
         cwd: plan.rootDir,
-        env: process.env
+        env: embeddedEnv
       });
       if (res.status !== 0) {
         throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
@@ -677,6 +690,7 @@ if (isMain) {
   const args = process.argv.slice(2);
   const shouldExecute = args.includes('--execute');
   const includeEmbedded = args.includes('--include-embedded');
+  const embeddedOnly = args.includes('--embedded-only');
   const plan = buildReleasePlan({ dryRun: !shouldExecute });
   console.log('=== Lavi Single-Host Release Cross-Compilation Plan ===\n');
   console.log(`Desktop Targets (${DESKTOP_TARGETS.length}):`);
@@ -698,7 +712,7 @@ if (isMain) {
 
   if (shouldExecute) {
     console.log('\n🚀 Executing release compilation plan...');
-    executeReleasePlan(plan, { execute: true, includeEmbedded, verbose: true });
+    executeReleasePlan(plan, { execute: true, includeEmbedded, embeddedOnly, verbose: true });
     console.log('\n✅ Release compilation and packaging completed successfully.');
   } else {
     console.log('\n✅ Plan generated successfully (dry-run). Pass --execute to run.');
