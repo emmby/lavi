@@ -101,7 +101,6 @@ signing {
 val generateMavenChecksums = tasks.register("generateMavenChecksums") {
     dependsOn("publishMavenJavaPublicationToStagingRepository")
     val stagingDir = layout.buildDirectory.dir("staging-deploy")
-    outputs.dir(stagingDir)
     outputs.upToDateWhen { false }
 
     doLast {
@@ -140,7 +139,9 @@ val generateMavenChecksums = tasks.register("generateMavenChecksums") {
 }
 
 tasks.register<Zip>("zipMavenCentralBundle") {
-    from(generateMavenChecksums)
+    dependsOn(generateMavenChecksums)
+    from(layout.buildDirectory.dir("staging-deploy"))
+    outputs.upToDateWhen { false }
     archiveFileName.set("lavi-maven-central-bundle.zip")
     destinationDirectory.set(file("${rootProject.projectDir}/../dist/maven"))
 }

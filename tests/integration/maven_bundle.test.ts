@@ -29,6 +29,11 @@ describe('Maven Central bundle packaging (io.github.emmby:lavi)', () => {
     fs.mkdirSync(stagingDir, { recursive: true });
     fs.writeFileSync(path.join(stagingDir, 'lavi-0.1.0.jar.asc'), 'dummy-pgp-sig');
 
+    const bundleZip = path.join(rootDir, 'dist', 'maven', 'lavi-maven-central-bundle.zip');
+    if (fs.existsSync(bundleZip)) {
+      fs.unlinkSync(bundleZip);
+    }
+
     let res = spawnSync('./lavi-jvm/gradlew', ['-p', 'lavi-jvm', 'zipMavenCentralBundle'], {
       cwd: rootDir,
       encoding: 'utf8',
@@ -41,7 +46,6 @@ describe('Maven Central bundle packaging (io.github.emmby:lavi)', () => {
     }
     expect(res.status).toBe(0);
 
-    const bundleZip = path.join(rootDir, 'dist', 'maven', 'lavi-maven-central-bundle.zip');
     expect(fs.existsSync(bundleZip)).toBe(true);
 
     expect(fs.existsSync(path.join(stagingDir, 'lavi-0.1.0.jar'))).toBe(true);
