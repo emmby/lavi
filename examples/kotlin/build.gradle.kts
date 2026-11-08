@@ -19,7 +19,7 @@ kotlin {
 }
 
 dependencies {
-    implementation("io.lavi:lavi-jvm:0.1.0")
+    implementation("io.github.emmby:lavi:0.1.0")
 }
 
 application {

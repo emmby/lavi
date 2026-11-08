@@ -142,18 +142,17 @@ assert!(machine.matches("yellow"));
 
 ### JavaScript / TypeScript (`lavi-wasm` — [`examples/js-wasm/`](./examples/js-wasm/))
 
-For the supported statechart subset (see [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)), `lavi-wasm` is a **1-line import replacement** for `xstate` in Node.js (with npm publication and browser bundler `--target bundler` exports tracked in [`TD-12`](./TECH_DEBT.md)):
+For the supported statechart subset (see [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)), `lavi-fsm` (`lavi-wasm`) is a **1-line import replacement** for `xstate` in Node.js and browser bundlers:
 
 ```diff
 - import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'xstate';
-+ import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'lavi-wasm';
++ import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'lavi-fsm';
 ```
 
 *(When running from a local repo build today, import `./lavi-wasm/pkg-npm/lavi.js` in Node.js/Vitest, or `./lavi-wasm/pkg/lavi.js` with `await init()` in browser ES modules—see [`examples/simple.html`](./examples/simple.html).)*
 
 ```javascript
-// TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
-import { createMachine, createActor, SimulatedClock } from 'lavi-wasm';
+import { createMachine, createActor, SimulatedClock } from 'lavi-fsm';
 // (Or import from './lavi-wasm/pkg-npm/lavi.js' when running from a local repo build)
 
 const machine = createMachine(

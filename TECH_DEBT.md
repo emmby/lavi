@@ -39,24 +39,10 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: In C FFI, `fsm_get_snapshot_json` allocates the full serialized JSON `String` on the heap during the pass-1 size query (`buffer == NULL` or `buffer_len == 0`) and serializes/allocates it a second time on pass 2 when copying into the caller's buffer (such as in `lavi::Machine::getSnapshot()`).
 - **Required Fix**: Implement a streaming or counting length calculation (e.g. a zero-allocation byte-counting visitor over `RuntimeMachine` / `Value`) or write directly into the caller's buffer slice when `buffer != NULL` so pass-1 size queries perform zero heap string allocations.
 
-### `TD-12`: Publish `lavi-wasm` to npm with Node & Browser Bundler Exports [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
-- **Files**: [`lavi-wasm/Cargo.toml`](./lavi-wasm/Cargo.toml), [`package.json`](./package.json), [`README.md`](./README.md)
-- **Problem**:
-  1. `lavi-wasm` is currently built locally into `lavi-wasm/pkg` and `lavi-wasm/pkg-npm` rather than published to the public npm registry.
-  2. `npm run build:npm` currently builds only `--target nodejs` (which uses CommonJS `require('fs').readFileSync` to load `.wasm`), while `npm run build:web` builds `--target web` (which requires calling `await init()` in raw `<script type="module">` HTML pages). There is no `--target bundler` build or conditional `exports` map for browser bundlers (Vite, Webpack, Rollup, esbuild).
-- **Resolution**: Build `--target nodejs`, `--target bundler`, and `--target web` outputs with conditional `package.json` `"exports"` (`"node"`, `"bundler"`/`"import"`, and `"browser"`) and publish `lavi-wasm` to npm so both Node.js and browser bundler users can `npm install lavi-wasm` and `import { createMachine, createActor, assign } from 'lavi-wasm'` directly without `await init()`.
-
 ### `TD-13`: Replace Recursive `#[derive(Clone, PartialEq)]` on `StateValue` with Iterative Heap Work-Stacks [flowos: 1695ba29-a50c-4f0f-8a21-05ecb6f02ed0]
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs) (lines 19–24)
 - **Problem**: While `StateValue::drop`, `StateValue::to_value`, `StateValue::collect_paths`, `StateValue::matches`, `Value::clone`, and `Value::eq` use iterative heap work-stacks (`Vec`), `StateValue` still derives `Clone` and `PartialEq` (`#[derive(Debug, Clone, PartialEq)]`). Comparing or cloning deeply nested `StateValue` trees (e.g., `finalized_state != self.current_state` in `transition_internal` or `self.current_state.clone()` when recording `history_value`) recurses on the CPU call stack proportional to state nesting depth $O(D)$.
 - **Required Fix**: Implement manual iterative `Clone` and `PartialEq` for `StateValue` using explicit heap `Vec` work-stacks (matching `impl Clone for Value` and `impl PartialEq for Value`), and audit remaining state-value helpers (`resolve_state_value_from_path`, `merge_state_value`) to ensure 100% bounded $O(1)$ call-stack usage.
-
-### `TD-14`: Split Monolithic `lavi/src/lib.rs` and `lavi-wasm/src/lib.rs` into Focused Submodules
-- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
-- **Problem**: `lavi/src/lib.rs` (~5,020 lines) and `lavi-wasm/src/lib.rs` (~5,080 lines) have grown into single-file monoliths, increasing compile times and cognitive load.
-- **Required Fix**:
-  - Split `lavi/src/lib.rs` into focused submodules: `types.rs` (`StateValue`, `StateType`, `Action`, `TransitionGuard`, `MachineDefinition`), `runtime.rs` (`RuntimeMachine`, microstep/macrostep engine, LCCA resolution), `snapshot.rs` (snapshot serialization/hydration), and `clock.rs` (`SimulatedClock`, `Clock`).
-  - Split `lavi-wasm/src/lib.rs` into `state_node.rs` (`StateNode`, `createMachine`, `setup`), `actor.rs` (`Actor`, `createActor`, subscriptions, timer bridging), `actions.rs` (`assign`, `raise`, `log`, `cancel`, `enqueueActions`), and `value_bridge.rs` (`Value` $\leftrightarrow$ `JsValue` conversion).
 
 ### `TD-15`: Workspace `[profile.release]` Flash/WASM Size Optimization
 - **Files**: [`Cargo.toml`](./Cargo.toml), [`lavi-c-cpp/library.json`](./lavi-c-cpp/library.json)
@@ -102,6 +88,10 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 ---
 
 ## Resolved Cleanup Items
+
+### `TD-12`: Publish `lavi-wasm` (`lavi-fsm`) to npm with Node & Browser Bundler Exports [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
+- **Files Modified**: [`scripts/build-npm-package.mjs`](./scripts/build-npm-package.mjs), [`.github/workflows/release.yml`](./.github/workflows/release.yml), [`lavi-wasm/README.md`](./lavi-wasm/README.md), [`README.md`](./README.md), [`RELEASING.md`](./RELEASING.md)
+- **Resolution**: Implemented `scripts/build-npm-package.mjs` to assemble a unified `lavi-fsm` npm package directory (`dist/npm`) containing `--target nodejs`, `--target bundler`, and `--target web` WASM builds with conditional `package.json` `"exports"` (`"node"`, `"browser"`, `"import"`, `"default"`, and `"./web"`), wired into the tag-triggered `.github/workflows/release.yml` pipeline alongside crates.io (`lavi`), PyPI (`lavi`), and Maven Central (`io.github.emmby:lavi`).
 
 ### `TD-1`: Restore Unmodified Upstream `tests/after.test.ts` and Fake-Timer / `SimulatedClock` Bridging (Resolved in Milestone 3)
 - **Files Modified**: [`tests/after.test.ts`](./tests/after.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs), [`tests/integration/timer_execution.test.ts`](./tests/integration/timer_execution.test.ts)
@@ -160,3 +150,11 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Replaced ad-hoc WASM hydration with direct delegation to Rust core, purged all 10 raw `console.log` statements from WASM restore logic, and ensured persisted status preserves `"status": "done"`.
   - Promoted state query methods (`can`, `has_tag`, `status`, `is_done`, `stop`) across Rust, C, and C++.
 - **Verification**: Verified via `lavi/tests/snapshot_tests.rs` (8 passed), `lavi/tests/adversarial_stack_tests.rs` (9 passed), `tests/integration/snapshot_status.test.ts` (4 passed), C unit tests in `c_test.c`, C++ tests in `cpp_test.cpp`, `cargo test --workspace` (pass), `cargo clippy` (0 warnings), and `npm test` (all passed).
+
+### `TD-14`: Split Monolithic `lavi/src/lib.rs` and `lavi-wasm/src/lib.rs` into Focused Submodules [flowos: 61e19ed6-5274-4201-a781-e85fd011ca8e]
+- **Files Modified**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi/src/types.rs`](./lavi/src/types.rs), [`lavi/src/runtime.rs`](./lavi/src/runtime.rs), [`lavi/src/snapshot.rs`](./lavi/src/snapshot.rs), [`lavi/src/clock.rs`](./lavi/src/clock.rs), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs), [`lavi-wasm/src/state_node.rs`](./lavi-wasm/src/state_node.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs), [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`lavi-wasm/src/value_bridge.rs`](./lavi-wasm/src/value_bridge.rs), [`lavi-wasm/src/utils.rs`](./lavi-wasm/src/utils.rs)
+- **Problem**: `lavi/src/lib.rs` (~5,031 lines) and `lavi-wasm/src/lib.rs` (~5,079 lines) had grown into single-file monoliths, increasing compile times and cognitive load.
+- **Architectural Changes**:
+  - Split `lavi/src/lib.rs` into focused `#![no_std]` submodules: `types.rs` (`StateValue`, `StateType`, `Value`, `Action`, `TransitionGuard`, `MachineDefinition`, `FnvHasher`, `IndexMap`, callback type aliases), `runtime.rs` (`RuntimeMachine`, microstep/macrostep engine, LCCA resolution, state completion, pure transition helpers), `snapshot.rs` (snapshot serialization and hydration on `RuntimeMachine`), and `clock.rs` (`SimulatedClock`, `IntoClockFn`), while keeping `lavi/src/lib.rs` as a clean backwards-compatible facade re-exporting all public APIs.
+  - Split `lavi-wasm/src/lib.rs` into focused submodules: `state_node.rs` (`StateNode`, `SetupObject`, `createMachine`, `setup`, `initialTransition`, `transition`, `getNextSnapshot`), `actor.rs` (`Actor`, `Snapshot`, `SimulatedClock`, `createActor`, subscriptions, host timer bridging), `actions.rs` (`assign`, `raise`, `log`, `cancel`, `enqueueActions`, `emit`, `assertEvent`, guard combinators, and JS action/guard/config extraction), and `value_bridge.rs` (`js_to_value`, `value_to_js`, re-exported from `utils.rs` and `lib.rs`).
+- **Verification**: Verified via `cargo clippy --workspace --all-targets -- -D warnings` (0 warnings), `cargo test --workspace` (all passed), `npm run test:conformance-check` (0 errors), and `npm test` (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, `test:unit` all passed).

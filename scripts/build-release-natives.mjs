@@ -260,10 +260,20 @@ export function buildReleasePlan(options = {}) {
 </manifest>
 `;
 
+  let pkgVersion = '0.1.0';
+  const pkgJsonPath = path.join(rootDir, 'package.json');
+  if (fs.existsSync(pkgJsonPath)) {
+    try {
+      pkgVersion = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')).version || '0.1.0';
+    } catch {
+      pkgVersion = '0.1.0';
+    }
+  }
+
   const aarPackage = {
     aarPath: path.join(outDir, 'aar', 'lavi-release.aar'),
     stagingDir: path.join(outDir, 'aar', 'staging'),
-    classesJar: path.join(rootDir, 'lavi-jvm', 'build', 'libs', 'lavi-jvm.jar'),
+    classesJar: path.join(rootDir, 'lavi-jvm', 'build', 'libs', `lavi-jvm-${pkgVersion}.jar`),
     manifestPath: path.join(outDir, 'aar', 'staging', 'AndroidManifest.xml'),
     manifestContent: aarManifest,
     entries: [
@@ -504,9 +514,10 @@ export function packageEmbeddedZip({ rootDir = ROOT_DIR, prebuiltLibsDir, output
   ];
 
   for (const item of staticFiles) {
-    if (fs.existsSync(item.srcPath)) {
-      entries.push({ path: item.zipPath, data: fs.readFileSync(item.srcPath) });
+    if (!fs.existsSync(item.srcPath)) {
+      throw new Error(`Missing required embedded static file for zip archive: ${item.srcPath}`);
     }
+    entries.push({ path: item.zipPath, data: fs.readFileSync(item.srcPath) });
   }
 
   if (prebuiltLibsDir && fs.existsSync(prebuiltLibsDir)) {
@@ -618,35 +629,37 @@ export function executeReleasePlan(plan, options = {}) {
     packageName: 'io.lavi'
   });
 
-  // 4. Embedded MCU compilation & unified Arduino/PlatformIO zip packaging
-  const stagingEmbedded = path.join(plan.outDir, 'embedded', 'staging', 'src');
-  for (const cmd of plan.embeddedCommands || []) {
-    if (options.verbose) {
-      console.log(`Executing embedded MCU build (${cmd.mcu}): ${cmd.command} ${cmd.args.join(' ')}`);
-    }
-    const res = spawnSync(cmd.command, cmd.args, {
-      stdio: 'inherit',
-      cwd: plan.rootDir,
-      env: process.env
-    });
-    if (res.status !== 0) {
-      throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
-    }
-    commandsRun++;
+  // 4. Embedded MCU compilation & unified Arduino/PlatformIO zip packaging (when --include-embedded or includeEmbedded is set)
+  if (options.includeEmbedded) {
+    const stagingEmbedded = path.join(plan.outDir, 'embedded', 'staging', 'src');
+    for (const cmd of plan.embeddedCommands || []) {
+      if (options.verbose) {
+        console.log(`Executing embedded MCU build (${cmd.mcu}): ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      const res = spawnSync(cmd.command, cmd.args, {
+        stdio: 'inherit',
+        cwd: plan.rootDir,
+        env: process.env
+      });
+      if (res.status !== 0) {
+        throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      commandsRun++;
 
-    if (fs.existsSync(cmd.srcBinary)) {
-      const targetDir = path.join(stagingEmbedded, cmd.mcu);
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.copyFileSync(cmd.srcBinary, path.join(targetDir, 'liblavi_c_cpp.a'));
+      if (fs.existsSync(cmd.srcBinary)) {
+        const targetDir = path.join(stagingEmbedded, cmd.mcu);
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.copyFileSync(cmd.srcBinary, path.join(targetDir, 'liblavi_c_cpp.a'));
+      }
     }
-  }
 
-  if (plan.embeddedPackage) {
-    packageEmbeddedZip({
-      rootDir: plan.rootDir,
-      prebuiltLibsDir: stagingEmbedded,
-      outputZipPath: plan.embeddedPackage.zipPath
-    });
+    if (plan.embeddedPackage) {
+      packageEmbeddedZip({
+        rootDir: plan.rootDir,
+        prebuiltLibsDir: stagingEmbedded,
+        outputZipPath: plan.embeddedPackage.zipPath
+      });
+    }
   }
 
   return {
@@ -663,6 +676,7 @@ const isMain =
 if (isMain) {
   const args = process.argv.slice(2);
   const shouldExecute = args.includes('--execute');
+  const includeEmbedded = args.includes('--include-embedded');
   const plan = buildReleasePlan({ dryRun: !shouldExecute });
   console.log('=== Lavi Single-Host Release Cross-Compilation Plan ===\n');
   console.log(`Desktop Targets (${DESKTOP_TARGETS.length}):`);
@@ -684,7 +698,7 @@ if (isMain) {
 
   if (shouldExecute) {
     console.log('\n🚀 Executing release compilation plan...');
-    executeReleasePlan(plan, { execute: true, verbose: true });
+    executeReleasePlan(plan, { execute: true, includeEmbedded, verbose: true });
     console.log('\n✅ Release compilation and packaging completed successfully.');
   } else {
     console.log('\n✅ Plan generated successfully (dry-run). Pass --execute to run.');

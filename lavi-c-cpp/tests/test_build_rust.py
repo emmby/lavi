@@ -326,7 +326,7 @@ class TestBuildRust(unittest.TestCase):
                     props[k.strip()] = v.strip()
 
         self.assertEqual(props.get("name"), "lavi")
-        self.assertEqual(props.get("version"), "0.1.1")
+        self.assertEqual(props.get("version"), "0.1.0")
         self.assertEqual(props.get("precompiled"), "full")
         self.assertEqual(props.get("ldflags"), "-llavi_c_cpp")
         self.assertEqual(props.get("includes"), "lavi.h,lavi.hpp")

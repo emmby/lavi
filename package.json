@@ -1,10 +1,12 @@
 {
   "name": "lavi",
+  "version": "0.1.0",
   "license": "MIT",
   "scripts": {
     "build": "npm run build:npm && npm run build:web && npm run build:c-cpp && npm run build:py && npm run build:jvm && npm run build:examples",
     "build:web": "cd lavi-wasm && wasm-pack build --target web --out-name lavi",
     "build:npm": "cd lavi-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name lavi",
+    "build:npm-dist": "node scripts/build-npm-package.mjs",
     "build:examples": "cargo build --manifest-path examples/rust/Cargo.toml && make -C examples/c && make -C examples/cpp && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/java assemble || gradle -p examples/java assemble) && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/kotlin assemble || gradle -p examples/kotlin assemble)",
     "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:py && npm run test:jvm && npm run test:examples && npm run test:unit",
     "test:conformance-check": "node scripts/check-conformance-tests.mjs",

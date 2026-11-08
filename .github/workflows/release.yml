@@ -1,0 +1,231 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and verify all release packages without publishing to external registries'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Python & pytest
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install pytest
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Verify Manifest Versions Match Tag
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            node scripts/sync-version.mjs --check "${GITHUB_REF_NAME}"
+          else
+            node scripts/sync-version.mjs --check
+          fi
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Build All & Run Full Test Suite
+        run: npm run build && npm test
+
+      - name: Dry-Run crates.io Package
+        run: cargo publish --dry-run -p lavi
+
+  build-wasm-npm:
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Assemble Unified lavi-fsm npm Package
+        run: |
+          node scripts/build-npm-package.mjs
+          cd dist/npm && npm pack
+
+      - name: Upload npm Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: dist/npm
+
+  build-natives-py-jvm:
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-gnu,aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Python, Zig, cargo-zigbuild, cargo-ndk, and maturin
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          python3 -m pip install ziglang maturin
+          cargo install --locked cargo-zigbuild cargo-ndk
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Build JVM Classes JAR for Android AAR
+        run: ./lavi-jvm/gradlew -p lavi-jvm jar
+
+      - name: Cross-Compile Desktop & Android Natives + Python Wheels + AAR
+        run: |
+          node scripts/build-release-natives.mjs --execute
+          maturin sdist -m lavi-py/Cargo.toml --out dist/wheels
+
+      - name: Package Signed Maven Central Bundle Zip (io.github.emmby:lavi)
+        env:
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: ./lavi-jvm/gradlew -p lavi-jvm zipMavenCentralBundle
+
+      - name: Upload Python Wheels & sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/wheels/*
+
+      - name: Upload Maven Central Bundle & Android AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-dist
+          path: |
+            dist/maven/lavi-maven-central-bundle.zip
+            dist/aar/lavi-release.aar
+
+  publish:
+    needs: [verify, build-wasm-npm, build-natives-py-jvm]
+    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download All Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Publish lavi to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p lavi
+
+      - name: Publish lavi-fsm to npm
+        working-directory: release-artifacts/npm-package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish ./lavi-fsm-*.tgz --provenance --access public
+
+      - name: Publish lavi to PyPI (Trusted Publishing OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release-artifacts/python-dist/
+
+      - name: Publish io.github.emmby:lavi to Maven Central (Sonatype Central Portal)
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
+        run: |
+          AUTH_HEADER=$(printf "%s:%s" "${MAVEN_CENTRAL_USERNAME}" "${MAVEN_CENTRAL_TOKEN}" | base64 -w 0)
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer ${AUTH_HEADER}" \
+            -F "bundle=@release-artifacts/jvm-dist/lavi-maven-central-bundle.zip" \
+            "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC"
+
+      - name: Attach Binary Archives to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release view "${TAG}" >/dev/null 2>&1 || gh release create "${TAG}" --generate-notes
+          gh release upload "${TAG}" \
+            release-artifacts/npm-package/*.tgz \
+            release-artifacts/python-dist/* \
+            release-artifacts/jvm-dist/lavi-maven-central-bundle.zip \
+            release-artifacts/jvm-dist/lavi-release.aar \
+            --clobber

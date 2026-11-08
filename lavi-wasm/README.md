@@ -1,18 +1,25 @@
-# Lavi WASM (`lavi-wasm`)
+# Lavi WASM (`lavi-fsm`)
 
-WebAssembly bindings for **Lavi**, enabling XState v5-compatible statecharts to run in the browser or Node.js via WebAssembly.
+WebAssembly bindings for **Lavi**, enabling XState v5-compatible statecharts to run in Node.js, browser bundlers (Vite, Webpack, Rollup, esbuild), and direct browser ES modules via WebAssembly.
+
+## Installation
+
+```bash
+npm install lavi-fsm
+```
 
 ## Features
 
-- **XState v5 API Compatibility**: Exposes `createMachine`, `createActor`, `setup`, `assign`, `assertEvent`, and `SimulatedClock`.
+- **XState v5 API Compatibility**: Exposes `createMachine`, `createActor`, `setup`, `assign`, `raise`, `assertEvent`, and `SimulatedClock`.
 - **Inline Callback Bridging**: Seamlessly bridges inline JavaScript actions, guards, and `assign` functions (`js_sys::Function`) to named runtime callbacks on the Rust core.
+- **Universal Module Exports**:
+  - `import { createMachine, createActor } from 'lavi-fsm'` works out-of-the-box in Node.js and browser bundlers.
+  - `import init, { createMachine, createActor } from 'lavi-fsm/web'` supports direct `<script type="module">` usage in browsers.
 
 ## Usage
 
 ```javascript
-// TODO(flowos: e9505536-8f94-4c57-8de4-944e1257ce7c): Publish `lavi-wasm` to npm
-import { createMachine, createActor, assign } from 'lavi-wasm';
-// (Or import from './lavi-wasm/pkg-npm/lavi.js' when running from a local repo build)
+import { createMachine, createActor, assign } from 'lavi-fsm';
 
 const machine = createMachine({
   id: 'toggle',
