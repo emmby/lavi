@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   normalizeVersion,
+  resolveExpectedVersion,
   readAllManifestVersions,
   checkVersions,
   syncVersions,
@@ -13,6 +14,18 @@ describe('sync-version script', () => {
     expect(normalizeVersion('v0.1.0')).toBe('0.1.0');
     expect(normalizeVersion('0.2.3-beta.1')).toBe('0.2.3-beta.1');
     expect(() => normalizeVersion('not-a-version')).toThrow(/Invalid semantic version/);
+  });
+
+  it('ignores GITHUB_REF_NAME when GITHUB_REF_TYPE is branch (workflow_dispatch on main)', () => {
+    expect(
+      resolveExpectedVersion(undefined, { GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main' })
+    ).toBeUndefined();
+    expect(
+      resolveExpectedVersion(undefined, { GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v0.1.0' })
+    ).toBe('v0.1.0');
+    expect(
+      resolveExpectedVersion('v0.2.0', { GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main' })
+    ).toBe('v0.2.0');
   });
 
   it('updates [package] version in Cargo.toml without modifying [dependencies] versions', () => {

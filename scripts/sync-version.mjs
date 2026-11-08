@@ -159,6 +159,14 @@ export function syncVersions(newVersion, options = {}) {
   return { version, updatedFiles };
 }
 
+export function resolveExpectedVersion(argVersion, env = process.env) {
+  if (argVersion) return argVersion;
+  if (env.GITHUB_REF_TYPE === 'tag' && env.GITHUB_REF_NAME) {
+    return env.GITHUB_REF_NAME;
+  }
+  return undefined;
+}
+
 const isMain =
   process.argv[1] &&
   path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
@@ -166,7 +174,7 @@ const isMain =
 if (isMain) {
   const args = process.argv.slice(2);
   if (args[0] === '--check') {
-    const expected = args[1] || process.env.GITHUB_REF_NAME || undefined;
+    const expected = resolveExpectedVersion(args[1]);
     const res = checkVersions({ expectedVersion: expected });
     if (!res.ok) {
       console.error('❌ Version mismatch detected across workspace manifests:');
