@@ -33,13 +33,14 @@ Lavi publishes pre-built binary packages across four primary registries from a s
    - **Environment name**: *(leave blank)*
 3. Click **Add**. No GitHub secret is needed—`pypa/gh-action-pypi-publish` authenticates via GitHub OIDC (`id-token: write`).
 
-### 1.3 npm (`lavi-fsm`)
-1. Sign in to https://www.npmjs.com.
-2. Go to **Access Tokens → Generate New Token → Granular Access Token**:
-   - **Packages and scopes**: Read and write (All packages)
-   - Check **Bypass two-factor authentication (2FA)** for automation.
-3. Add the token to GitHub repository secrets as:
-   - `NPM_TOKEN`
+### 1.3 npm (`lavi-fsm` — Zero-Secret OIDC Trusted Publishing)
+1. Sign in to https://www.npmjs.com and open `https://www.npmjs.com/package/lavi-fsm/access`.
+2. Under **Trusted Publisher**, configure **GitHub Actions**:
+   - **Organization or user**: `emmby`
+   - **Repository**: `lavi`
+   - **Workflow filename**: `release.yml`
+   - **Publishing access**: Require two-factor authentication and disallow bypass 2FA tokens (recommended).
+3. No `NPM_TOKEN` GitHub secret is required—`npm publish --provenance --access public` authenticates directly via GitHub OIDC (`id-token: write`).
 
 ### 1.4 Maven Central (`io.github.emmby:lavi` via Sonatype Central Portal)
 1. Sign in with your `emmby` GitHub account at https://central.sonatype.com.
