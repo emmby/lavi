@@ -8,6 +8,7 @@ Lavi publishes pre-built binary packages across four primary registries from a s
 | **Rust (`#![no_std]`)** | **crates.io** | `lavi` | `cargo add lavi` |
 | **Python (`abi3` wheels)** | **PyPI** | `lavi` | `pip install lavi` / `uv add lavi` |
 | **Java / Kotlin (Fat JNI JAR)** | **Maven Central** | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.1.0")` |
+| **C / C++ (Arduino IDE & PlatformIO)** | **GitHub Releases** | `lavi-embedded.zip` | Arduino IDE *Add .ZIP Library...* or PlatformIO `lib_deps` |
 
 ---
 
@@ -53,6 +54,9 @@ Lavi publishes pre-built binary packages across four primary registries from a s
    Add the printed values to GitHub repository secrets:
    - `MAVEN_GPG_PRIVATE_KEY`
    - `MAVEN_GPG_PASSPHRASE`
+
+### 1.5 Embedded C/C++ (`lavi-embedded.zip` for Arduino IDE & PlatformIO)
+No external secrets are required. The `build-embedded` job in `release.yml` automatically installs `espup`, cross-compiles `liblavi_c_cpp.a` for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`), packages `dist/embedded/lavi-embedded.zip` (containing `library.properties`, `library.json`, `build_rust.py`, headers, precompiled `.a` archives, and `examples/Stoplight/Stoplight.ino`), and attaches it to the GitHub Release.
 
 ---
 

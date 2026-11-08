@@ -23,9 +23,44 @@ LIB_ROOT = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals()
 CRATE_NAME = "lavi-c-cpp"
 LIB_NAME = "lavi_c_cpp"
 STATIC_LIB_FILENAME = f"lib{LIB_NAME}.a"
-CARGO_TOML = os.path.join(LIB_ROOT, CRATE_NAME, "Cargo.toml")
-TARGET_DIR = os.path.join(LIB_ROOT, "target")
-INCLUDE_DIR = os.path.join(LIB_ROOT, CRATE_NAME, "include")
+
+if os.path.basename(LIB_ROOT) == CRATE_NAME and os.path.isfile(os.path.join(LIB_ROOT, "Cargo.toml")):
+    REPO_ROOT = os.path.abspath(os.path.join(LIB_ROOT, ".."))
+    CARGO_TOML = os.path.join(LIB_ROOT, "Cargo.toml")
+else:
+    REPO_ROOT = LIB_ROOT
+    CARGO_TOML = os.path.join(LIB_ROOT, CRATE_NAME, "Cargo.toml")
+
+TARGET_DIR = os.path.join(REPO_ROOT, "target")
+
+
+def get_include_dir(lib_root):
+    src_dir = os.path.join(lib_root, "src")
+    if os.path.isfile(os.path.join(src_dir, "lavi.h")):
+        return src_dir
+    inc_dir = os.path.join(lib_root, "include")
+    if os.path.isfile(os.path.join(inc_dir, "lavi.h")):
+        return inc_dir
+    return os.path.join(lib_root, CRATE_NAME, "include")
+
+
+INCLUDE_DIR = get_include_dir(LIB_ROOT)
+
+
+def get_prebuilt_lib_dir(lib_root, mcu):
+    return os.path.join(lib_root, "src", (mcu or "").lower())
+
+
+def has_prebuilt_lib(lib_root, mcu, env_vars=None):
+    mcu_norm = (mcu or "").lower()
+    if mcu_norm in ("", "native"):
+        return False
+    check_env = env_vars if env_vars is not None else os.environ
+    force_cargo = str(check_env.get("LAVI_FORCE_CARGO_BUILD", "")).strip().lower()
+    if force_cargo in ("1", "true", "yes"):
+        return False
+    archive_path = os.path.join(get_prebuilt_lib_dir(lib_root, mcu_norm), STATIC_LIB_FILENAME)
+    return os.path.isfile(archive_path)
 
 
 def _detect_host_rust_target():
@@ -142,7 +177,7 @@ def build_rust_lib(mcu, rust_target, active_env=None, *args, **kwargs):
             active_env.Exit(1)
         return
 
-    lib_release_dir = get_lib_release_dir(LIB_ROOT, rust_target, is_native)
+    lib_release_dir = get_lib_release_dir(REPO_ROOT, rust_target, is_native)
     lib_path = os.path.join(lib_release_dir, STATIC_LIB_FILENAME)
 
     if not os.path.exists(lib_path):
@@ -172,16 +207,28 @@ if env is not None:
         print(f"Detected MCU: {mcu} -> Rust target: {rust_target}")
 
     if not env.GetOption("clean"):
-        lib_target_dir = get_lib_release_dir(LIB_ROOT, rust_target, is_native)
-        env.Append(
-            LIBPATH=[lib_target_dir],
-            LIBS=[LIB_NAME]
-        )
-        build_rust_lib(
-            mcu,
-            rust_target,
-            active_env=env,
-            cargo_to_use=cargo_to_use,
-            is_riscv=is_riscv,
-            is_native=is_native,
-        )
+        inc_dir = get_include_dir(LIB_ROOT)
+        active_env_vars = dict(env["ENV"]) if "ENV" in env else None
+        if not is_native and has_prebuilt_lib(LIB_ROOT, mcu, env_vars=active_env_vars):
+            prebuilt_dir = get_prebuilt_lib_dir(LIB_ROOT, mcu)
+            print(f"Using precompiled {STATIC_LIB_FILENAME} from {prebuilt_dir}")
+            env.Append(
+                CPPPATH=[inc_dir],
+                LIBPATH=[prebuilt_dir],
+                LIBS=[LIB_NAME]
+            )
+        else:
+            lib_target_dir = get_lib_release_dir(REPO_ROOT, rust_target, is_native)
+            env.Append(
+                CPPPATH=[inc_dir],
+                LIBPATH=[lib_target_dir],
+                LIBS=[LIB_NAME]
+            )
+            build_rust_lib(
+                mcu,
+                rust_target,
+                active_env=env,
+                cargo_to_use=cargo_to_use,
+                is_riscv=is_riscv,
+                is_native=is_native,
+            )

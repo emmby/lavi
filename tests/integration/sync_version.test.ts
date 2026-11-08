@@ -43,7 +43,8 @@ describe('sync-version script', () => {
       fs.writeFileSync(path.join(tmpRoot, dir, 'Cargo.toml'), sampleCargo);
     }
     fs.writeFileSync(path.join(tmpRoot, 'package.json'), JSON.stringify({ name: 'lavi', version: '0.1.0' }, null, 2));
-    fs.writeFileSync(path.join(tmpRoot, 'library.json'), JSON.stringify({ name: 'lavi', version: '0.1.1' }, null, 2));
+    fs.writeFileSync(path.join(tmpRoot, 'lavi-c-cpp', 'library.json'), JSON.stringify({ name: 'lavi', version: '0.1.1' }, null, 2));
+    fs.writeFileSync(path.join(tmpRoot, 'lavi-c-cpp', 'library.properties'), `name=lavi\nversion=0.1.1\n`);
     fs.writeFileSync(path.join(tmpRoot, 'lavi-py', 'pyproject.toml'), `[project]\nname = "lavi"\nversion = "0.1.0"\n`);
     fs.writeFileSync(path.join(tmpRoot, 'lavi-jvm', 'build.gradle.kts'), `group = "io.github.emmby"\nversion = "0.1.0"\n`);
     fs.writeFileSync(path.join(tmpRoot, 'examples', 'java', 'build.gradle.kts'), `dependencies {\n    implementation("io.github.emmby:lavi:0.1.0")\n}\n`);
@@ -51,7 +52,8 @@ describe('sync-version script', () => {
 
     const initialCheck = checkVersions({ rootDir: tmpRoot, expectedVersion: 'v0.1.0' });
     expect(initialCheck.ok).toBe(false);
-    expect(initialCheck.mismatches.map((m: any) => m.file)).toContain('library.json');
+    expect(initialCheck.mismatches.map((m: any) => m.file)).toContain('lavi-c-cpp/library.json');
+    expect(initialCheck.mismatches.map((m: any) => m.file)).toContain('lavi-c-cpp/library.properties');
 
     syncVersions('v0.2.0', { rootDir: tmpRoot });
 
@@ -68,6 +70,6 @@ describe('sync-version script', () => {
     const check = checkVersions({ expectedVersion: 'v0.1.0' });
     expect(check.mismatches).toEqual([]);
     expect(check.ok).toBe(true);
-    expect(Object.keys(readAllManifestVersions()).length).toBe(11);
+    expect(Object.keys(readAllManifestVersions()).length).toBe(12);
   });
 });

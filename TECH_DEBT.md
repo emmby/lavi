@@ -44,14 +44,12 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 - **Problem**: While `StateValue::drop`, `StateValue::to_value`, `StateValue::collect_paths`, `StateValue::matches`, `Value::clone`, and `Value::eq` use iterative heap work-stacks (`Vec`), `StateValue` still derives `Clone` and `PartialEq` (`#[derive(Debug, Clone, PartialEq)]`). Comparing or cloning deeply nested `StateValue` trees (e.g., `finalized_state != self.current_state` in `transition_internal` or `self.current_state.clone()` when recording `history_value`) recurses on the CPU call stack proportional to state nesting depth $O(D)$.
 - **Required Fix**: Implement manual iterative `Clone` and `PartialEq` for `StateValue` using explicit heap `Vec` work-stacks (matching `impl Clone for Value` and `impl PartialEq for Value`), and audit remaining state-value helpers (`resolve_state_value_from_path`, `merge_state_value`) to ensure 100% bounded $O(1)$ call-stack usage.
 
-### `TD-15`: Workspace `[profile.release]` Flash/WASM Size Optimization & `library.json` Export Pruning
-- **Files**: [`Cargo.toml`](./Cargo.toml), [`library.json`](./library.json)
+### `TD-15`: Workspace `[profile.release]` Flash/WASM Size Optimization
+- **Files**: [`Cargo.toml`](./Cargo.toml), [`lavi-c-cpp/library.json`](./lavi-c-cpp/library.json)
 - **Problem**:
   1. The root workspace `Cargo.toml` does not configure `[profile.release]` for size (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`), leaving `.wasm` (~752 KB) and embedded staticlibs larger than necessary.
-  2. `library.json` `export.include` currently lists `"lavi-wasm/**"`, which is unnecessary in PlatformIO microcontroller archives.
 - **Required Fix**:
   - Add `[profile.release]` size optimizations (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`) in the workspace `Cargo.toml`.
-  - Remove `"lavi-wasm/**"` from `library.json` `export.include`.
 
 ### `TD-16`: Strict XState 5 `assign` vs. `action` Separation & Zero-Copy `const fsm_value_t*` Accessors in Rust/C/C++
 - **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs), [`lavi-c-cpp/src/lib.rs`](./lavi-c-cpp/src/lib.rs), [`lavi-c-cpp/include/lavi.h`](./lavi-c-cpp/include/lavi.h), [`lavi-c-cpp/include/lavi.hpp`](./lavi-c-cpp/include/lavi.hpp)

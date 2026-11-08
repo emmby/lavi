@@ -1,19 +1,19 @@
 # Lavi
 
-**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`), **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO), **Python** (`lavi-py`), and **Java / Kotlin / Android** (`lavi-jvm`).
+**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`), **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO / Arduino IDE), **Python** (`lavi-py`), and **Java / Kotlin / Android** (`lavi-jvm`).
 
 ## Why Lavi?
 
 ### Design in XState. Run Everywhere.
 XState v5 and Stately Studio provide an expressive, standardized JSON configuration format for Harel Statecharts and W3C SCXML semantics. **Lavi** brings that same statechart execution model beyond JavaScript so the exact same machine definition can run identically across:
-- **Embedded Microcontrollers (C / C++ / PlatformIO)**: Run statecharts on ESP32, STM32, or bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
+- **Embedded Microcontrollers (C / C++ / PlatformIO / Arduino IDE)**: Run statecharts on ESP32 (Xtensa & RISC-V) and bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
 - **Native Systems (Rust)**: Embed a lightweight `#![no_std]` + `alloc` statechart engine (`indexmap` is the sole dependency; zero `serde` overhead).
 - **Browsers & Node.js (WebAssembly)**: Use XState v5's `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock` APIs backed by the compiled WASM core.
 - **Backend Services & Simulation (Python)**: Run statecharts in Python services or drive deterministic tests in `pytest` with `SimulatedClock` using `lavi-py`.
 - **Server JVM & Android (Java & Kotlin)**: Embed statecharts in server backends or Android mobile apps with zero-friction native loading (`.jar`) and 16 KB page-aligned AAR packaging (`.aar`) using `lavi-jvm`.
 
 ### Why the Name "Lavi"?
-Statecharts were invented in 1983–1987 by computer scientist **David Harel** in collaboration with systems engineering pioneer **Dr. Jonah Z. Lavi** while designing the avionics software for the **Lavi** aircraft—where complex embedded flight-control logic needed a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "young lion" in Hebrew.
+**Lavi** is named in honor of systems engineering pioneer **Dr. Jonah Z. Lavi**, who partnered with computer scientist **David Harel** in 1983–1987 to invent **Harel Statecharts** while specifying the embedded avionics software for the *Lavi* aircraft—where complex flight-control logic required a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "lion" in Hebrew.
 
 ## Core Principles
 
@@ -45,11 +45,10 @@ Hierarchical statecharts replace fragile `if/else` boolean-flag logic with decla
 
 * **`lavi`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
 * **`lavi-wasm`**: WebAssembly adapter exposing XState 5's JavaScript/TypeScript API and bridging inline JS callbacks to named runtime handlers.
-* **`lavi-c-cpp`**: C/C++ static library and headers (`include/lavi.h`, `include/lavi.hpp`) for embedded (`espressif32`) and host (`native`) targets.
+* **`lavi-c-cpp`**: C/C++ static library, headers (`include/lavi.h`, `include/lavi.hpp`), and PlatformIO/Arduino IDE manifests (`library.json`, `library.properties`, `build_rust.py`) for embedded (`espressif32`) and host (`native`) targets.
 * **`lavi-py`**: Python native extension via PyO3 (`abi3-py38`) with full `.pyi` type stubs and pytest integration.
 * **`lavi-jvm`**: Java and Kotlin JNI bridge via `jni-rs` with Gradle `java-library`, desktop resource extraction, and Android AAR packaging.
-* **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator and Android AAR packager (16 KB page-alignment check).
-* **`library.json` / `build_rust.py`**: Root PlatformIO library manifest and Cargo build hook (`lib_deps = https://github.com/emmby/lavi.git`).
+* **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator, Android AAR packager (16 KB page-alignment check), and unified Arduino IDE / PlatformIO `.zip` packager (`dist/embedded/lavi-embedded.zip`).
 * **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
 * **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
 
@@ -216,6 +215,11 @@ fsm_simulated_clock_free(clock);
 ```
 
 ### C++11 (`lavi.hpp` — [`examples/cpp/`](./examples/cpp/) & [`examples/esp32/`](./examples/esp32/))
+
+For ESP32 embedded projects, download `lavi-embedded.zip` from [GitHub Releases](https://github.com/emmby/lavi/releases) (no Rust toolchain required):
+- **Arduino IDE**: Install via **Sketch → Include Library → Add .ZIP Library...** (see [`examples/esp32/Stoplight/Stoplight.ino`](./examples/esp32/Stoplight/Stoplight.ino)).
+- **PlatformIO**: Add `lib_deps = https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip` to [`platformio.ini`](./examples/esp32/platformio.ini).
+
 ```cpp
 #include "lavi.hpp"
 #include <cassert>
@@ -304,7 +308,7 @@ SimulatedClock(0).use { clock ->
 ## How Lavi Compares
 
 - **[XState v5](https://stately.ai/docs/xstate)** is the reference standard when your entire stack runs on JavaScript/TypeScript; **Lavi** brings those exact statechart semantics and Stately Studio JSON definitions to `#![no_std]` Rust, C, C++, WebAssembly, Python, Java, and Kotlin (with Swift, Dart, and C# planned) via a single shared native engine.
-- **[StateSmith](https://github.com/StateSmith/StateSmith)**, **[`statig`](https://github.com/mdeloof/statig)**, and **[Boost.SML](https://github.com/boost-ext/sml)** are ideal when you need compile-time code generators or macros with **zero heap (`no-alloc`)** on tiny 8-bit or Cortex-M0 chips; **Lavi** uses `#![no_std]` + `alloc` (targeting 32-bit MCUs like ESP32/STM32, desktop, and web) to unlock runtime/OTA JSON loading, snapshot persistence, parallel states, and declarative `after` timers across languages.
+- **[StateSmith](https://github.com/StateSmith/StateSmith)**, **[`statig`](https://github.com/mdeloof/statig)**, and **[Boost.SML](https://github.com/boost-ext/sml)** are ideal when you need compile-time code generators or macros with **zero heap (`no-alloc`)** on tiny 8-bit or Cortex-M0 chips; **Lavi** uses `#![no_std]` + `alloc` (targeting 32-bit MCUs like ESP32, desktop, and web) to unlock runtime/OTA JSON loading, snapshot persistence, parallel states, and declarative `after` timers across languages.
 - **[QP/C & QP/C++](https://www.state-machine.com/products/qp)** provide a full Active Object RTOS framework (dual GPLv3 / commercial); **Lavi** is an MIT-licensed, standalone statechart engine that drops into any existing RTOS (FreeRTOS, Zephyr), async runtime, or UI loop.
 - **[itemis CREATE](https://www.itemis.com/en/products/itemis-create/)** and **MathWorks Stateflow** serve enterprise workflows requiring proprietary IDEs and safety-certification kits; **Lavi** is open-source, uses standard XState v5 JSON, and verifies correctness directly against the upstream XState test suite.
 

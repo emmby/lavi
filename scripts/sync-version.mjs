@@ -11,7 +11,8 @@ const SEMVER_REGEX = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
 export const MANIFEST_SPECS = [
   { relPath: 'package.json', kind: 'json' },
-  { relPath: 'library.json', kind: 'json' },
+  { relPath: 'lavi-c-cpp/library.json', kind: 'json' },
+  { relPath: 'lavi-c-cpp/library.properties', kind: 'properties' },
   { relPath: 'lavi/Cargo.toml', kind: 'toml-section', section: 'package' },
   { relPath: 'lavi-wasm/Cargo.toml', kind: 'toml-section', section: 'package' },
   { relPath: 'lavi-c-cpp/Cargo.toml', kind: 'toml-section', section: 'package' },
@@ -81,6 +82,9 @@ export function readAllManifestVersions(rootDir = DEFAULT_ROOT) {
     if (spec.kind === 'json') {
       const parsed = JSON.parse(content);
       result[spec.relPath] = parsed.version ?? null;
+    } else if (spec.kind === 'properties') {
+      const m = content.match(/^\s*version\s*=\s*([^\r\n]+)/m);
+      result[spec.relPath] = m ? m[1].trim() : null;
     } else if (spec.kind === 'toml-section') {
       result[spec.relPath] = readTomlSectionVersion(content, spec.section);
     } else if (spec.kind === 'gradle-version') {
@@ -139,6 +143,8 @@ export function syncVersions(newVersion, options = {}) {
         nextObj.version = version;
         updated = JSON.stringify(nextObj, null, 2) + '\n';
       }
+    } else if (spec.kind === 'properties') {
+      updated = original.replace(/^(\s*version\s*=\s*)[^\r\n]+/m, `$1${version}`);
     } else if (spec.kind === 'toml-section') {
       updated = writeTomlSectionVersion(original, spec.section, version);
     } else if (spec.kind === 'gradle-version') {

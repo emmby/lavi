@@ -4,9 +4,11 @@ import * as path from 'node:path';
 import {
   DESKTOP_TARGETS,
   ANDROID_TARGETS,
+  EMBEDDED_TARGETS,
   buildReleasePlan,
   verifyElf16KbAlignmentOutput,
   packageAndroidAar,
+  packageEmbeddedZip,
   executeReleasePlan,
 } from '../scripts/build-release-natives.mjs';
 
@@ -91,5 +93,59 @@ describe('build-release-natives', () => {
     const result = executeReleasePlan(plan, { dryRun: true });
     expect(result.executed).toBe(false);
     expect(result.commandsRun).toBe(0);
+  });
+
+  it('includes all 6 ESP32 embedded MCU targets in EMBEDDED_TARGETS and buildReleasePlan', () => {
+    const mcus = EMBEDDED_TARGETS.map((t: any) => t.mcu);
+    expect(mcus).toEqual(['esp32', 'esp32s2', 'esp32s3', 'esp32c3', 'esp32c6', 'esp32h2']);
+
+    const plan = buildReleasePlan({ dryRun: true });
+    expect(plan.embeddedCommands.length).toBe(6);
+    expect(plan.embeddedPackage.zipPath).toContain('lavi-embedded.zip');
+  });
+
+  it('packages unified Arduino IDE and PlatformIO zip archive in .tmp/ with precompiled .a and manifests', () => {
+    const tmpDir = path.resolve('.tmp', 'embedded-zip-test-' + Date.now());
+    const prebuiltDir = path.join(tmpDir, 'prebuilt');
+    const esp32Dir = path.join(prebuiltDir, 'esp32');
+    const esp32s3Dir = path.join(prebuiltDir, 'esp32s3');
+    fs.mkdirSync(esp32Dir, { recursive: true });
+    fs.mkdirSync(esp32s3Dir, { recursive: true });
+
+    fs.writeFileSync(path.join(esp32Dir, 'liblavi_c_cpp.a'), Buffer.from('!<arch>\ndummy-esp32-a'));
+    fs.writeFileSync(path.join(esp32s3Dir, 'liblavi_c_cpp.a'), Buffer.from('!<arch>\ndummy-esp32s3-a'));
+
+    const outputZipPath = path.join(tmpDir, 'output', 'lavi-embedded.zip');
+    const result = packageEmbeddedZip({
+      prebuiltLibsDir: prebuiltDir,
+      outputZipPath,
+    });
+
+    expect(fs.existsSync(outputZipPath)).toBe(true);
+    const zipBuffer = fs.readFileSync(outputZipPath);
+    expect(zipBuffer[0]).toBe(0x50); // 'P'
+    expect(zipBuffer[1]).toBe(0x4b); // 'K'
+    expect(zipBuffer[2]).toBe(0x03);
+    expect(zipBuffer[3]).toBe(0x04);
+
+    expect(result.entries).toContain('lavi/library.properties');
+    expect(result.entries).toContain('lavi/library.json');
+    expect(result.entries).toContain('lavi/build_rust.py');
+    expect(result.entries).toContain('lavi/LICENSE');
+    expect(result.entries).toContain('lavi/README.md');
+    expect(result.entries).toContain('lavi/src/lavi.h');
+    expect(result.entries).toContain('lavi/src/lavi.hpp');
+    expect(result.entries).toContain('lavi/src/esp32/liblavi_c_cpp.a');
+    expect(result.entries).toContain('lavi/src/esp32s3/liblavi_c_cpp.a');
+    expect(result.entries).toContain('lavi/examples/Stoplight/Stoplight.ino');
+
+    // Verify missing static files throw an explicit error
+    expect(() =>
+      packageEmbeddedZip({
+        rootDir: path.join(tmpDir, 'nonexistent-root'),
+        prebuiltLibsDir: prebuiltDir,
+        outputZipPath: path.join(tmpDir, 'output', 'should-fail.zip'),
+      })
+    ).toThrow(/Missing required embedded static file/);
   });
 });

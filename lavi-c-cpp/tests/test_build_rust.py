@@ -8,8 +8,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+CRATE_DIR = os.path.join(REPO_ROOT, "lavi-c-cpp")
+if CRATE_DIR not in sys.path:
+    sys.path.insert(0, CRATE_DIR)
 
 import build_rust  # noqa: E402
 
@@ -95,39 +96,99 @@ class TestBuildRust(unittest.TestCase):
         )
 
     def test_c_cpp_crate_paths_and_no_dependency_ref(self):
-        self.assertEqual(build_rust.LIB_ROOT, REPO_ROOT)
+        self.assertEqual(build_rust.LIB_ROOT, CRATE_DIR)
+        self.assertEqual(build_rust.REPO_ROOT, REPO_ROOT)
         self.assertEqual(build_rust.CRATE_NAME, "lavi-c-cpp")
         self.assertEqual(build_rust.LIB_NAME, "lavi_c_cpp")
         self.assertEqual(build_rust.STATIC_LIB_FILENAME, "liblavi_c_cpp.a")
         self.assertEqual(
             build_rust.CARGO_TOML,
-            os.path.join(REPO_ROOT, "lavi-c-cpp", "Cargo.toml"),
+            os.path.join(CRATE_DIR, "Cargo.toml"),
         )
         self.assertEqual(
             build_rust.INCLUDE_DIR,
-            os.path.join(REPO_ROOT, "lavi-c-cpp", "include"),
+            os.path.join(CRATE_DIR, "include"),
         )
         self.assertTrue(os.path.isfile(build_rust.CARGO_TOML))
+        self.assertFalse(os.path.exists(os.path.join(REPO_ROOT, "library.json")))
+        self.assertFalse(os.path.exists(os.path.join(REPO_ROOT, "build_rust.py")))
         self.assertFalse(hasattr(build_rust, "DEPENDENCY_REF"))
         self.assertFalse(hasattr(build_rust, "DEPENDENCY_URL"))
         self.assertFalse(hasattr(build_rust, "clone_dependency"))
 
     def test_scons_exec_without_dunder_file(self):
         """Simulate PlatformIO SCons SConscript execution where __file__ is not in globals()."""
-        script_path = os.path.join(REPO_ROOT, "build_rust.py")
+        script_path = os.path.join(CRATE_DIR, "build_rust.py")
         with open(script_path, "r", encoding="utf-8") as f:
             source = f.read()
 
         scons_globals = {"__name__": "__main__"}
-        with patch("os.getcwd", return_value=REPO_ROOT):
+        with patch("os.getcwd", return_value=CRATE_DIR):
             exec(compile(source, script_path, "exec"), scons_globals)
 
         self.assertNotIn("__file__", scons_globals)
-        self.assertEqual(scons_globals["LIB_ROOT"], REPO_ROOT)
+        self.assertEqual(scons_globals["LIB_ROOT"], CRATE_DIR)
         self.assertEqual(
             scons_globals["CARGO_TOML"],
-            os.path.join(REPO_ROOT, "lavi-c-cpp", "Cargo.toml"),
+            os.path.join(CRATE_DIR, "Cargo.toml"),
         )
+
+    def test_prebuilt_lib_detection_and_fast_path(self):
+        """Validate prebuilt src/<mcu>/liblavi_c_cpp.a detection and SCons fast-path."""
+        import tempfile
+
+        tmp_base = os.path.join(REPO_ROOT, ".tmp")
+        os.makedirs(tmp_base, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=tmp_base) as pkg_root:
+            mcu_dir = os.path.join(pkg_root, "src", "esp32s3")
+            os.makedirs(mcu_dir, exist_ok=True)
+            inc_dir = os.path.join(pkg_root, "src")
+            with open(os.path.join(inc_dir, "lavi.h"), "w", encoding="utf-8") as f:
+                f.write("// header\n")
+            archive_path = os.path.join(mcu_dir, "liblavi_c_cpp.a")
+            with open(archive_path, "wb") as f:
+                f.write(b"!<arch>\n")
+
+            self.assertEqual(build_rust.get_prebuilt_lib_dir(pkg_root, "esp32s3"), mcu_dir)
+            self.assertTrue(build_rust.has_prebuilt_lib(pkg_root, "esp32s3"))
+            self.assertFalse(build_rust.has_prebuilt_lib(pkg_root, "esp32c3"))
+            self.assertFalse(build_rust.has_prebuilt_lib(pkg_root, "native"))
+            self.assertEqual(build_rust.get_include_dir(pkg_root), inc_dir)
+
+            # LAVI_FORCE_CARGO_BUILD=1 disables prebuilt fast-path
+            self.assertFalse(
+                build_rust.has_prebuilt_lib(
+                    pkg_root, "esp32s3", env_vars={"LAVI_FORCE_CARGO_BUILD": "1"}
+                )
+            )
+
+            # Simulate SCons execution with prebuilt library present (must NOT invoke Cargo)
+            script_path = os.path.join(CRATE_DIR, "build_rust.py")
+            with open(script_path, "r", encoding="utf-8") as f:
+                source = f.read()
+
+            dummy_env = MagicMock()
+            dummy_env.get.side_effect = lambda k, default="": "espressif32" if k == "PIOPLATFORM" else default
+            dummy_env.BoardConfig.return_value = {"build.mcu": "esp32s3"}
+            dummy_env.GetOption.return_value = False
+            dummy_env.__contains__.side_effect = lambda k: k == "ENV"
+            dummy_env.__getitem__.side_effect = lambda k: {"PATH": "/usr/bin"} if k == "ENV" else None
+
+            scons_globals = {"__name__": "__main__"}
+            with patch.dict(sys.modules, {"SCons": MagicMock(), "SCons.Script": MagicMock()}):
+                sys.modules["SCons.Script"].Import.side_effect = (
+                    lambda name: scons_globals.__setitem__(name, dummy_env)
+                )
+                with patch("os.getcwd", return_value=pkg_root), patch(
+                    "subprocess.check_call"
+                ) as mock_cargo:
+                    exec(compile(source, script_path, "exec"), scons_globals)
+                    mock_cargo.assert_not_called()
+                    dummy_env.Append.assert_called_once_with(
+                        CPPPATH=[inc_dir],
+                        LIBPATH=[mcu_dir],
+                        LIBS=["lavi_c_cpp"],
+                    )
 
     @patch("os.path.exists", return_value=True)
     @patch("subprocess.check_call")
@@ -231,7 +292,7 @@ class TestBuildRust(unittest.TestCase):
         dummy_env.Exit.assert_called_once_with(1)
 
     def test_library_json_configuration(self):
-        lib_json_path = os.path.join(REPO_ROOT, "library.json")
+        lib_json_path = os.path.join(CRATE_DIR, "library.json")
         with open(lib_json_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
         self.assertEqual(manifest.get("name"), "lavi")
@@ -239,30 +300,52 @@ class TestBuildRust(unittest.TestCase):
         self.assertEqual(manifest.get("platforms"), ["*"])
         build_cfg = manifest.get("build", {})
         self.assertEqual(build_cfg.get("extraScript"), "build_rust.py")
-        self.assertEqual(build_cfg.get("includeDir"), "lavi-c-cpp/include")
         self.assertEqual(build_cfg.get("srcFilter"), ["-<*>"])
 
-        include_dir = os.path.join(REPO_ROOT, build_cfg["includeDir"])
+        include_dir = os.path.join(CRATE_DIR, "include")
         self.assertTrue(os.path.isfile(os.path.join(include_dir, "lavi.h")))
         self.assertTrue(os.path.isfile(os.path.join(include_dir, "lavi.hpp")))
 
         export_includes = manifest.get("export", {}).get("include", [])
-        for member in ["lavi", "lavi-c-cpp", "lavi-wasm"]:
-            self.assertTrue(
-                any(member in pattern for pattern in export_includes),
-                f"Workspace member {member} must be covered in library.json export.include",
-            )
+        self.assertFalse(
+            any("lavi-wasm" in pattern for pattern in export_includes),
+            "library.json export.include must not include lavi-wasm",
+        )
+
+    def test_library_properties_configuration(self):
+        props_path = os.path.join(CRATE_DIR, "library.properties")
+        self.assertTrue(os.path.isfile(props_path))
+        props = {}
+        with open(props_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    props[k.strip()] = v.strip()
+
+        self.assertEqual(props.get("name"), "lavi")
+        self.assertEqual(props.get("version"), "0.1.0")
+        self.assertEqual(props.get("precompiled"), "full")
+        self.assertEqual(props.get("ldflags"), "-llavi_c_cpp")
+        self.assertEqual(props.get("includes"), "lavi.h,lavi.hpp")
+        archs = [a.strip() for a in props.get("architectures", "").split(",") if a.strip()]
+        for expected_mcu in ["esp32", "esp32s2", "esp32s3", "esp32c3", "esp32c6", "esp32h2"]:
+            self.assertIn(expected_mcu, archs)
 
     def test_esp32_example_and_workflow_cleanup(self):
         pio_ini = os.path.join(REPO_ROOT, "examples", "esp32", "platformio.ini")
         main_cpp = os.path.join(REPO_ROOT, "examples", "esp32", "src", "main.cpp")
+        arduino_ino = os.path.join(REPO_ROOT, "examples", "esp32", "Stoplight", "Stoplight.ino")
         old_dir = os.path.join(REPO_ROOT, "examples", "stoplight-esp32")
         self.assertTrue(os.path.isfile(pio_ini))
         self.assertTrue(os.path.isfile(main_cpp))
+        self.assertTrue(os.path.isfile(arduino_ino))
         self.assertFalse(os.path.exists(old_dir))
         with open(pio_ini, "r", encoding="utf-8") as f:
             ini_content = f.read()
-        self.assertIn("https://github.com/emmby/lavi.git", ini_content)
+        self.assertIn("lavi-embedded.zip", ini_content)
         self.assertNotIn("portable-xstate-platformio", ini_content)
 
         dispatch_workflow = os.path.join(

@@ -23,7 +23,7 @@
     "test:py": "npm run build:py && PYTHONPATH=lavi-py/python python3 -m pytest lavi-py/tests",
     "build:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm assemble || gradle -p lavi-jvm assemble)",
     "test:jvm": "cargo build --package lavi-jvm && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p lavi-jvm test || gradle -p lavi-jvm test)",
-    "test:examples": "cargo run --manifest-path examples/rust/Cargo.toml && node examples/js-wasm/index.mjs && make -C examples/c run && make -C examples/cpp run && PYTHONPATH=lavi-py/python python3 examples/python/main.py && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/java run || gradle -p examples/java run) && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/kotlin run || gradle -p examples/kotlin run) && clang++ -std=c++11 -fsyntax-only -I examples/esp32/mock_arduino -I lavi-c-cpp/include examples/esp32/test_host_compile.cpp"
+    "test:examples": "cargo run --manifest-path examples/rust/Cargo.toml && node examples/js-wasm/index.mjs && make -C examples/c run && make -C examples/cpp run && PYTHONPATH=lavi-py/python python3 examples/python/main.py && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/java run || gradle -p examples/java run) && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/kotlin run || gradle -p examples/kotlin run) && clang++ -std=c++11 -fsyntax-only -I examples/esp32/mock_arduino -I lavi-c-cpp/include examples/esp32/test_host_compile.cpp && clang++ -x c++ -std=c++11 -fsyntax-only -I examples/esp32/mock_arduino -I lavi-c-cpp/include examples/esp32/Stoplight/Stoplight.ino"
   },
   "devDependencies": {
     "@playwright/test": "^1.40.0",
