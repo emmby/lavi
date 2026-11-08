@@ -1669,3 +1669,15 @@ fn _lavi_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ClockDecorator>()?;
     Ok(())
 }
+
+// Workaround for maturin's windows-gnu .def generator emitting `PyInit_lavi._lavi_py`
+// when `[tool.maturin] module-name = "lavi._lavi_py"` is a dotted submodule.
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
+#[allow(clippy::missing_safety_doc)]
+#[export_name = "PyInit_lavi._lavi_py"]
+pub unsafe extern "C" fn _maturin_windows_gnu_def_shim() -> *mut pyo3::ffi::PyObject {
+    extern "C" {
+        fn PyInit__lavi_py() -> *mut pyo3::ffi::PyObject;
+    }
+    PyInit__lavi_py()
+}
