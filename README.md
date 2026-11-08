@@ -215,6 +215,11 @@ fsm_simulated_clock_free(clock);
 ```
 
 ### C++11 (`lavi.hpp` — [`examples/cpp/`](./examples/cpp/) & [`examples/esp32/`](./examples/esp32/))
+
+For ESP32 embedded projects, download `lavi-embedded.zip` from [GitHub Releases](https://github.com/emmby/lavi/releases) (no Rust toolchain required):
+- **Arduino IDE**: Install via **Sketch → Include Library → Add .ZIP Library...** (see [`examples/esp32/Stoplight/Stoplight.ino`](./examples/esp32/Stoplight/Stoplight.ino)).
+- **PlatformIO**: Add `lib_deps = https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip` to [`platformio.ini`](./examples/esp32/platformio.ini).
+
 ```cpp
 #include "lavi.hpp"
 #include <cassert>
