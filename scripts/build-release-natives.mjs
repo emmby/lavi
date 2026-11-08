@@ -157,10 +157,12 @@ export function buildReleasePlan(options = {}) {
   const desktopCommands = [];
 
   for (const target of DESKTOP_TARGETS) {
+    const rustflags = target.libc === 'musl' ? '-C target-feature=-crt-static' : '';
     // Desktop JNI for Server JAR
     desktopCommands.push({
       type: 'jvm-desktop',
       triple: target.triple,
+      rustflags,
       command: 'cargo',
       args: ['zigbuild', '--release', '--package', 'lavi-jvm', '--target', target.triple],
       srcBinary: path.join(rootDir, 'target', target.triple, 'release', target.libName),
@@ -418,10 +420,14 @@ export function executeReleasePlan(plan, options = {}) {
     if (options.verbose) {
       console.log(`Executing desktop command: ${cmd.command} ${cmd.args.join(' ')}`);
     }
+    const env = { ...process.env };
+    if (cmd.rustflags) {
+      env.RUSTFLAGS = cmd.rustflags;
+    }
     const res = spawnSync(cmd.command, cmd.args, {
       stdio: 'inherit',
       cwd: plan.rootDir,
-      env: process.env
+      env
     });
     if (res.status !== 0) {
       throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);

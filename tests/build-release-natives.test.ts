@@ -22,12 +22,20 @@ describe('build-release-natives', () => {
     expect(triples).toContain('x86_64-pc-windows-gnu');
   });
 
-  it('enforces 16 KB page alignment link flags on 64-bit Android targets', () => {
+  it('enforces 16 KB page alignment link flags on 64-bit Android targets and -crt-static on musl JVM targets', () => {
     const plan = buildReleasePlan({ dryRun: true });
     const arm64Cmd = plan.androidCommands.find((c: any) => c.abi === 'arm64-v8a');
     expect(arm64Cmd.rustflags).toContain('-C link-arg=-Wl,-z,max-page-size=16384');
     const x86Cmd = plan.androidCommands.find((c: any) => c.abi === 'x86_64');
     expect(x86Cmd.rustflags).toContain('-C link-arg=-Wl,-z,max-page-size=16384');
+
+    const muslJvmCmds = plan.desktopCommands.filter(
+      (c: any) => c.type === 'jvm-desktop' && c.triple.includes('-musl')
+    );
+    expect(muslJvmCmds.length).toBe(2);
+    for (const cmd of muslJvmCmds) {
+      expect(cmd.rustflags).toContain('-C target-feature=-crt-static');
+    }
   });
 
   it('validates ELF LOAD segment alignment is at least 0x4000 (16 KB)', () => {
