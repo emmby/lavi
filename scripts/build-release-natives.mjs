@@ -1003,7 +1003,7 @@ export function executeReleasePlan(plan, options = {}) {
           stdio: 'inherit'
         });
         if (lipo.status !== 0) {
-          fs.copyFileSync(binaries[0], outArchive);
+          throw new Error(`lipo -create failed with exit code ${lipo.status} for slice ${slice}`);
         }
       }
     }

@@ -94,6 +94,8 @@ final class LaviTests: XCTestCase {
             XCTAssertTrue(ctx.isObject)
             XCTAssertFalse(ctx.isNull)
             XCTAssertTrue(ctx["nonexistent"].isNull)
+            XCTAssertTrue(ctx["nonexistent"]["deep"].isNull)
+            XCTAssertTrue(ctx["label"]["deep"].isNull)
         }
         machine.registerAction("onGreen") { _, _ in
             transitions += 1
@@ -150,6 +152,11 @@ final class LaviTests: XCTestCase {
 
         clock.set(2000)
         XCTAssertTrue(machine.matches("red"))
+        XCTAssertEqual(transitions, 4)
+
+        // Closing machine detaches it from SimulatedClock so subsequent clock increments are safe
+        machine.close()
+        clock.increment(5000)
         XCTAssertEqual(transitions, 4)
     }
 

@@ -65,7 +65,16 @@ DynamicLibrary loadLaviLibrary() {
     return lib;
   }
 
-  final lib = DynamicLibrary.open(libName);
-  _cachedLibrary = lib;
-  return lib;
+  try {
+    final lib = DynamicLibrary.open(libName);
+    _cachedLibrary = lib;
+    return lib;
+  } catch (_) {
+    if (Platform.isMacOS) {
+      final lib = DynamicLibrary.process();
+      _cachedLibrary = lib;
+      return lib;
+    }
+    rethrow;
+  }
 }

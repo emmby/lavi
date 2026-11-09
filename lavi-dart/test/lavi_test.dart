@@ -95,6 +95,8 @@ void main() {
         expect(ctx.isObject, isTrue);
         expect(ctx.isNull, isFalse);
         expect(ctx['nonexistent'].isNull, isTrue);
+        expect(ctx['nonexistent']['deep'].isNull, isTrue);
+        expect(ctx['label']['deep'].isNull, isTrue);
       });
       machine.registerAction('onGreen', (ctx, evt) {
         transitions += 1;
@@ -151,7 +153,10 @@ void main() {
       expect(machine.matches('red'), isTrue);
       expect(transitions, equals(4));
 
+      // Closing machine detaches it from SimulatedClock so subsequent clock increments are safe
       machine.close();
+      clock.increment(5000);
+      expect(transitions, equals(4));
       clock.close();
     });
 
