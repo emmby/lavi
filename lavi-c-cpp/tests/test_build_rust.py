@@ -43,8 +43,27 @@ class TestBuildRust(unittest.TestCase):
             self.assertTrue(is_riscv)
             self.assertFalse(is_native)
 
+    def test_arm_cortex_m_targets(self):
+        for mcu, cpu, expected in [
+            ("cortex-m0plus", "", "thumbv6m-none-eabi"),
+            ("cortex-m3", "", "thumbv7m-none-eabi"),
+            ("cortex-m4", "", "thumbv7em-none-eabihf"),
+            ("cortex-m7", "", "thumbv7em-none-eabihf"),
+            ("cortex-m33", "", "thumbv8m.main-none-eabihf"),
+            ("rp2040", "cortex-m0plus", "thumbv6m-none-eabi"),
+            ("rp2350", "cortex-m33", "thumbv8m.main-none-eabihf"),
+            ("ra4m1", "cortex-m4", "thumbv7em-none-eabihf"),
+            ("stm32f407vg", "cortex-m4", "thumbv7em-none-eabihf"),
+            ("imxrt1062", "cortex-m7", "thumbv7em-none-eabihf"),
+        ]:
+            target, cargo, is_riscv, is_native = build_rust.resolve_target("arm", mcu, cpu=cpu)
+            self.assertEqual(target, expected)
+            self.assertEqual(cargo, "cargo")
+            self.assertFalse(is_riscv)
+            self.assertFalse(is_native)
+
     def test_unsupported_mcu_returns_none(self):
-        target, cargo, is_riscv, is_native = build_rust.resolve_target("espressif32", "stm32f4")
+        target, cargo, is_riscv, is_native = build_rust.resolve_target("atmelavr", "atmega328p")
         self.assertIsNone(target)
         self.assertFalse(is_riscv)
         self.assertFalse(is_native)
@@ -92,6 +111,24 @@ class TestBuildRust(unittest.TestCase):
                 "build-std=std,panic_abort",
                 "--target",
                 "xtensa-esp32s3-espidf",
+            ],
+        )
+
+        arm_cmd = build_rust.build_cargo_cmd(
+            "cargo", "thumbv7em-none-eabihf", False, False, manifest_path="/path/Cargo.toml"
+        )
+        self.assertEqual(
+            arm_cmd,
+            [
+                "cargo",
+                "build",
+                "--manifest-path",
+                "/path/Cargo.toml",
+                "--release",
+                "-Z",
+                "build-std=core,alloc,panic_abort",
+                "--target",
+                "thumbv7em-none-eabihf",
             ],
         )
 
@@ -337,7 +374,19 @@ class TestBuildRust(unittest.TestCase):
         self.assertEqual(props.get("ldflags"), "-llavi_c_cpp")
         self.assertEqual(props.get("includes"), "lavi.h,lavi.hpp")
         archs = [a.strip() for a in props.get("architectures", "").split(",") if a.strip()]
-        for expected_mcu in ["esp32", "esp32s2", "esp32s3", "esp32c3", "esp32c6", "esp32h2"]:
+        for expected_mcu in [
+            "esp32",
+            "esp32s2",
+            "esp32s3",
+            "esp32c3",
+            "esp32c6",
+            "esp32h2",
+            "cortex-m0plus",
+            "cortex-m3",
+            "cortex-m4",
+            "cortex-m7",
+            "cortex-m33",
+        ]:
             self.assertIn(expected_mcu, archs)
 
     def test_esp32_example_and_workflow_cleanup(self):

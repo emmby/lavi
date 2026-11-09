@@ -115,36 +115,77 @@ export const EMBEDDED_TARGETS = [
     mcu: 'esp32',
     triple: 'xtensa-esp32-espidf',
     isRiscv: false,
+    buildStd: 'std,panic_abort',
     libName: 'liblavi_c_cpp.a'
   },
   {
     mcu: 'esp32s2',
     triple: 'xtensa-esp32s2-espidf',
     isRiscv: false,
+    buildStd: 'std,panic_abort',
     libName: 'liblavi_c_cpp.a'
   },
   {
     mcu: 'esp32s3',
     triple: 'xtensa-esp32s3-espidf',
     isRiscv: false,
+    buildStd: 'std,panic_abort',
     libName: 'liblavi_c_cpp.a'
   },
   {
     mcu: 'esp32c3',
     triple: 'riscv32imc-esp-espidf',
     isRiscv: true,
+    buildStd: 'std,panic_abort',
     libName: 'liblavi_c_cpp.a'
   },
   {
     mcu: 'esp32c6',
     triple: 'riscv32imac-esp-espidf',
     isRiscv: true,
+    buildStd: 'std,panic_abort',
     libName: 'liblavi_c_cpp.a'
   },
   {
     mcu: 'esp32h2',
     triple: 'riscv32imac-esp-espidf',
     isRiscv: true,
+    buildStd: 'std,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m0plus',
+    triple: 'thumbv6m-none-eabi',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m3',
+    triple: 'thumbv7m-none-eabi',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m4',
+    triple: 'thumbv7em-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m7',
+    triple: 'thumbv7em-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m33',
+    triple: 'thumbv8m.main-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
     libName: 'liblavi_c_cpp.a'
   }
 ];
@@ -298,7 +339,7 @@ export function buildReleasePlan(options = {}) {
         path.join(rootDir, 'lavi-c-cpp', 'Cargo.toml'),
         '--release',
         '-Z',
-        'build-std=std,panic_abort',
+        `build-std=${target.buildStd || 'std,panic_abort'}`,
         '--target',
         target.triple
       ],

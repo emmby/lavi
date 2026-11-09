@@ -95,12 +95,27 @@ describe('build-release-natives', () => {
     expect(result.commandsRun).toBe(0);
   });
 
-  it('includes all 6 ESP32 embedded MCU targets in EMBEDDED_TARGETS and buildReleasePlan', () => {
+  it('includes all 6 ESP32 and 5 ARM Cortex-M embedded MCU targets in EMBEDDED_TARGETS and buildReleasePlan', () => {
     const mcus = EMBEDDED_TARGETS.map((t: any) => t.mcu);
-    expect(mcus).toEqual(['esp32', 'esp32s2', 'esp32s3', 'esp32c3', 'esp32c6', 'esp32h2']);
+    expect(mcus).toEqual([
+      'esp32',
+      'esp32s2',
+      'esp32s3',
+      'esp32c3',
+      'esp32c6',
+      'esp32h2',
+      'cortex-m0plus',
+      'cortex-m3',
+      'cortex-m4',
+      'cortex-m7',
+      'cortex-m33',
+    ]);
 
     const plan = buildReleasePlan({ dryRun: true });
-    expect(plan.embeddedCommands.length).toBe(6);
+    expect(plan.embeddedCommands.length).toBe(11);
+    const cm4Cmd = plan.embeddedCommands.find((c: any) => c.mcu === 'cortex-m4');
+    expect(cm4Cmd.triple).toBe('thumbv7em-none-eabihf');
+    expect(cm4Cmd.args).toContain('build-std=core,alloc,panic_abort');
     expect(plan.embeddedPackage.zipPath).toContain('lavi-embedded.zip');
   });
 

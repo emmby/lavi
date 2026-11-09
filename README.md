@@ -6,7 +6,7 @@
 
 ### Design in XState. Run Everywhere.
 XState v5 and Stately Studio provide an expressive, standardized JSON configuration format for Harel Statecharts and W3C SCXML semantics. **Lavi** brings that same statechart execution model beyond JavaScript so the exact same machine definition can run identically across:
-- **Embedded Microcontrollers (C / C++ / PlatformIO / Arduino IDE)**: Run statecharts on ESP32 (Xtensa & RISC-V) and bare-metal targets with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
+- **Embedded Microcontrollers (C / C++ / PlatformIO / Arduino IDE)**: Run statecharts on 32-bit microcontrollers—including ESP32 (Xtensa & RISC-V) and ARM Cortex-M (`cortex-m0plus`, `cortex-m3`, `cortex-m4`, `cortex-m7`, `cortex-m33`: Arduino UNO R4, Nano 33 BLE, RP2040/RP2350, SAMD21/Zero/MKR, Due, STM32, Teensy)—with `#![no_std]` safety and a bounded $O(1)$ CPU call stack.
 - **Native Systems (Rust)**: Embed a lightweight `#![no_std]` + `alloc` statechart engine (`indexmap` is the sole dependency; zero `serde` overhead).
 - **Browsers & Node.js (WebAssembly)**: Use XState v5's `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock` APIs backed by the compiled WASM core.
 - **Backend Services & Simulation (Python)**: Run statecharts in Python services or drive deterministic tests in `pytest` with `SimulatedClock` using `lavi-py`.
@@ -233,7 +233,7 @@ fsm_simulated_clock_free(clock);
 
 ### C++11 (`lavi.hpp` — [`examples/cpp/`](./examples/cpp/) & [`examples/esp32/`](./examples/esp32/))
 
-For ESP32 embedded projects, precompiled static libraries (`liblavi_c_cpp.a`) are provided for all 6 ESP32 architectures (no Rust toolchain required):
+For 32-bit embedded projects, precompiled static libraries (`liblavi_c_cpp.a`) are provided for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`) and 5 ARM Cortex-M architectures (`cortex-m0plus`, `cortex-m3`, `cortex-m4`, `cortex-m7`, `cortex-m33` — covering Arduino UNO R4, Nano 33 BLE, RP2040/RP2350, SAMD21/Zero/MKR, Due, STM32, and Teensy; no Rust toolchain required):
 - **Arduino IDE**: Search for **`lavi`** in the **Arduino Library Manager**, or download `lavi-embedded.zip` from [GitHub Releases](https://github.com/emmby/lavi/releases) and install via **Sketch → Include Library → Add .ZIP Library...** (see [`examples/esp32/Stoplight/Stoplight.ino`](./examples/esp32/Stoplight/Stoplight.ino)).
 - **PlatformIO**: Add `lib_deps = emmby/lavi@^0.1.0` (or `https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip`) to [`platformio.ini`](./examples/esp32/platformio.ini).
 

@@ -56,7 +56,7 @@ Lavi publishes pre-built binary packages across four primary registries from a s
    When authenticated with the GitHub CLI (`gh`), the script automatically uploads `MAVEN_GPG_PRIVATE_KEY` and `MAVEN_GPG_PASSPHRASE` to GitHub repository secrets (otherwise, copy the printed values manually).
 
 ### 1.5 Embedded C/C++ (PlatformIO Registry, Arduino Library Manager & `lavi-embedded.zip`)
-The `build-embedded` job in `release.yml` automatically installs `espup`, cross-compiles `liblavi_c_cpp.a` for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`), packages `dist/embedded/lavi-embedded.zip` (containing `library.properties`, `library.json`, `build_rust.py`, headers, precompiled `.a` archives, and `examples/Stoplight/Stoplight.ino`), and attaches it to the GitHub Release.
+The `build-embedded` job in `release.yml` automatically installs `espup`, cross-compiles `liblavi_c_cpp.a` for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`) and 5 32-bit ARM Cortex-M architectures (`cortex-m0plus`, `cortex-m3`, `cortex-m4`, `cortex-m7`, `cortex-m33`), packages `dist/embedded/lavi-embedded.zip` (containing `library.properties`, `library.json`, `build_rust.py`, headers, precompiled `.a` archives, and `examples/Stoplight/Stoplight.ino`), and attaches it to the GitHub Release.
 
 In addition, the `publish` job automatically publishes the unpacked library to **PlatformIO Registry** (`emmby/lavi`) and **Arduino Library Manager** (`https://github.com/emmby/lavi-arduino`):
 1. **PlatformIO Registry (`emmby/lavi`)**:
