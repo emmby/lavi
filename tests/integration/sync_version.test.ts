@@ -37,6 +37,10 @@ describe('sync-version script', () => {
     fs.mkdirSync(path.join(tmpRoot, 'lavi-jvm'), { recursive: true });
     fs.mkdirSync(path.join(tmpRoot, 'examples', 'java'), { recursive: true });
     fs.mkdirSync(path.join(tmpRoot, 'examples', 'kotlin'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'examples', 'rust'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'examples', 'js-wasm'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'examples', 'python'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'examples', 'esp32'), { recursive: true });
 
     const sampleCargo = `[package]\nname = "lavi"\nversion = "0.1.0"\n\n[dependencies]\nindexmap = { version = "2.7", default-features = false }\n`;
     for (const dir of ['lavi', 'lavi-wasm', 'lavi-c-cpp', 'lavi-py', 'lavi-jvm']) {
@@ -49,6 +53,19 @@ describe('sync-version script', () => {
     fs.writeFileSync(path.join(tmpRoot, 'lavi-jvm', 'build.gradle.kts'), `group = "io.github.emmby"\nversion = "0.1.0"\n`);
     fs.writeFileSync(path.join(tmpRoot, 'examples', 'java', 'build.gradle.kts'), `dependencies {\n    implementation("io.github.emmby:lavi:0.1.0")\n}\n`);
     fs.writeFileSync(path.join(tmpRoot, 'examples', 'kotlin', 'build.gradle.kts'), `dependencies {\n    implementation("io.github.emmby:lavi:0.1.0")\n}\n`);
+    fs.writeFileSync(
+      path.join(tmpRoot, 'examples', 'rust', 'Cargo.toml'),
+      `[package]\nname = "lavi-example-rust"\nversion = "0.1.0"\n\n[dependencies]\n# lavi = "0.1.0"\nlavi = { version = "0.1.0", path = "../../lavi" }\n`
+    );
+    fs.writeFileSync(
+      path.join(tmpRoot, 'examples', 'js-wasm', 'package.json'),
+      JSON.stringify({ name: 'lavi-example-js-wasm', version: '0.1.0', dependencies: { 'lavi-fsm': '^0.1.0' } }, null, 2)
+    );
+    fs.writeFileSync(path.join(tmpRoot, 'examples', 'python', 'pyproject.toml'), `[project]\nname = "lavi-example-python"\nversion = "0.1.0"\n`);
+    fs.writeFileSync(
+      path.join(tmpRoot, 'examples', 'esp32', 'platformio.ini'),
+      `lib_deps =\n    https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip\n`
+    );
 
     const initialCheck = checkVersions({ rootDir: tmpRoot, expectedVersion: 'v0.1.0' });
     expect(initialCheck.ok).toBe(false);
@@ -70,6 +87,6 @@ describe('sync-version script', () => {
     const check = checkVersions({ expectedVersion: 'v0.1.0' });
     expect(check.mismatches).toEqual([]);
     expect(check.ok).toBe(true);
-    expect(Object.keys(readAllManifestVersions()).length).toBe(12);
+    expect(Object.keys(readAllManifestVersions()).length).toBe(16);
   });
 });

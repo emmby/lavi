@@ -22,6 +22,10 @@ export const MANIFEST_SPECS = [
   { relPath: 'lavi-jvm/build.gradle.kts', kind: 'gradle-version' },
   { relPath: 'examples/java/build.gradle.kts', kind: 'gradle-dep' },
   { relPath: 'examples/kotlin/build.gradle.kts', kind: 'gradle-dep' },
+  { relPath: 'examples/rust/Cargo.toml', kind: 'cargo-example' },
+  { relPath: 'examples/js-wasm/package.json', kind: 'npm-example' },
+  { relPath: 'examples/python/pyproject.toml', kind: 'toml-section', section: 'project' },
+  { relPath: 'examples/esp32/platformio.ini', kind: 'platformio-dep' },
 ];
 
 export function normalizeVersion(raw) {
@@ -93,6 +97,20 @@ export function readAllManifestVersions(rootDir = DEFAULT_ROOT) {
     } else if (spec.kind === 'gradle-dep') {
       const m = content.match(/implementation\("io\.(?:lavi|github\.emmby):lavi(?:-jvm)?:([^"]+)"\)/);
       result[spec.relPath] = m ? m[1] : null;
+    } else if (spec.kind === 'cargo-example') {
+      const pkgVer = readTomlSectionVersion(content, 'package');
+      const depMatch = content.match(/^\s*lavi\s*=\s*\{[^}]*\bversion\s*=\s*"([^"]+)"/m);
+      const depVer = depMatch ? depMatch[1] : null;
+      result[spec.relPath] = pkgVer && pkgVer === depVer ? pkgVer : `${pkgVer ?? 'null'} (dep: ${depVer ?? 'null'})`;
+    } else if (spec.kind === 'npm-example') {
+      const parsed = JSON.parse(content);
+      const pkgVer = parsed.version ?? null;
+      const rawDep = parsed.dependencies?.['lavi-fsm'] ?? null;
+      const depVer = typeof rawDep === 'string' ? rawDep.replace(/^\^/, '') : null;
+      result[spec.relPath] = pkgVer && pkgVer === depVer ? pkgVer : `${pkgVer ?? 'null'} (dep: ${rawDep ?? 'null'})`;
+    } else if (spec.kind === 'platformio-dep') {
+      const m = content.match(/releases\/download\/v([^/\s]+)\/lavi-embedded\.zip/);
+      result[spec.relPath] = m ? m[1] : null;
     }
   }
   return result;
@@ -152,6 +170,22 @@ export function syncVersions(newVersion, options = {}) {
     } else if (spec.kind === 'gradle-dep') {
       updated = original.replace(
         /(implementation\("io\.(?:lavi|github\.emmby):lavi(?:-jvm)?:)[^"]+("\))/,
+        `$1${version}$2`
+      );
+    } else if (spec.kind === 'cargo-example') {
+      updated = writeTomlSectionVersion(original, 'package', version)
+        .replace(/^(\s*#\s*lavi\s*=\s*)"[^"]+"/m, `$1"${version}"`)
+        .replace(/^(\s*lavi\s*=\s*\{[^}]*\bversion\s*=\s*)"[^"]+"/m, `$1"${version}"`);
+    } else if (spec.kind === 'npm-example') {
+      const parsed = JSON.parse(original);
+      parsed.version = version;
+      if (parsed.dependencies && 'lavi-fsm' in parsed.dependencies) {
+        parsed.dependencies['lavi-fsm'] = `^${version}`;
+      }
+      updated = JSON.stringify(parsed, null, 2) + '\n';
+    } else if (spec.kind === 'platformio-dep') {
+      updated = original.replace(
+        /(releases\/download\/v)[^/\s]+(\/lavi-embedded\.zip)/g,
         `$1${version}$2`
       );
     }

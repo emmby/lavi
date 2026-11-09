@@ -8,6 +8,19 @@
 - **Bounded $O(1)$ CPU Call Stack**: Iterative JSON parsing and state-tree traversal using explicit heap work-stacks (`Vec`), fitting comfortably inside an 8 KB microcontroller RTOS stack.
 - **XState v5 Semantics**: Hierarchical and parallel states, LCCA transition domains, `entry` / `exit` / transition actions, `assign` context updates, `raise` internal events, `always` eventless transitions, `after` delayed transitions, shallow & deep `history` states, `.matches()`, `.can()`, `.has_tag()`, and snapshot persistence.
 
+## Installation
+
+```bash
+cargo add lavi
+```
+
+Or in a `#![no_std]` crate:
+
+```toml
+[dependencies]
+lavi = { version = "0.1.0", default-features = false }
+```
+
 ## Usage
 
 ```rust

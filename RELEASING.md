@@ -53,9 +53,7 @@ Lavi publishes pre-built binary packages across four primary registries from a s
    ```bash
    ./scripts/setup-maven-gpg.sh
    ```
-   Add the printed values to GitHub repository secrets:
-   - `MAVEN_GPG_PRIVATE_KEY`
-   - `MAVEN_GPG_PASSPHRASE`
+   When authenticated with the GitHub CLI (`gh`), the script automatically uploads `MAVEN_GPG_PRIVATE_KEY` and `MAVEN_GPG_PASSPHRASE` to GitHub repository secrets (otherwise, copy the printed values manually).
 
 ### 1.5 Embedded C/C++ (PlatformIO Registry, Arduino Library Manager & `lavi-embedded.zip`)
 The `build-embedded` job in `release.yml` automatically installs `espup`, cross-compiles `liblavi_c_cpp.a` for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`), packages `dist/embedded/lavi-embedded.zip` (containing `library.properties`, `library.json`, `build_rust.py`, headers, precompiled `.a` archives, and `examples/Stoplight/Stoplight.ino`), and attaches it to the GitHub Release.

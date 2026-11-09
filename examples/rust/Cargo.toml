@@ -7,4 +7,6 @@ publish = false
 [workspace]
 
 [dependencies]
-lavi = { path = "../../lavi" }
+# In a standalone project using crates.io (`cargo add lavi`):
+# lavi = "0.1.0"
+lavi = { version = "0.1.0", path = "../../lavi" }

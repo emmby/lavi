@@ -31,6 +31,24 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(wf).toContain('pio pkg publish');
     expect(wf).toContain('ARDUINO_DEPLOY_KEY');
     expect(wf).toContain('git@github.com:emmby/lavi-arduino.git');
+    expect(wf).toContain('uses: ./.github/workflows/ci.yml');
+    expect(wf).toContain('needs: [verify, ci]');
+  });
+
+  it('gates GitHub Pages deployment on successful CI completion and makes CI reusable', () => {
+    const ciPath = path.join(rootDir, '.github', 'workflows', 'ci.yml');
+    const pagesPath = path.join(rootDir, '.github', 'workflows', 'pages.yml');
+    expect(fs.existsSync(ciPath)).toBe(true);
+    expect(fs.existsSync(pagesPath)).toBe(true);
+
+    const ci = fs.readFileSync(ciPath, 'utf8');
+    expect(ci).toContain('workflow_call:');
+
+    const pages = fs.readFileSync(pagesPath, 'utf8');
+    expect(pages).toContain('workflow_run:');
+    expect(pages).toContain('workflows: ["CI"]');
+    expect(pages).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(pages).toContain('github.event.workflow_run.head_sha');
   });
 
   it('provides RELEASING.md and scripts/setup-maven-gpg.sh for registry onboarding', () => {
