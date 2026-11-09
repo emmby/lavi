@@ -29,32 +29,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: wasm32-unknown-unknown
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
-
-      - name: Install Python & pytest
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python3 -m pip install pytest
-
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-          cache: 'gradle'
-
-      - name: Install Dependencies
-        run: npm ci
 
       - name: Verify Manifest Versions Match Tag
         run: |
@@ -64,17 +44,15 @@ jobs:
             node scripts/sync-version.mjs --check
           fi
 
-      - name: Install Playwright Browsers
-        run: npx playwright install --with-deps
-
-      - name: Build All & Run Full Test Suite
-        run: npm run build && npm test
-
       - name: Dry-Run crates.io Package
         run: cargo publish --dry-run -p lavi
 
-  build-wasm-npm:
+  ci:
     needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  build-wasm-npm:
+    needs: [verify, ci]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -106,7 +84,7 @@ jobs:
           path: dist/npm
 
   build-natives-py-jvm:
-    needs: verify
+    needs: [verify, ci]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +145,7 @@ jobs:
             dist/aar/lavi-release.aar
 
   build-embedded:
-    needs: verify
+    needs: [verify, ci]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -202,7 +180,7 @@ jobs:
           path: dist/embedded/lavi-embedded.zip
 
   publish:
-    needs: [verify, build-wasm-npm, build-natives-py-jvm, build-embedded]
+    needs: [verify, ci, build-wasm-npm, build-natives-py-jvm, build-embedded]
     if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-24.04
     steps:
