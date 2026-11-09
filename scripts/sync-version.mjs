@@ -26,6 +26,8 @@ export const MANIFEST_SPECS = [
   { relPath: 'examples/js-wasm/package.json', kind: 'npm-example' },
   { relPath: 'examples/python/pyproject.toml', kind: 'toml-section', section: 'project' },
   { relPath: 'examples/esp32/platformio.ini', kind: 'platformio-dep' },
+  { relPath: 'lavi-dart/pubspec.yaml', kind: 'yaml-version' },
+  { relPath: 'examples/dart/pubspec.yaml', kind: 'yaml-version' },
 ];
 
 export function normalizeVersion(raw) {
@@ -111,6 +113,9 @@ export function readAllManifestVersions(rootDir = DEFAULT_ROOT) {
     } else if (spec.kind === 'platformio-dep') {
       const m = content.match(/releases\/download\/v([^/\s]+)\/lavi-embedded\.zip/);
       result[spec.relPath] = m ? m[1] : null;
+    } else if (spec.kind === 'yaml-version') {
+      const m = content.match(/^\s*version\s*:\s*([^\r\n#]+)/m);
+      result[spec.relPath] = m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
     }
   }
   return result;
@@ -188,6 +193,8 @@ export function syncVersions(newVersion, options = {}) {
         /(releases\/download\/v)[^/\s]+(\/lavi-embedded\.zip)/g,
         `$1${version}$2`
       );
+    } else if (spec.kind === 'yaml-version') {
+      updated = original.replace(/^(\s*version\s*:\s*)[^\r\n#]+/m, `$1${version}`);
     }
 
     if (updated !== original) {

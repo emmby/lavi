@@ -5,12 +5,15 @@ import {
   DESKTOP_TARGETS,
   ANDROID_TARGETS,
   EMBEDDED_TARGETS,
+  APPLE_XCFRAMEWORK_TARGETS,
   buildReleasePlan,
   verifyElf16KbAlignmentOutput,
   packageAndroidAar,
   packageEmbeddedZip,
+  packageAppleXcframeworkZip,
   executeReleasePlan,
 } from '../scripts/build-release-natives.mjs';
+import { readAllManifestVersions, checkVersions } from '../scripts/sync-version.mjs';
 
 describe('build-release-natives', () => {
   it('includes all required desktop gnu, musl, darwin, and windows targets', () => {
@@ -174,5 +177,50 @@ describe('build-release-natives', () => {
         outputZipPath: path.join(tmpDir, 'output', 'should-fail.zip'),
       })
     ).toThrow(/Missing required embedded static file/);
+  });
+
+  it('includes Apple XCFramework targets and packages LaviFFI.xcframework.zip in .tmp/', () => {
+    const triples = APPLE_XCFRAMEWORK_TARGETS.map((t: any) => t.triple);
+    expect(triples).toEqual([
+      'aarch64-apple-darwin',
+      'x86_64-apple-darwin',
+      'aarch64-apple-ios',
+      'aarch64-apple-ios-sim',
+      'x86_64-apple-ios',
+    ]);
+
+    const plan = buildReleasePlan({ dryRun: true });
+    expect(plan.appleCommands.length).toBe(5);
+    expect(plan.applePackage.zipPath).toContain('LaviFFI.xcframework.zip');
+
+    const tmpDir = path.resolve('.tmp', 'apple-xcframework-test-' + Date.now());
+    const slicesDir = path.join(tmpDir, 'slices');
+    for (const slice of ['ios-arm64', 'ios-arm64_x86_64-simulator', 'macos-arm64_x86_64']) {
+      const sDir = path.join(slicesDir, slice);
+      fs.mkdirSync(sDir, { recursive: true });
+      fs.writeFileSync(path.join(sDir, 'liblavi_c_cpp.a'), Buffer.from(`!<arch>\n${slice}`));
+    }
+
+    const outputZipPath = path.join(tmpDir, 'output', 'LaviFFI.xcframework.zip');
+    const result = packageAppleXcframeworkZip({
+      slicesDir,
+      outputZipPath,
+    });
+
+    expect(fs.existsSync(outputZipPath)).toBe(true);
+    expect(result.entries).toContain('LaviFFI.xcframework/Info.plist');
+    expect(result.entries).toContain('LaviFFI.xcframework/ios-arm64/liblavi_c_cpp.a');
+    expect(result.entries).toContain('LaviFFI.xcframework/ios-arm64/Headers/lavi.h');
+    expect(result.entries).toContain('LaviFFI.xcframework/ios-arm64/Headers/module.modulemap');
+    expect(result.entries).toContain('LaviFFI.xcframework/ios-arm64_x86_64-simulator/liblavi_c_cpp.a');
+    expect(result.entries).toContain('LaviFFI.xcframework/macos-arm64_x86_64/liblavi_c_cpp.a');
+  });
+
+  it('tracks Dart pubspec.yaml manifests in sync-version.mjs', () => {
+    const versions = readAllManifestVersions();
+    expect(versions['lavi-dart/pubspec.yaml']).toBe('0.1.0');
+    expect(versions['examples/dart/pubspec.yaml']).toBe('0.1.0');
+    const check = checkVersions();
+    expect(check.ok).toBe(true);
   });
 });

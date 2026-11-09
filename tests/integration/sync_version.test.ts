@@ -41,6 +41,8 @@ describe('sync-version script', () => {
     fs.mkdirSync(path.join(tmpRoot, 'examples', 'js-wasm'), { recursive: true });
     fs.mkdirSync(path.join(tmpRoot, 'examples', 'python'), { recursive: true });
     fs.mkdirSync(path.join(tmpRoot, 'examples', 'esp32'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'lavi-dart'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'examples', 'dart'), { recursive: true });
 
     const sampleCargo = `[package]\nname = "lavi"\nversion = "0.1.0"\n\n[dependencies]\nindexmap = { version = "2.7", default-features = false }\n`;
     for (const dir of ['lavi', 'lavi-wasm', 'lavi-c-cpp', 'lavi-py', 'lavi-jvm']) {
@@ -66,6 +68,8 @@ describe('sync-version script', () => {
       path.join(tmpRoot, 'examples', 'esp32', 'platformio.ini'),
       `lib_deps =\n    https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip\n`
     );
+    fs.writeFileSync(path.join(tmpRoot, 'lavi-dart', 'pubspec.yaml'), `name: lavi\nversion: 0.1.0\n`);
+    fs.writeFileSync(path.join(tmpRoot, 'examples', 'dart', 'pubspec.yaml'), `name: lavi_dart_example\nversion: 0.1.0\n`);
 
     const initialCheck = checkVersions({ rootDir: tmpRoot, expectedVersion: 'v0.1.0' });
     expect(initialCheck.ok).toBe(false);
@@ -87,6 +91,6 @@ describe('sync-version script', () => {
     const check = checkVersions({ expectedVersion: 'v0.1.0' });
     expect(check.mismatches).toEqual([]);
     expect(check.ok).toBe(true);
-    expect(Object.keys(readAllManifestVersions()).length).toBe(16);
+    expect(Object.keys(readAllManifestVersions()).length).toBe(18);
   });
 });

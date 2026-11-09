@@ -1,0 +1,4 @@
+module CLavi {
+    header "lavi_shim.h"
+    export *
+}

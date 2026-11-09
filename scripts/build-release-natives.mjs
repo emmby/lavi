@@ -247,6 +247,47 @@ export const EMBEDDED_TARGETS = [
 ];
 
 /**
+ * Apple platform targets for packaging LaviFFI.xcframework (iOS, iOS Simulator, macOS).
+ */
+export const APPLE_XCFRAMEWORK_TARGETS = [
+  {
+    triple: 'aarch64-apple-darwin',
+    slice: 'macos-arm64_x86_64',
+    arch: 'arm64',
+    platform: 'macos',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    triple: 'x86_64-apple-darwin',
+    slice: 'macos-arm64_x86_64',
+    arch: 'x86_64',
+    platform: 'macos',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    triple: 'aarch64-apple-ios',
+    slice: 'ios-arm64',
+    arch: 'arm64',
+    platform: 'ios',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    triple: 'aarch64-apple-ios-sim',
+    slice: 'ios-arm64_x86_64-simulator',
+    arch: 'arm64',
+    platform: 'ios-simulator',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    triple: 'x86_64-apple-ios',
+    slice: 'ios-arm64_x86_64-simulator',
+    arch: 'x86_64',
+    platform: 'ios-simulator',
+    libName: 'liblavi_c_cpp.a'
+  }
+];
+
+/**
  * Validates that all ELF LOAD program headers in readelf / llvm-readelf -l output
  * have an alignment of at least 0x4000 (16 KB).
  */
@@ -420,6 +461,42 @@ export function buildReleasePlan(options = {}) {
     ]
   };
 
+  const appleCommands = [];
+  for (const target of APPLE_XCFRAMEWORK_TARGETS) {
+    appleCommands.push({
+      triple: target.triple,
+      slice: target.slice,
+      platform: target.platform,
+      command: 'cargo',
+      args: [
+        'build',
+        '--manifest-path',
+        path.join(rootDir, 'lavi-c-cpp', 'Cargo.toml'),
+        '--release',
+        '--target',
+        target.triple
+      ],
+      srcBinary: path.join(rootDir, 'target', target.triple, 'release', target.libName)
+    });
+  }
+
+  const applePackage = {
+    zipPath: path.join(outDir, 'apple', 'LaviFFI.xcframework.zip'),
+    stagingDir: path.join(outDir, 'apple', 'staging'),
+    entries: [
+      'LaviFFI.xcframework/Info.plist',
+      'LaviFFI.xcframework/ios-arm64/liblavi_c_cpp.a',
+      'LaviFFI.xcframework/ios-arm64/Headers/lavi.h',
+      'LaviFFI.xcframework/ios-arm64/Headers/module.modulemap',
+      'LaviFFI.xcframework/ios-arm64_x86_64-simulator/liblavi_c_cpp.a',
+      'LaviFFI.xcframework/ios-arm64_x86_64-simulator/Headers/lavi.h',
+      'LaviFFI.xcframework/ios-arm64_x86_64-simulator/Headers/module.modulemap',
+      'LaviFFI.xcframework/macos-arm64_x86_64/liblavi_c_cpp.a',
+      'LaviFFI.xcframework/macos-arm64_x86_64/Headers/lavi.h',
+      'LaviFFI.xcframework/macos-arm64_x86_64/Headers/module.modulemap'
+    ]
+  };
+
   return {
     rootDir,
     outDir,
@@ -428,7 +505,9 @@ export function buildReleasePlan(options = {}) {
     androidCommands,
     aarPackage,
     embeddedCommands,
-    embeddedPackage
+    embeddedPackage,
+    appleCommands,
+    applePackage
   };
 }
 
@@ -652,6 +731,114 @@ export function packageEmbeddedZip({ rootDir = ROOT_DIR, prebuiltLibsDir, output
 }
 
 /**
+ * Packages an Apple LaviFFI.xcframework zip archive for iOS, iOS Simulator, and macOS.
+ */
+export function packageAppleXcframeworkZip({ rootDir = ROOT_DIR, slicesDir, outputZipPath }) {
+  const entries = [];
+  const headerPath = path.join(rootDir, 'lavi-c-cpp', 'include', 'lavi.h');
+  if (!fs.existsSync(headerPath)) {
+    throw new Error(`Missing required C header for XCFramework: ${headerPath}`);
+  }
+  const headerData = fs.readFileSync(headerPath);
+  const moduleMapData = Buffer.from(
+    'module CLavi {\n    header "lavi.h"\n    export *\n}\n',
+    'utf8'
+  );
+
+  const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>AvailableLibraries</key>
+  <array>
+    <dict>
+      <key>BinaryPath</key>
+      <string>liblavi_c_cpp.a</string>
+      <key>HeadersPath</key>
+      <string>Headers</string>
+      <key>LibraryIdentifier</key>
+      <string>ios-arm64</string>
+      <key>LibraryPath</key>
+      <string>liblavi_c_cpp.a</string>
+      <key>SupportedArchitectures</key>
+      <array><string>arm64</string></array>
+      <key>SupportedPlatform</key>
+      <string>ios</string>
+    </dict>
+    <dict>
+      <key>BinaryPath</key>
+      <string>liblavi_c_cpp.a</string>
+      <key>HeadersPath</key>
+      <string>Headers</string>
+      <key>LibraryIdentifier</key>
+      <string>ios-arm64_x86_64-simulator</string>
+      <key>LibraryPath</key>
+      <string>liblavi_c_cpp.a</string>
+      <key>SupportedArchitectures</key>
+      <array><string>arm64</string><string>x86_64</string></array>
+      <key>SupportedPlatform</key>
+      <string>ios</string>
+      <key>SupportedPlatformVariant</key>
+      <string>simulator</string>
+    </dict>
+    <dict>
+      <key>BinaryPath</key>
+      <string>liblavi_c_cpp.a</string>
+      <key>HeadersPath</key>
+      <string>Headers</string>
+      <key>LibraryIdentifier</key>
+      <string>macos-arm64_x86_64</string>
+      <key>LibraryPath</key>
+      <string>liblavi_c_cpp.a</string>
+      <key>SupportedArchitectures</key>
+      <array><string>arm64</string><string>x86_64</string></array>
+      <key>SupportedPlatform</key>
+      <string>macos</string>
+    </dict>
+  </array>
+  <key>CFBundlePackageType</key>
+  <string>XFWK</string>
+  <key>XCFrameworkFormatVersion</key>
+  <string>1.0</string>
+</dict>
+</plist>
+`;
+
+  entries.push({
+    path: 'LaviFFI.xcframework/Info.plist',
+    data: Buffer.from(infoPlist, 'utf8')
+  });
+
+  const slices = ['ios-arm64', 'ios-arm64_x86_64-simulator', 'macos-arm64_x86_64'];
+  for (const slice of slices) {
+    const libPath = slicesDir ? path.join(slicesDir, slice, 'liblavi_c_cpp.a') : null;
+    if (libPath && fs.existsSync(libPath)) {
+      entries.push({
+        path: `LaviFFI.xcframework/${slice}/liblavi_c_cpp.a`,
+        data: fs.readFileSync(libPath)
+      });
+    }
+    entries.push({
+      path: `LaviFFI.xcframework/${slice}/Headers/lavi.h`,
+      data: headerData
+    });
+    entries.push({
+      path: `LaviFFI.xcframework/${slice}/Headers/module.modulemap`,
+      data: moduleMapData
+    });
+  }
+
+  const zipBuf = createZipArchive(entries);
+  fs.mkdirSync(path.dirname(outputZipPath), { recursive: true });
+  fs.writeFileSync(outputZipPath, zipBuf);
+
+  return {
+    zipPath: outputZipPath,
+    entries: entries.map((e) => e.path)
+  };
+}
+
+/**
  * Executes commands in the release plan via child_process.spawnSync when
  * --execute or dryRun: false is specified.
  */
@@ -663,8 +850,9 @@ export function executeReleasePlan(plan, options = {}) {
 
   let commandsRun = 0;
   const embeddedOnly = Boolean(options.embeddedOnly);
+  const appleOnly = Boolean(options.appleOnly);
 
-  if (!embeddedOnly) {
+  if (!embeddedOnly && !appleOnly) {
     // 1. Desktop compilation
     for (const cmd of plan.desktopCommands) {
       if (options.verbose) {
@@ -778,6 +966,57 @@ export function executeReleasePlan(plan, options = {}) {
     }
   }
 
+  // 5. Apple XCFramework compilation & packaging (macOS / iOS / iOS Simulator)
+  if (options.includeApple || appleOnly) {
+    const slicesDir = path.join(plan.outDir, 'apple', 'staging', 'slices');
+    const builtBySlice = new Map();
+
+    for (const cmd of plan.appleCommands || []) {
+      if (options.verbose) {
+        console.log(`Executing Apple build (${cmd.triple}): ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      const res = spawnSync(cmd.command, cmd.args, {
+        stdio: 'inherit',
+        cwd: plan.rootDir,
+        env: process.env
+      });
+      if (res.status !== 0) {
+        throw new Error(`Command failed with exit code ${res.status}: ${cmd.command} ${cmd.args.join(' ')}`);
+      }
+      commandsRun++;
+
+      if (fs.existsSync(cmd.srcBinary)) {
+        const list = builtBySlice.get(cmd.slice) || [];
+        list.push(cmd.srcBinary);
+        builtBySlice.set(cmd.slice, list);
+      }
+    }
+
+    for (const [slice, binaries] of builtBySlice.entries()) {
+      const targetSliceDir = path.join(slicesDir, slice);
+      fs.mkdirSync(targetSliceDir, { recursive: true });
+      const outArchive = path.join(targetSliceDir, 'liblavi_c_cpp.a');
+      if (binaries.length === 1) {
+        fs.copyFileSync(binaries[0], outArchive);
+      } else if (binaries.length > 1) {
+        const lipo = spawnSync('lipo', ['-create', ...binaries, '-output', outArchive], {
+          stdio: 'inherit'
+        });
+        if (lipo.status !== 0) {
+          fs.copyFileSync(binaries[0], outArchive);
+        }
+      }
+    }
+
+    if (plan.applePackage) {
+      packageAppleXcframeworkZip({
+        rootDir: plan.rootDir,
+        slicesDir,
+        outputZipPath: plan.applePackage.zipPath
+      });
+    }
+  }
+
   return {
     executed: true,
     commandsRun,
@@ -794,6 +1033,8 @@ if (isMain) {
   const shouldExecute = args.includes('--execute');
   const includeEmbedded = args.includes('--include-embedded');
   const embeddedOnly = args.includes('--embedded-only');
+  const includeApple = args.includes('--include-apple');
+  const appleOnly = args.includes('--apple-only');
   const plan = buildReleasePlan({ dryRun: !shouldExecute });
   console.log('=== Lavi Single-Host Release Cross-Compilation Plan ===\n');
   console.log(`Desktop Targets (${DESKTOP_TARGETS.length}):`);
@@ -815,7 +1056,14 @@ if (isMain) {
 
   if (shouldExecute) {
     console.log('\n🚀 Executing release compilation plan...');
-    executeReleasePlan(plan, { execute: true, includeEmbedded, embeddedOnly, verbose: true });
+    executeReleasePlan(plan, {
+      execute: true,
+      includeEmbedded,
+      embeddedOnly,
+      includeApple,
+      appleOnly,
+      verbose: true
+    });
     console.log('\n✅ Release compilation and packaging completed successfully.');
   } else {
     console.log('\n✅ Plan generated successfully (dry-run). Pass --execute to run.');

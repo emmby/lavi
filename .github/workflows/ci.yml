@@ -45,6 +45,16 @@ jobs:
         java-version: '21'
         cache: 'gradle'
 
+    - name: Install Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: '6.0'
+
+    - name: Install Dart
+      uses: dart-lang/setup-dart@v1
+      with:
+        sdk: 'stable'
+
     - name: Install Dependencies
       run: npm ci
 

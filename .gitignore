@@ -24,3 +24,10 @@ examples/java/build/
 examples/kotlin/.gradle/
 examples/kotlin/build/
 .superpowers/
+.build/
+.swiftpm/
+examples/swift/.build/
+examples/swift/.swiftpm/
+**/.dart_tool/
+**/pubspec.lock
+lavi-dart/native/

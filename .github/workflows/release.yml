@@ -179,8 +179,40 @@ jobs:
           name: embedded-dist
           path: dist/embedded/lavi-embedded.zip
 
+  build-apple-xcframework:
+    needs: [verify, ci]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Apple Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Run Swift Package Tests on macOS
+        run: |
+          cargo build --package lavi-c-cpp
+          swift test
+
+      - name: Build Apple Static Libraries & Package LaviFFI.xcframework.zip
+        run: node scripts/build-release-natives.mjs --execute --apple-only
+
+      - name: Upload Apple XCFramework Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-dist
+          path: dist/apple/LaviFFI.xcframework.zip
+
   publish:
-    needs: [verify, ci, build-wasm-npm, build-natives-py-jvm, build-embedded]
+    needs: [verify, ci, build-wasm-npm, build-natives-py-jvm, build-embedded, build-apple-xcframework]
     if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-24.04
     steps:
@@ -309,4 +341,5 @@ jobs:
             release-artifacts/jvm-dist/maven/lavi-maven-central-bundle.zip \
             release-artifacts/jvm-dist/aar/lavi-release.aar \
             release-artifacts/embedded-dist/lavi-embedded.zip \
+            release-artifacts/apple-dist/LaviFFI.xcframework.zip \
             --clobber

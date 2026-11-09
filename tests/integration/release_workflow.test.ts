@@ -20,6 +20,11 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(wf).toContain('node scripts/build-release-natives.mjs --execute --embedded-only');
     expect(wf).toContain('dist/embedded/lavi-embedded.zip');
     expect(wf).toContain('release-artifacts/embedded-dist/lavi-embedded.zip');
+    expect(wf).toContain('build-apple-xcframework:');
+    expect(wf).toContain('runs-on: macos-15');
+    expect(wf).toContain('node scripts/build-release-natives.mjs --execute --apple-only');
+    expect(wf).toContain('dist/apple/LaviFFI.xcframework.zip');
+    expect(wf).toContain('release-artifacts/apple-dist/LaviFFI.xcframework.zip');
     expect(wf).toContain('zipMavenCentralBundle');
     expect(wf).toContain('cargo publish -p lavi');
     expect(wf).toContain('npm publish ./lavi-fsm-*.tgz --provenance --access public');
@@ -43,6 +48,8 @@ describe('GitHub Actions release pipeline & documentation', () => {
 
     const ci = fs.readFileSync(ciPath, 'utf8');
     expect(ci).toContain('workflow_call:');
+    expect(ci).toContain('swift-actions/setup-swift@v2');
+    expect(ci).toContain('dart-lang/setup-dart@v1');
 
     const pages = fs.readFileSync(pagesPath, 'utf8');
     expect(pages).toContain('workflow_run:');
