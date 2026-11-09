@@ -256,4 +256,24 @@ class KotlinMachineTest {
             assertEquals("gold", observedAward)
         }
     }
+
+    @Test
+    fun onInspectCallbackReceivesInspectionEvents() {
+        val inspectTypes = mutableListOf<String>()
+        SimulatedClock(0).use { clock ->
+            Machine(machineJson, clock).use { machine ->
+                machine.onGuard("canLaunch") { _, _ -> true }
+                machine.onAction("logLaunch") { _, _ -> }
+                machine.onInspect { evt ->
+                    evt["type"].asStringOrNull()?.let { inspectTypes.add(it) }
+                }
+                machine.start()
+                machine.send("LAUNCH")
+                assertTrue(machine.matches("running"))
+                assertTrue("@xstate.event" in inspectTypes)
+                assertTrue("@xstate.microstep" in inspectTypes)
+                assertTrue("@xstate.snapshot" in inspectTypes)
+            }
+        }
+    }
 }

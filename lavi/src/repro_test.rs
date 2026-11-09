@@ -1400,4 +1400,122 @@ entry: vec![],
         assert!(machine2.matches("idle"));
         assert_eq!(machine2.status(), crate::MachineStatus::Stopped);
     }
+
+    #[test]
+    fn test_inspection_events() {
+        let json = r#"{
+            "id": "inspect_test",
+            "initial": "a",
+            "context": { "count": 0 },
+            "states": {
+                "a": {
+                    "entry": ["onEntryA"],
+                    "on": {
+                        "NEXT": {
+                            "target": "b",
+                            "actions": [
+                                { "type": "xstate.assign", "assignment": { "count": 1 } },
+                                { "type": "xstate.raise", "event": { "type": "RAISED" } }
+                            ]
+                        }
+                    }
+                },
+                "b": {
+                    "on": {
+                        "RAISED": "c"
+                    }
+                },
+                "c": {
+                    "always": "d"
+                },
+                "d": {
+                    "type": "final"
+                }
+            }
+        }"#;
+
+        let mut machine = RuntimeMachine::from_json(json).unwrap();
+        let guards = IndexMap::new();
+        let actions = IndexMap::new();
+
+        let inspected = alloc::rc::Rc::new(core::cell::RefCell::new(alloc::vec::Vec::new()));
+        let inspected_clone = inspected.clone();
+        machine.register_inspector(alloc::rc::Rc::new(move |ev: &crate::InspectEvent| {
+            inspected_clone.borrow_mut().push(ev.clone());
+        }));
+
+        machine.start(&guards, &actions);
+        machine.transition("NEXT", &Value::event("NEXT"), &guards, &actions);
+
+        let events = inspected.borrow();
+        let types: alloc::vec::Vec<&str> = events
+            .iter()
+            .map(|e| e.event_type())
+            .collect();
+
+        assert_eq!(
+            types,
+            alloc::vec![
+                "@xstate.event",
+                "@xstate.action",
+                "@xstate.snapshot",
+                "@xstate.event",
+                "@xstate.action",
+                "@xstate.microstep",
+                "@xstate.microstep",
+                "@xstate.microstep",
+                "@xstate.snapshot"
+            ]
+        );
+        assert!(events[0].to_json_string().contains("@xstate.event"));
+        assert!(machine.matches("d"));
+        assert!(machine.is_done());
+
+        // Also verify delayed after transition via SimulatedClock emits Event, Microstep, and Snapshot
+        let timer_json = r#"{
+            "id": "timer_inspect",
+            "initial": "waiting",
+            "states": {
+                "waiting": {
+                    "after": {
+                        "100": {
+                            "target": "done",
+                            "actions": ["onTimeout"]
+                        }
+                    }
+                },
+                "done": {
+                    "type": "final"
+                }
+            }
+        }"#;
+        let mut timer_machine = RuntimeMachine::from_json(timer_json).unwrap();
+        let clock = crate::SimulatedClock::new();
+        timer_machine.register_clock(&clock);
+        let timer_events = alloc::rc::Rc::new(core::cell::RefCell::new(alloc::vec::Vec::new()));
+        let timer_events_clone = timer_events.clone();
+        timer_machine.register_inspector(alloc::rc::Rc::new(move |ev: &crate::InspectEvent| {
+            timer_events_clone.borrow_mut().push(ev.clone());
+        }));
+        timer_machine.start(&guards, &actions);
+        timer_events.borrow_mut().clear();
+
+        clock.increment(100, &mut timer_machine, &guards, &actions);
+        let timer_types: alloc::vec::Vec<alloc::string::String> = timer_events
+            .borrow()
+            .iter()
+            .map(|e| alloc::string::String::from(e.event_type()))
+            .collect();
+        assert_eq!(
+            timer_types,
+            alloc::vec![
+                "@xstate.event",
+                "@xstate.action",
+                "@xstate.microstep",
+                "@xstate.snapshot"
+            ]
+        );
+        assert!(timer_machine.matches("done"));
+        assert!(timer_machine.is_done());
+    }
 }

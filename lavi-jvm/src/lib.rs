@@ -741,6 +741,58 @@ pub extern "system" fn Java_io_lavi_Machine_nativeRegisterSimulatedClock(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeRegisterInspector(
+    mut env: JNIEnv,
+    _class: JClass,
+    machine_handle: jlong,
+) {
+    let m_peer = unsafe { &*(machine_handle as *const MachinePeer) };
+    if m_peer.is_closed.get() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Machine is closed");
+        return;
+    }
+
+    let peer_ptr = machine_handle as *const MachinePeer;
+    let inspect_fn: lavi::InspectFunction = alloc::rc::Rc::new(move |evt: &lavi::InspectEvent| {
+        let peer = unsafe { &*peer_ptr };
+        if peer.is_closed.get() || peer.aborted.get() {
+            return;
+        }
+
+        let env_ptr = peer.active_env.get() as *mut JNIEnv;
+        let obj = peer.active_obj.get();
+        if env_ptr.is_null() || obj.is_null() {
+            return;
+        }
+
+        let env = unsafe { &mut *env_ptr };
+        let _guard = CallbackGuard::new(&peer.callback_depth);
+
+        let res = env.with_local_frame(16, |env| -> Result<(), jni::errors::Error> {
+            let evt_handle = Box::into_raw(Box::new(Arc::new(evt.to_value()))) as jlong;
+            let target_obj = unsafe { JObject::from_raw(obj) };
+
+            env.call_method(
+                &target_obj,
+                "dispatchInspect",
+                "(J)V",
+                &[evt_handle.into()],
+            )?;
+            Ok(())
+        });
+
+        if res.is_err() || env.exception_check().unwrap_or(false) {
+            peer.aborted.set(true);
+        }
+    });
+
+    let mut guard = m_peer.machine.borrow_mut();
+    if let Some(ref mut m) = *guard {
+        m.register_inspector(inspect_fn);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_lavi_Machine_nativeStart(
     mut env: JNIEnv,
     this_obj: JObject,

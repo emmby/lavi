@@ -100,6 +100,24 @@ static void inspect_input_cb(const char* action_name, const fsm_value_t* context
     c_input_verified = true;
 }
 
+static int c_inspect_event_count = 0;
+static bool c_inspect_saw_microstep = false;
+static bool c_inspect_saw_snapshot = false;
+static void c_inspector_cb(const char* inspect_json, void* user_data) {
+    assert(inspect_json != NULL);
+    int* counter = (int*)user_data;
+    if (counter != NULL) {
+        (*counter)++;
+    }
+    c_inspect_event_count++;
+    if (strstr(inspect_json, "@xstate.microstep") != NULL) {
+        c_inspect_saw_microstep = true;
+    }
+    if (strstr(inspect_json, "@xstate.snapshot") != NULL) {
+        c_inspect_saw_snapshot = true;
+    }
+}
+
 static uint64_t dynamic_delay_calc_cb(const char* delay_name, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
     (void)event;
     (void)user_data;
@@ -846,6 +864,22 @@ int main() {
     assert(fsm_is_in_state(je_m, "scored"));
 
     fsm_destroy(je_m);
+
+    // ==========================================
+    // Milestone 6: Inspection & Telemetry Hook
+    // ==========================================
+    MachineContext* insp_m = fsm_create(STOPLIGHT_JSON);
+    assert(insp_m != NULL);
+    int user_inspect_count = 0;
+    assert(fsm_register_inspector(insp_m, c_inspector_cb, &user_inspect_count) == 0);
+    assert(fsm_start(insp_m) == 0);
+    assert(fsm_send_event(insp_m, "TIMER") == 0);
+    assert(fsm_is_in_state(insp_m, "yellow"));
+    assert(c_inspect_event_count > 0);
+    assert(user_inspect_count == c_inspect_event_count);
+    assert(c_inspect_saw_microstep == true);
+    assert(c_inspect_saw_snapshot == true);
+    fsm_destroy(insp_m);
 
     printf("C Test Passed!\n");
     return 0;

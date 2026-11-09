@@ -225,4 +225,20 @@ final class LaviTests: XCTestCase {
         machine.send("FINISH")
         XCTAssertFalse(machine.isDone)
     }
+
+    func testInspectorCallback() {
+        let clock = SimulatedClock(initialMs: 0)
+        let machine = Machine(jsonConfig: stoplightJson, clock: clock)
+        machine.registerDelay("customDelay") { _, _ in 5000 }
+        var inspected: [String] = []
+        machine.registerInspector { json in
+            inspected.append(json)
+        }
+        machine.start()
+        clock.increment(1000)
+        machine.send("FINISH")
+        XCTAssertTrue(machine.isDone)
+        XCTAssertTrue(inspected.contains(where: { $0.contains("@xstate.microstep") }))
+        XCTAssertTrue(inspected.contains(where: { $0.contains("@xstate.snapshot") }))
+    }
 }

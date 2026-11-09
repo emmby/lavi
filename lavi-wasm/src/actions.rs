@@ -796,6 +796,7 @@ pub(crate) fn execute_enqueue_actions_collect(
     let effects_rc = Rc::new(RefCell::new(Vec::<Value>::new()));
     let cancel_rc = Rc::new(RefCell::new(Vec::<String>::new()));
     let delayed_events_rc = Rc::new(RefCell::new(Vec::<lavi::DelayedEvent>::new()));
+    let inspected_rc = Rc::new(RefCell::new(Vec::<lavi::InspectEvent>::new()));
 
     let is_snapshot_mode = actions_map.contains_key("__lavi_snapshot_mode__");
     let actions_map_rc = Rc::new(actions_map.clone());
@@ -810,6 +811,7 @@ pub(crate) fn execute_enqueue_actions_collect(
     let event_for_enqueue = event_val.clone();
     let cancel_for_enqueue = cancel_rc.clone();
     let delayed_for_enqueue = delayed_events_rc.clone();
+    let inspected_for_enqueue = inspected_rc.clone();
 
     let enqueue_closure = Closure::wrap(Box::new(move |action_arg: JsValue| {
         let t_val = if action_arg.is_function() || (action_arg.is_object() && !action_arg.is_null()) {
@@ -865,9 +867,9 @@ pub(crate) fn execute_enqueue_actions_collect(
                 };
                 let raised_val = js_to_value(&evt_to_raise);
                 if is_delayed {
-                    let delay_ms = if delay_val.is_function() {
+                    let (delay_ms, delay_enum) = if delay_val.is_function() {
                         let d_fn: js_sys::Function = delay_val.unchecked_into();
-                        d_fn.call1(&JsValue::NULL, &arg_obj).ok().and_then(|v| {
+                        let ms = d_fn.call1(&JsValue::NULL, &arg_obj).ok().and_then(|v| {
                             if let Some(n) = v.as_f64() {
                                 Some(n.max(0.0) as u64)
                             } else if let Some(s) = v.as_string() {
@@ -875,25 +877,40 @@ pub(crate) fn execute_enqueue_actions_collect(
                             } else {
                                 None
                             }
-                        }).unwrap_or(0)
+                        }).unwrap_or(0);
+                        (ms, lavi::Delay::Literal(ms))
                     } else if delay_val.is_string() {
                         let name = delay_val.as_string().unwrap_or_default();
-                        if let Some(d_fn) = delays_for_enqueue.get(&name) {
+                        let ms = if let Some(d_fn) = delays_for_enqueue.get(&name) {
                             d_fn(&ctx_for_enqueue.borrow(), &event_for_enqueue)
                         } else {
                             name.parse::<u64>().unwrap_or(0)
-                        }
+                        };
+                        (ms, lavi::Delay::Named(name))
                     } else if let Some(n) = delay_val.as_f64() {
-                        n.max(0.0) as u64
+                        let ms = n.max(0.0) as u64;
+                        (ms, lavi::Delay::Literal(ms))
                     } else {
-                        0
+                        (0, lavi::Delay::Literal(0))
                     };
+                    inspected_for_enqueue.borrow_mut().push(lavi::InspectEvent::Action {
+                        action: lavi::Action::DelayedRaise(lavi::DelayedRaiseAction {
+                            event: raised_val.clone(),
+                            delay: delay_enum,
+                            id: id_val.clone(),
+                        }),
+                        params: None,
+                    });
                     delayed_for_enqueue.borrow_mut().push(lavi::DelayedEvent {
                         id: id_val,
                         deadline: delay_ms,
                         event: raised_val,
                     });
                 } else {
+                    inspected_for_enqueue.borrow_mut().push(lavi::InspectEvent::Action {
+                        action: lavi::Action::Raise(raised_val.clone()),
+                        params: None,
+                    });
                     effects_for_enqueue.borrow_mut().push(raised_val);
                 }
             }
@@ -908,33 +925,66 @@ pub(crate) fn execute_enqueue_actions_collect(
                     .and_then(|v| v.as_string())
                     .unwrap_or_default();
                 if !send_id.is_empty() {
+                    inspected_for_enqueue.borrow_mut().push(lavi::InspectEvent::Action {
+                        action: lavi::Action::Cancel(lavi::CancelAction {
+                            send_id: send_id.clone(),
+                        }),
+                        params: None,
+                    });
                     cancel_for_enqueue.borrow_mut().push(send_id);
                 }
             }
         } else if let Some(act) = actions_for_enqueue.get(&t_str) {
             if !is_snapshot_mode {
-                let params_val = js_sys::Reflect::get(&action_arg, &JsValue::from_str("params")).ok().map(|p| js_to_value(&p));
+                let params_val = js_sys::Reflect::get(&action_arg, &JsValue::from_str("params"))
+                    .ok()
+                    .and_then(|p| if p.is_undefined() { None } else { Some(js_to_value(&p)) });
+                inspected_for_enqueue.borrow_mut().push(lavi::InspectEvent::Action {
+                    action: lavi::Action::Generic(lavi::GenericAction {
+                        action_type: t_str.clone(),
+                        params: params_val.clone(),
+                    }),
+                    params: params_val.clone(),
+                });
                 let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
                 act(&mut ctx_borrow, &event_for_enqueue, &params_val);
             }
         } else if action_arg.is_string() && !is_snapshot_mode {
             let name = action_arg.as_string().unwrap_or_default();
+            inspected_for_enqueue.borrow_mut().push(lavi::InspectEvent::Action {
+                action: lavi::Action::Named(name.clone()),
+                params: None,
+            });
             if let Some(act) = actions_for_enqueue.get(&name) {
                 let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
                 act(&mut ctx_borrow, &event_for_enqueue, &None);
             }
         } else if action_arg.is_function() && !is_snapshot_mode {
             let func: js_sys::Function = action_arg.unchecked_into();
+            let fn_name: String = func.name().into();
             let mut ctx_borrow = ctx_for_enqueue.borrow_mut();
             let res = execute_js_action(&func, &mut ctx_borrow, &event_for_enqueue, &None);
+            let mut was_assign = false;
             if res.is_object() || res.is_function() {
                 let t_val = js_sys::Reflect::get(&res, &JsValue::from_str("type")).unwrap_or(JsValue::UNDEFINED);
                 if t_val == JsValue::from_str("xstate.assign") {
+                    was_assign = true;
                     let a_val = js_sys::Reflect::get(&res, &JsValue::from_str("assignment")).unwrap_or(JsValue::UNDEFINED);
                     if !a_val.is_undefined() {
                         evaluate_assignment_value(&a_val, &mut ctx_borrow, &event_for_enqueue, &None);
                     }
                 }
+            }
+            if !was_assign {
+                let action_name = if fn_name.is_empty() {
+                    "(anonymous)".to_string()
+                } else {
+                    fn_name
+                };
+                inspected_for_enqueue.borrow_mut().push(lavi::InspectEvent::Action {
+                    action: lavi::Action::Named(action_name),
+                    params: None,
+                });
             }
         }
     }) as Box<dyn FnMut(JsValue)>);
@@ -950,9 +1000,15 @@ pub(crate) fn execute_enqueue_actions_collect(
     let _ = js_sys::Reflect::set(&enqueue_js_fn, &JsValue::from_str("assign"), assign_closure.as_ref().unchecked_ref());
 
     let effects_for_raise = effects_rc.clone();
+    let inspected_for_raise = inspected_rc.clone();
     let raise_closure = Closure::wrap(Box::new(move |evt_arg: JsValue| {
         if !is_snapshot_mode {
-            effects_for_raise.borrow_mut().push(js_to_value(&evt_arg));
+            let raised_val = js_to_value(&evt_arg);
+            inspected_for_raise.borrow_mut().push(lavi::InspectEvent::Action {
+                action: lavi::Action::Raise(raised_val.clone()),
+                params: None,
+            });
+            effects_for_raise.borrow_mut().push(raised_val);
         }
     }) as Box<dyn FnMut(JsValue)>);
     let _ = js_sys::Reflect::set(&enqueue_js_fn, &JsValue::from_str("raise"), raise_closure.as_ref().unchecked_ref());
@@ -989,6 +1045,9 @@ pub(crate) fn execute_enqueue_actions_collect(
     for delayed in delayed_events_rc.borrow().iter() {
         effects.delayed_events.push(delayed.clone());
     }
+    for insp in inspected_rc.borrow().iter() {
+        effects.inspected_actions.push(insp.clone());
+    }
 }
 
 pub(crate) fn process_action_item(
@@ -1004,6 +1063,7 @@ pub(crate) fn process_action_item(
         let s = item.as_string().unwrap_or_default();
         let act_obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("type"), item);
+        let _ = js_sys::Reflect::set(&act_obj, &JsValue::from_str("__raw_action"), item);
         action_descriptors.insert(s, act_obj.into());
         return item.clone();
     }
@@ -1028,6 +1088,7 @@ pub(crate) fn process_action_item(
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.enqueueActions"));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("collect"), &collect_val);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             action_descriptors.insert(id.clone(), new_obj.clone().into());
             return new_obj.into();
         }
@@ -1053,6 +1114,7 @@ pub(crate) fn process_action_item(
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.assign"));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("assignment"), &assignment);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             let params_val = js_sys::Reflect::get(item, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED);
             if !params_val.is_undefined() {
                 let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_val);
@@ -1074,6 +1136,7 @@ pub(crate) fn process_action_item(
             let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("sendId"), &send_id_val);
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_obj);
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("sendId"), &send_id_val);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             action_descriptors.insert("xstate.cancel".to_string(), new_obj.clone().into());
             return new_obj.into();
         }
@@ -1083,6 +1146,7 @@ pub(crate) fn process_action_item(
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise.invalid"));
             let err_val = js_sys::Reflect::get(item, &JsValue::from_str("error")).unwrap_or(JsValue::UNDEFINED);
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("error"), &err_val);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             action_descriptors.insert("xstate.raise.invalid".to_string(), new_obj.clone().into());
             return new_obj.into();
         }
@@ -1162,6 +1226,7 @@ pub(crate) fn process_action_item(
                 );
                 let new_obj = js_sys::Object::new();
                 let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+                let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
                 action_descriptors.insert(id.clone(), new_obj.clone().into());
                 return new_obj.into();
             }
@@ -1214,6 +1279,7 @@ pub(crate) fn process_action_item(
             let new_obj = js_sys::Object::new();
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.log"));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             let params_obj = js_sys::Object::new();
             let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("value"), &val_or_expr);
             if let Some(ref lbl) = label {
@@ -1232,6 +1298,7 @@ pub(crate) fn process_action_item(
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str("xstate.emit"));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_val);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             action_descriptors.insert(id.clone(), new_obj.clone().into());
             return new_obj.into();
         }
@@ -1241,6 +1308,12 @@ pub(crate) fn process_action_item(
             *counter += 1;
             let id = format!("auto_action_{}_{}", if path.is_empty() { "root" } else { path }, counter);
             let func: js_sys::Function = item.clone().unchecked_into();
+            let fn_name: String = func.name().into();
+            let display_name = if fn_name.is_empty() || fn_name == "entry" || fn_name == "exit" || fn_name == "actions" {
+                "(anonymous)".to_string()
+            } else {
+                fn_name
+            };
             let closure = Rc::new(move |ctx_mut: &mut Value, evt: &Value, params: &Option<Value>| {
                 let res = execute_js_action(&func, ctx_mut, evt, params);
                 if res.is_object() || res.is_function() {
@@ -1256,6 +1329,8 @@ pub(crate) fn process_action_item(
             actions.insert(id.clone(), closure);
             let new_obj = js_sys::Object::new();
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("displayName"), &JsValue::from_str(&display_name));
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             action_descriptors.insert(id.clone(), new_obj.clone().into());
             return new_obj.into();
         }
@@ -1268,6 +1343,7 @@ pub(crate) fn process_action_item(
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("actionType"), &JsValue::from_str(&type_str));
             let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("params"), &params_val);
+            let _ = js_sys::Reflect::set(&new_obj, &JsValue::from_str("__raw_action"), item);
             action_descriptors.insert(id.clone(), new_obj.clone().into());
             return new_obj.into();
         }
@@ -1282,6 +1358,7 @@ pub(crate) fn process_action_item(
 pub(crate) fn process_guard_value(
     guard_val: &JsValue,
     guards: &mut IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    action_descriptors: &mut IndexMap<String, JsValue>,
     counter: &mut u32,
     guards_holder: &Rc<RefCell<IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>>>,
 ) -> JsValue {
@@ -1304,7 +1381,7 @@ pub(crate) fn process_guard_value(
             let arr = js_sys::Array::from(&children);
             for i in 0..arr.length() {
                 let child = arr.get(i);
-                let processed_child = process_guard_value(&child, guards, counter, guards_holder);
+                let processed_child = process_guard_value(&child, guards, action_descriptors, counter, guards_holder);
                 new_arr.push(&processed_child);
             }
         }
@@ -1318,7 +1395,7 @@ pub(crate) fn process_guard_value(
         let guard_key = JsValue::from_str("guard");
         let inner = js_sys::Reflect::get(guard_val, &guard_key).unwrap_or(JsValue::UNDEFINED);
         let processed_inner = if !inner.is_undefined() {
-            process_guard_value(&inner, guards, counter, guards_holder)
+            process_guard_value(&inner, guards, action_descriptors, counter, guards_holder)
         } else {
             let guards_key = JsValue::from_str("guards");
             let g_val = js_sys::Reflect::get(guard_val, &guards_key).unwrap_or(JsValue::UNDEFINED);
@@ -1326,7 +1403,7 @@ pub(crate) fn process_guard_value(
                 let arr = js_sys::Array::from(&g_val);
                 if arr.length() > 0 {
                     let child = arr.get(0);
-                    process_guard_value(&child, guards, counter, guards_holder)
+                    process_guard_value(&child, guards, action_descriptors, counter, guards_holder)
                 } else {
                     JsValue::UNDEFINED
                 }
@@ -1375,6 +1452,7 @@ pub(crate) fn process_guard_value(
         });
         guards.insert(id.clone(), closure.clone());
         guards_holder.borrow_mut().insert(id.clone(), closure);
+        action_descriptors.insert(id.clone(), guard_val.clone());
         let replace_obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&replace_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
         return replace_obj.into();
@@ -1389,6 +1467,7 @@ pub(crate) fn process_guard_value(
         });
         guards.insert(id.clone(), closure.clone());
         guards_holder.borrow_mut().insert(id.clone(), closure);
+        action_descriptors.insert(id.clone(), guard_val.clone());
         let replace_obj = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&replace_obj, &JsValue::from_str("type"), &JsValue::from_str(&id));
         return replace_obj.into();
@@ -1534,7 +1613,7 @@ pub(crate) fn process_config(
                 continue;
             }
             if key_str == "guard" || key_str == "cond" {
-                let processed = process_guard_value(&value, guards, counter, guards_holder);
+                let processed = process_guard_value(&value, guards, action_descriptors, counter, guards_holder);
                 let _ = js_sys::Reflect::set(&obj, &key, &processed);
             } else if key_str == "entry" || key_str == "exit" || key_str == "actions" {
                 if js_sys::Array::is_array(&value) {

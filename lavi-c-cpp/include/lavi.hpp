@@ -82,6 +82,7 @@ using GuardCallback = std::function<bool(const Value& context, const Value& even
 using DelayCallback = std::function<uint64_t(const Value& context, const Value& event)>;
 using GuardWithParamsCallback = std::function<bool(const Value& context, const Value& event, const Value& params)>;
 using ClockCallback = std::function<uint64_t()>;
+using InspectCallback = std::function<void(const std::string& inspect_json)>;
 
 /**
  * @brief Virtual clock modeled on XState 5's SimulatedClock.
@@ -186,6 +187,9 @@ private:
     fsm_clock_callback_t m_clockCallback = nullptr;
     ClockCallback m_clockFn;
     ::SimulatedClock* m_simClock = nullptr;
+    fsm_inspect_callback_t m_rawInspectCallback = nullptr;
+    void* m_rawInspectUserData = nullptr;
+    InspectCallback m_inspectFn;
 
     const char* get_json_ptr() const noexcept {
         if (m_json) return m_json;
@@ -256,6 +260,14 @@ private:
         return 0;
     }
 
+    static void c_inspect_thunk(const char* inspect_json, void* user_data) {
+        if (!user_data || !inspect_json) return;
+        auto* instance = static_cast<Machine*>(user_data);
+        if (instance->m_inspectFn) {
+            instance->m_inspectFn(std::string(inspect_json));
+        }
+    }
+
     void rebind_this_pointers() {
         if (!machine) return;
         for (const auto& pair : m_callbacks) {
@@ -275,6 +287,9 @@ private:
         }
         if (!m_simClock && m_clockFn) {
             fsm_register_clock_with_data(machine, c_clock_thunk, this);
+        }
+        if (m_inspectFn) {
+            fsm_register_inspector(machine, c_inspect_thunk, this);
         }
     }
 
@@ -300,6 +315,9 @@ private:
             fsm_register_simulated_clock(machine, m_simClock);
         } else if (!m_clockFn && m_clockCallback) {
             fsm_register_clock(machine, m_clockCallback);
+        }
+        if (!m_inspectFn && m_rawInspectCallback) {
+            fsm_register_inspector(machine, m_rawInspectCallback, m_rawInspectUserData);
         }
     }
 
@@ -364,12 +382,17 @@ public:
           m_rawGuardsWithParams(std::move(other.m_rawGuardsWithParams)),
           m_clockCallback(other.m_clockCallback),
           m_clockFn(std::move(other.m_clockFn)),
-          m_simClock(other.m_simClock) {
+          m_simClock(other.m_simClock),
+          m_rawInspectCallback(other.m_rawInspectCallback),
+          m_rawInspectUserData(other.m_rawInspectUserData),
+          m_inspectFn(std::move(other.m_inspectFn)) {
         other.machine = nullptr;
         other.m_json = nullptr;
         other.m_input = nullptr;
         other.m_clockCallback = nullptr;
         other.m_simClock = nullptr;
+        other.m_rawInspectCallback = nullptr;
+        other.m_rawInspectUserData = nullptr;
         rebind_this_pointers();
     }
 
@@ -399,6 +422,11 @@ public:
             m_clockFn = std::move(other.m_clockFn);
             m_simClock = other.m_simClock;
             other.m_simClock = nullptr;
+            m_rawInspectCallback = other.m_rawInspectCallback;
+            other.m_rawInspectCallback = nullptr;
+            m_rawInspectUserData = other.m_rawInspectUserData;
+            other.m_rawInspectUserData = nullptr;
+            m_inspectFn = std::move(other.m_inspectFn);
             rebind_this_pointers();
         }
         return *this;
@@ -833,6 +861,32 @@ public:
     void register_clock(fsm_clock_callback_t callback) { registerClock(callback); }
     void register_clock(ClockCallback callback) { registerClock(std::move(callback)); }
     void register_clock(SimulatedClock& clock) { registerClock(clock); }
+
+    /**
+     * @brief Register an inspection callback receiving serialized JSON inspection events (lambda overload).
+     */
+    void registerInspector(InspectCallback callback) {
+        m_inspectFn = std::move(callback);
+        m_rawInspectCallback = nullptr;
+        m_rawInspectUserData = nullptr;
+        if (machine) {
+            fsm_register_inspector(machine, c_inspect_thunk, this);
+        }
+    }
+
+    /**
+     * @brief Register a zero-allocation C function pointer inspection callback.
+     */
+    void registerInspector(fsm_inspect_callback_t callback, void* user_data = nullptr) {
+        m_rawInspectCallback = callback;
+        m_rawInspectUserData = user_data;
+        m_inspectFn = nullptr;
+        if (machine) {
+            fsm_register_inspector(machine, callback, user_data);
+        }
+    }
+    void register_inspector(InspectCallback callback) { registerInspector(std::move(callback)); }
+    void register_inspector(fsm_inspect_callback_t callback, void* user_data = nullptr) { registerInspector(callback, user_data); }
 
     /**
      * @brief Query the earliest active `after` timer deadline in milliseconds.

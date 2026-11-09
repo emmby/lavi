@@ -172,6 +172,23 @@ impl SimulatedClock {
     }
 }
 
+static NEXT_SESSION_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn next_session_id() -> String {
+    let n = NEXT_SESSION_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    format!("x:{}", n)
+}
+
+#[wasm_bindgen(js_name = isMachineSnapshot)]
+pub fn is_machine_snapshot(val: JsValue) -> bool {
+    if !val.is_object() || val.is_null() {
+        return false;
+    }
+    js_sys::Reflect::has(&val, &JsValue::from_str("value")).unwrap_or(false)
+        && js_sys::Reflect::has(&val, &JsValue::from_str("status")).unwrap_or(false)
+        && js_sys::Reflect::has(&val, &JsValue::from_str("context")).unwrap_or(false)
+}
+
 #[derive(Clone)]
 pub(crate) enum Subscriber {
     Fn(js_sys::Function),
@@ -190,6 +207,7 @@ pub(crate) struct ActiveTimeout {
 pub(crate) struct SharedActorState {
     pub machine: RuntimeMachine,
     pub inspector: Option<js_sys::Function>,
+    pub inspectors: Vec<(u64, Subscriber)>,
     pub subscribers: Vec<(u64, Subscriber)>,
     pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
     pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
@@ -208,6 +226,8 @@ pub(crate) struct SharedActorState {
     pub input_js: Option<JsValue>,
     pub initialization_error: Option<JsValue>,
     pub action_descriptors: IndexMap<String, JsValue>,
+    pub session_id: String,
+    pub custom_id: Option<String>,
 }
 
 pub(crate) fn resolve_host_clock(custom_clock: Option<&JsValue>) -> Option<(js_sys::Function, js_sys::Function)> {
@@ -247,6 +267,8 @@ pub struct Actor {
     pub(crate) logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
     pub(crate) input_js: Option<JsValue>,
     pub(crate) initialization_error: Option<JsValue>,
+    pub(crate) session_id: String,
+    pub(crate) custom_id: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -305,7 +327,6 @@ impl Actor {
              m
         } else {
              let normalized_val = normalize_undefined(&val, 0);
-             let (cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
              let mut dummy_guards = IndexMap::new();
              let mut dummy_actions = IndexMap::new();
              let mut dummy_actions_with_effects = IndexMap::new();
@@ -313,7 +334,8 @@ impl Actor {
              let mut counter = 0;
              let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
              let dummy_logger_holder = Rc::new(RefCell::new(None));
-             process_config(&cleaned_val, &mut dummy_guards, &mut dummy_actions, &mut dummy_actions_with_effects, &mut dummy_action_descriptors, 0, &mut counter, "", &guards_holder, &dummy_logger_holder);
+             process_config(&normalized_val, &mut dummy_guards, &mut dummy_actions, &mut dummy_actions_with_effects, &mut dummy_action_descriptors, 0, &mut counter, "", &guards_holder, &dummy_logger_holder);
+             let (cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
              guards.extend(dummy_guards);
              guards_holder.borrow_mut().extend(guards.clone());
              actions.extend(dummy_actions);
@@ -378,6 +400,8 @@ impl Actor {
             logger_holder: Rc::new(RefCell::new(None)),
             input_js: None,
             initialization_error: None,
+            session_id: String::new(),
+            custom_id: None,
         };
         configure_logger(&options, &mut actor);
         actor.restore_snapshot_option(&options)?;
@@ -508,6 +532,8 @@ impl Actor {
             self.actions = shared.actions.clone();
             self.is_stopped = shared.is_stopped;
             self.is_initialized = shared.is_initialized || self.machine.is_started;
+            self.session_id = shared.session_id.clone();
+            self.custom_id = shared.custom_id.clone();
         }
     }
 
@@ -523,6 +549,12 @@ impl Actor {
             shared.logger = self.logger.clone();
             shared.logger_holder = self.logger_holder.clone();
             shared.action_descriptors = self.action_descriptors.clone();
+            if !self.session_id.is_empty() {
+                shared.session_id = self.session_id.clone();
+            }
+            if self.custom_id.is_some() {
+                shared.custom_id = self.custom_id.clone();
+            }
             if !shared.machine.is_done() && shared.machine.status != lavi::MachineStatus::Done {
                 shared.cached_output = None;
                 shared.is_completed_emitted = false;
@@ -531,6 +563,7 @@ impl Actor {
             *borrow = Some(SharedActorState {
                 machine: self.machine.clone(),
                 inspector: self.inspector.clone(),
+                inspectors: Vec::new(),
                 subscribers: Vec::new(),
                 guards: self.guards.clone(),
                 actions: self.actions.clone(),
@@ -549,6 +582,8 @@ impl Actor {
                 input_js: self.input_js.clone(),
                 initialization_error: self.initialization_error.clone(),
                 action_descriptors: self.action_descriptors.clone(),
+                session_id: self.session_id.clone(),
+                custom_id: self.custom_id.clone(),
             });
         }
     }
@@ -675,8 +710,530 @@ impl Actor {
         }
     }
 
-    pub(crate) fn set_inspector(&mut self, callback: js_sys::Function) {
-        self.inspector = Some(callback);
+    pub(crate) fn make_actor_ref_js_parts(id: &str, session_id: &str) -> JsValue {
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_str(id));
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sessionId"), &JsValue::from_str(session_id));
+        let to_json_fn = js_sys::Function::new_no_args(
+            "return { id: this.id, xstate$$type: 1 };",
+        );
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("toJSON"), &to_json_fn);
+        obj.into()
+    }
+
+    pub(crate) fn inspect_event_payload_to_js(evt: &Value, input_js: &Option<JsValue>) -> JsValue {
+        if let Value::Object(map) = evt {
+            if let Some(Value::String(t)) = map.get("type") {
+                if t == "xstate.init" {
+                    let obj = js_sys::Object::new();
+                    let inp = input_js.clone().unwrap_or(JsValue::UNDEFINED);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("input"), &inp);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.init"));
+                    return obj.into();
+                }
+            }
+        }
+        Self::event_to_js(evt)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build_inspect_snapshot_js(
+        machine_template: &RuntimeMachine,
+        state: &lavi::StateValue,
+        context: &Value,
+        status: lavi::MachineStatus,
+        config: &JsValue,
+        guards: &IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+        actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+        action_descriptors: &IndexMap<String, JsValue>,
+        logger_holder: &Rc<RefCell<Option<js_sys::Function>>>,
+    ) -> JsValue {
+        let mut temp_machine = machine_template.clone();
+        temp_machine.current_state = state.clone();
+        temp_machine.context = context.clone();
+        temp_machine.status = status;
+
+        let active_paths = state.get_active_paths();
+        let value_val = Self::build_snapshot_state_value(&temp_machine, &active_paths);
+        let ctx_val = match context {
+            Value::Null => js_sys::Object::new().into(),
+            other => value_to_js(other),
+        };
+        let history_obj = compute_history_value_obj(
+            &temp_machine,
+            guards,
+            actions,
+            action_descriptors,
+            config,
+            logger_holder,
+        );
+        let status_str = match status {
+            lavi::MachineStatus::Done => "done",
+            lavi::MachineStatus::Stopped => "stopped",
+            lavi::MachineStatus::Active => "active",
+        };
+        let output_val = if status == lavi::MachineStatus::Done {
+            Self::compute_output_js(config, &temp_machine, &ctx_val)
+        } else {
+            JsValue::UNDEFINED
+        };
+        let tags_arr = js_sys::Array::new();
+        for tag in temp_machine.get_tags() {
+            tags_arr.push(&JsValue::from_str(&tag));
+        }
+
+        let snap_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("children"), &js_sys::Object::new());
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("context"), &ctx_val);
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("error"), &JsValue::UNDEFINED);
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("historyValue"), &history_obj);
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("output"), &output_val);
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("status"), &JsValue::from_str(status_str));
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("tags"), &tags_arr);
+        let _ = js_sys::Reflect::set(&snap_obj, &JsValue::from_str("value"), &value_val);
+        snap_obj.into()
+    }
+
+    pub(crate) fn build_machine_inspector(&self) -> lavi::InspectFunction {
+        let shared_weak = Rc::downgrade(&self.shared_state);
+        let config_clone = self.config.clone();
+        Rc::new(move |ev: &lavi::InspectEvent| {
+            let Some(shared_rc) = shared_weak.upgrade() else {
+                return;
+            };
+            let (
+                inspectors,
+                session_id,
+                custom_id,
+                input_js,
+                action_descriptors,
+                machine_template,
+                guards,
+                actions,
+                logger_holder,
+            ) = {
+                let Ok(borrow) = shared_rc.try_borrow() else {
+                    return;
+                };
+                let Some(shared) = borrow.as_ref() else {
+                    return;
+                };
+                if shared.inspectors.is_empty() && shared.inspector.is_none() {
+                    return;
+                }
+                let mut list = shared.inspectors.clone();
+                if let Some(ref legacy_fn) = shared.inspector {
+                    list.push((0, Subscriber::Fn(legacy_fn.clone())));
+                }
+                (
+                    list,
+                    shared.session_id.clone(),
+                    shared.custom_id.clone(),
+                    shared.input_js.clone(),
+                    shared.action_descriptors.clone(),
+                    shared.machine.clone(),
+                    shared.guards.clone(),
+                    shared.actions.clone(),
+                    shared.logger_holder.clone(),
+                )
+            };
+
+            let actor_id = custom_id.unwrap_or_else(|| session_id.clone());
+            let actor_ref_js = Self::make_actor_ref_js_parts(&actor_id, &session_id);
+
+            let ev_js: JsValue = match ev {
+                lavi::InspectEvent::Actor => {
+                    let obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.actor"));
+                    obj.into()
+                }
+                lavi::InspectEvent::Event { event } => {
+                    let evt_js = Self::inspect_event_payload_to_js(event, &input_js);
+                    let obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sourceRef"), &JsValue::UNDEFINED);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.event"));
+                    obj.into()
+                }
+                lavi::InspectEvent::Action { action, params } => {
+                    let action_obj = js_sys::Object::new();
+                    match action {
+                        lavi::Action::Raise(ev_val) => {
+                            let params_obj = js_sys::Object::new();
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("delay"), &JsValue::UNDEFINED);
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &value_to_js(ev_val));
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("id"), &JsValue::UNDEFINED);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("params"), &params_obj);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise"));
+                        }
+                        lavi::Action::DelayedRaise(dra) => {
+                            let params_obj = js_sys::Object::new();
+                            let delay_val = match &dra.delay {
+                                lavi::Delay::Literal(ms) => JsValue::from_f64(*ms as f64),
+                                lavi::Delay::Named(s) => JsValue::from_str(s),
+                            };
+                            let id_val = dra.id.as_ref().map(|s| JsValue::from_str(s)).unwrap_or(JsValue::UNDEFINED);
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("delay"), &delay_val);
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &value_to_js(&dra.event));
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("id"), &id_val);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("params"), &params_obj);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise"));
+                        }
+                        lavi::Action::Cancel(ca) => {
+                            let params_obj = js_sys::Object::new();
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("sendId"), &JsValue::from_str(&ca.send_id));
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("params"), &params_obj);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.cancel"));
+                        }
+                        lavi::Action::Log(la) => {
+                            let params_obj = js_sys::Object::new();
+                            let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("value"), &value_to_js(&la.value));
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("params"), &params_obj);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.log"));
+                        }
+                        lavi::Action::Named(name) | lavi::Action::Generic(lavi::GenericAction { action_type: name, .. }) => {
+                            let desc_opt = action_descriptors.get(name);
+                            let resolved_type = if let Some(desc) = desc_opt {
+                                let at = js_sys::Reflect::get(desc, &JsValue::from_str("actionType"))
+                                    .ok()
+                                    .and_then(|v| v.as_string())
+                                    .unwrap_or_default();
+                                if !at.is_empty() {
+                                    at
+                                } else {
+                                    let dn = js_sys::Reflect::get(desc, &JsValue::from_str("displayName"))
+                                        .ok()
+                                        .and_then(|v| v.as_string())
+                                        .unwrap_or_default();
+                                    if !dn.is_empty() {
+                                        dn
+                                    } else if name.starts_with("auto_action_") || name.starts_with("generated_action_") {
+                                        "(anonymous)".to_string()
+                                    } else {
+                                        name.clone()
+                                    }
+                                }
+                            } else if name.starts_with("auto_action_") || name.starts_with("generated_action_") {
+                                "(anonymous)".to_string()
+                            } else {
+                                name.clone()
+                            };
+                            let resolved_params = if let Some(p) = params {
+                                value_to_js(p)
+                            } else if let Some(desc) = desc_opt {
+                                js_sys::Reflect::get(desc, &JsValue::from_str("params")).unwrap_or(JsValue::UNDEFINED)
+                            } else {
+                                JsValue::UNDEFINED
+                            };
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("params"), &resolved_params);
+                            let _ = js_sys::Reflect::set(&action_obj, &JsValue::from_str("type"), &JsValue::from_str(&resolved_type));
+                        }
+                        _ => {}
+                    }
+                    let obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("action"), &action_obj);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.action"));
+                    obj.into()
+                }
+                lavi::InspectEvent::Microstep {
+                    event,
+                    transitions,
+                    state,
+                    context,
+                    status,
+                } => {
+                    let transitions_arr = js_sys::Array::new();
+                    for t in transitions {
+                        let t_obj = js_sys::Object::new();
+                        let actions_arr = js_sys::Array::new();
+                        for act in &t.actions {
+                            match act {
+                                lavi::Action::Named(n) | lavi::Action::Generic(lavi::GenericAction { action_type: n, .. }) => {
+                                    if let Some(desc) = action_descriptors.get(n) {
+                                        let raw = js_sys::Reflect::get(desc, &JsValue::from_str("__raw_action")).unwrap_or(JsValue::UNDEFINED);
+                                        if !raw.is_undefined() {
+                                            actions_arr.push(&raw);
+                                        } else {
+                                            actions_arr.push(desc);
+                                        }
+                                    } else {
+                                        let a_obj = js_sys::Object::new();
+                                        let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &JsValue::from_str(n));
+                                        actions_arr.push(&a_obj);
+                                    }
+                                }
+                                lavi::Action::Raise(ev_val) => {
+                                    let a_obj = js_sys::Object::new();
+                                    let params_obj = js_sys::Object::new();
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("delay"), &JsValue::UNDEFINED);
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &value_to_js(ev_val));
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("id"), &JsValue::UNDEFINED);
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("params"), &params_obj);
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise"));
+                                    actions_arr.push(&a_obj);
+                                }
+                                lavi::Action::DelayedRaise(dra) => {
+                                    let a_obj = js_sys::Object::new();
+                                    let params_obj = js_sys::Object::new();
+                                    let delay_val = match &dra.delay {
+                                        lavi::Delay::Literal(ms) => JsValue::from_f64(*ms as f64),
+                                        lavi::Delay::Named(s) => JsValue::from_str(s),
+                                    };
+                                    let id_val = dra.id.as_ref().map(|s| JsValue::from_str(s)).unwrap_or(JsValue::UNDEFINED);
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("delay"), &delay_val);
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("event"), &value_to_js(&dra.event));
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("id"), &id_val);
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("params"), &params_obj);
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.raise"));
+                                    actions_arr.push(&a_obj);
+                                }
+                                lavi::Action::Cancel(ca) => {
+                                    let a_obj = js_sys::Object::new();
+                                    let params_obj = js_sys::Object::new();
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("sendId"), &JsValue::from_str(&ca.send_id));
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("params"), &params_obj);
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.cancel"));
+                                    actions_arr.push(&a_obj);
+                                }
+                                lavi::Action::Log(la) => {
+                                    let a_obj = js_sys::Object::new();
+                                    let params_obj = js_sys::Object::new();
+                                    let _ = js_sys::Reflect::set(&params_obj, &JsValue::from_str("value"), &value_to_js(&la.value));
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("params"), &params_obj);
+                                    let _ = js_sys::Reflect::set(&a_obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.log"));
+                                    actions_arr.push(&a_obj);
+                                }
+                                _ => {}
+                            }
+                        }
+                        let guard_js = match &t.guard {
+                            None => JsValue::UNDEFINED,
+                            Some(lavi::TransitionGuard::Name(g_name))
+                            | Some(lavi::TransitionGuard::Object(lavi::GuardObject { guard_type: g_name, .. })) => {
+                                action_descriptors.get(g_name).cloned().unwrap_or_else(|| JsValue::from_str(g_name))
+                            }
+                            Some(_) => JsValue::UNDEFINED,
+                        };
+                        let source_obj = js_sys::Object::new();
+                        let _ = js_sys::Reflect::set(&source_obj, &JsValue::from_str("id"), &JsValue::from_str(&t.source_id));
+                        let target_js = if let Some(ref targets) = t.target_ids {
+                            let t_arr = js_sys::Array::new();
+                            for tid in targets {
+                                let tgt_obj = js_sys::Object::new();
+                                let _ = js_sys::Reflect::set(&tgt_obj, &JsValue::from_str("id"), &JsValue::from_str(tid));
+                                t_arr.push(&tgt_obj);
+                            }
+                            t_arr.into()
+                        } else {
+                            JsValue::UNDEFINED
+                        };
+                        let to_json_fn = js_sys::Function::new_no_args(
+                            "return { actions: this.actions, eventType: this.eventType, guard: this.guard, reenter: this.reenter, source: typeof this.source === 'string' ? this.source : '#' + this.source.id, target: this.target ? this.target.map(function(x) { return typeof x === 'string' ? x : '#' + x.id; }) : undefined, toJSON: this.toJSON };",
+                        );
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("actions"), &actions_arr);
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("eventType"), &JsValue::from_str(&t.event_type));
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("guard"), &guard_js);
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("reenter"), &JsValue::from_bool(t.reenter));
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("source"), &source_obj);
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("target"), &target_js);
+                        let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("toJSON"), &to_json_fn);
+                        transitions_arr.push(&t_obj);
+                    }
+                    let evt_js = Self::inspect_event_payload_to_js(event, &input_js);
+                    let snap_js = Self::build_inspect_snapshot_js(
+                        &machine_template,
+                        state,
+                        context,
+                        *status,
+                        &config_clone,
+                        &guards,
+                        &actions,
+                        &action_descriptors,
+                        &logger_holder,
+                    );
+                    let obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("_transitions"), &transitions_arr);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("snapshot"), &snap_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.microstep"));
+                    obj.into()
+                }
+                lavi::InspectEvent::Snapshot {
+                    event,
+                    state,
+                    context,
+                    status,
+                } => {
+                    let evt_js = Self::inspect_event_payload_to_js(event, &input_js);
+                    let snap_js = Self::build_inspect_snapshot_js(
+                        &machine_template,
+                        state,
+                        context,
+                        *status,
+                        &config_clone,
+                        &guards,
+                        &actions,
+                        &action_descriptors,
+                        &logger_holder,
+                    );
+                    let obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("snapshot"), &snap_js);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+                    obj.into()
+                }
+            };
+
+            for (_, insp_sub) in &inspectors {
+                match insp_sub {
+                    Subscriber::Fn(func) => {
+                        let _ = func.call1(&JsValue::NULL, &ev_js);
+                    }
+                    Subscriber::Observer { next: Some(next_fn), .. } => {
+                        let _ = next_fn.call1(&JsValue::NULL, &ev_js);
+                    }
+                    _ => {}
+                }
+            }
+        })
+    }
+
+    pub(crate) fn add_inspector(&self, observer_or_fn: JsValue, emit_actor_event: bool) -> Result<JsValue, JsValue> {
+        let sub = if observer_or_fn.is_function() {
+            Subscriber::Fn(observer_or_fn.unchecked_into())
+        } else if observer_or_fn.is_object() && !observer_or_fn.is_null() {
+            let obj = js_sys::Object::from(observer_or_fn);
+            let next_fn = js_sys::Reflect::get(&obj, &JsValue::from_str("next"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+            let complete_fn = js_sys::Reflect::get(&obj, &JsValue::from_str("complete"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+            let error_fn = js_sys::Reflect::get(&obj, &JsValue::from_str("error"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+            Subscriber::Observer {
+                next: next_fn,
+                complete: complete_fn,
+                error: error_fn,
+            }
+        } else {
+            return Err(JsValue::from_str("inspect requires a function or observer"));
+        };
+
+        static NEXT_INSP_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+        let insp_id = NEXT_INSP_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+        {
+            let insp_fn = self.build_machine_inspector();
+            let mut borrow = self.shared_state.borrow_mut();
+            if let Some(shared) = borrow.as_mut() {
+                if shared.machine.inspector_fn.is_none() {
+                    shared.machine.register_inspector(insp_fn);
+                }
+                shared.inspectors.push((insp_id, sub.clone()));
+            }
+        }
+
+        if emit_actor_event {
+            let actor_id = self.id();
+            let session_id = self.session_id();
+            let actor_ref_js = Self::make_actor_ref_js_parts(&actor_id, &session_id);
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.actor"));
+            let ev_js: JsValue = obj.into();
+            match &sub {
+                Subscriber::Fn(func) => {
+                    let _ = func.call1(&JsValue::NULL, &ev_js);
+                }
+                Subscriber::Observer { next: Some(next_fn), .. } => {
+                    let _ = next_fn.call1(&JsValue::NULL, &ev_js);
+                }
+                _ => {}
+            }
+        }
+
+        let shared_weak = Rc::downgrade(&self.shared_state);
+        let unsub_closure = Closure::wrap(Box::new(move || {
+            if let Some(shared_rc) = shared_weak.upgrade() {
+                if let Ok(mut borrow) = shared_rc.try_borrow_mut() {
+                    if let Some(shared) = borrow.as_mut() {
+                        shared.inspectors.retain(|(id, _)| *id != insp_id);
+                        if shared.inspectors.is_empty() && shared.inspector.is_none() {
+                            shared.machine.inspector_fn = None;
+                        }
+                    }
+                }
+            }
+        }) as Box<dyn FnMut()>);
+
+        let unsub_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &unsub_obj,
+            &JsValue::from_str("unsubscribe"),
+            &unsub_closure.into_js_value(),
+        );
+        Ok(unsub_obj.into())
+    }
+
+    #[wasm_bindgen(getter, js_name = sessionId)]
+    pub fn session_id(&self) -> String {
+        if let Some(shared) = self.shared_state.borrow().as_ref() {
+            if !shared.session_id.is_empty() {
+                return shared.session_id.clone();
+            }
+        }
+        self.session_id.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn id(&self) -> String {
+        if let Some(shared) = self.shared_state.borrow().as_ref() {
+            if let Some(ref cid) = shared.custom_id {
+                return cid.clone();
+            }
+            if !shared.session_id.is_empty() {
+                return shared.session_id.clone();
+            }
+        }
+        self.custom_id.clone().unwrap_or_else(|| self.session_id.clone())
+    }
+
+    #[wasm_bindgen(js_name = toJSON)]
+    pub fn to_json(&self) -> JsValue {
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_str(&self.id()));
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("xstate$$type"), &JsValue::from_f64(1.0));
+        obj.into()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn system(&self) -> JsValue {
+        let actor_clone = self.clone();
+        let inspect_closure = Closure::wrap(Box::new(move |observer_or_fn: JsValue| -> JsValue {
+            actor_clone
+                .add_inspector(observer_or_fn, false)
+                .unwrap_or(JsValue::UNDEFINED)
+        }) as Box<dyn FnMut(JsValue) -> JsValue>);
+        let sys_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &sys_obj,
+            &JsValue::from_str("inspect"),
+            &inspect_closure.into_js_value(),
+        );
+        sys_obj.into()
     }
 
 
@@ -724,6 +1281,7 @@ impl Actor {
             }
         };
         if !active_machine.is_started && !is_initialized {
+            active_machine.inspector_fn = None;
             let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
             snapshot_actions.insert(
                 "__lavi_snapshot_mode__".to_string(),
@@ -1044,21 +1602,16 @@ impl Actor {
             false
         };
         let obj: JsValue = snapshot.into();
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str(&status_str));
 
-        let (subscribers, inspector) = {
+        let subscribers = {
             let borrow = self.shared_state.borrow();
             if let Some(shared) = borrow.as_ref() {
-                (shared.subscribers.clone(), shared.inspector.clone())
+                shared.subscribers.clone()
             } else {
-                (Vec::new(), self.inspector.clone())
+                Vec::new()
             }
         };
-
-        if let Some(insp) = &inspector {
-            let _ = insp.call1(&JsValue::NULL, &obj);
-        }
 
         for (_, sub) in &subscribers {
             match sub {
@@ -1091,19 +1644,6 @@ impl Actor {
              let name = payload.as_object().and_then(|m| m.get("type")).and_then(|t| t.as_string()).map(|s| s.as_str()).unwrap_or("UNKNOWN").to_string();
              (name, payload)
         };
-
-        let inspector = {
-            let borrow = self.shared_state.borrow();
-            borrow.as_ref().and_then(|s| s.inspector.clone()).or_else(|| self.inspector.clone())
-        };
-        if let Some(inspector) = &inspector {
-             let obj = js_sys::Object::new();
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.event"));
-             let evt_val = value_to_js(&event_payload);
-             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_val);
-
-             let _ = inspector.call1(&JsValue::NULL, &obj);
-        }
 
         let (is_started, is_stopped, is_done, is_in_tick) = {
             let borrow = self.shared_state.borrow();
@@ -1311,6 +1851,7 @@ impl Actor {
         let preview;
         let machine_ref = if !active_machine.is_started && !is_initialized {
             let mut m = active_machine.clone();
+            m.inspector_fn = None;
             m.start(&self.guards, &IndexMap::new());
             preview = m;
             &preview
@@ -1502,6 +2043,8 @@ impl Actor {
                 input_js: shared.input_js.clone(),
                 initialization_error: shared.initialization_error.clone(),
                 action_descriptors: shared.action_descriptors.clone(),
+                session_id: shared.session_id.clone(),
+                custom_id: shared.custom_id.clone(),
             }
         };
 
@@ -1669,7 +2212,12 @@ impl Snapshot {
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> JsValue {
         let json_str = self.machine_ref.get_persisted_snapshot_json();
-        js_sys::JSON::parse(&json_str).unwrap_or(JsValue::NULL)
+        let val = js_sys::JSON::parse(&json_str).unwrap_or(JsValue::NULL);
+        if val.is_object() && !val.is_null() {
+            let _ = js_sys::Reflect::set(&val, &JsValue::from_str("error"), &self.error);
+            let _ = js_sys::Reflect::set(&val, &JsValue::from_str("output"), &self.output);
+        }
+        val
     }
 }
 
@@ -1709,6 +2257,12 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
         &logger_holder,
     );
     let mut runner = Actor::new(config.clone(), options.clone())?;
+    runner.session_id = next_session_id();
+    if options.is_object() && !options.is_null() {
+        runner.custom_id = js_sys::Reflect::get(&options, &JsValue::from_str("id"))
+            .ok()
+            .and_then(|v| v.as_string());
+    }
     runner.logger_holder = logger_holder.clone();
     runner.guards.extend(inline_guards);
     runner.actions.extend(inline_actions);
@@ -1749,13 +2303,13 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
         }
     }
 
+    let mut initial_inspect_val = JsValue::UNDEFINED;
     // Apply common options (inspect, implementations, snapshot)
     if options.is_object() {
         let inspect_key = JsValue::from_str("inspect");
         let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
-        if inspect_val.is_function() {
-             let func: js_sys::Function = inspect_val.dyn_into().unwrap();
-             runner.set_inspector(func);
+        if !inspect_val.is_undefined() && !inspect_val.is_null() {
+             initial_inspect_val = inspect_val;
         }
 
         let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
@@ -1770,6 +2324,9 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
 
     check_initial_entry_guards(&runner);
     runner.push_shared();
+    if !initial_inspect_val.is_undefined() {
+        let _ = runner.add_inspector(initial_inspect_val, true);
+    }
 
     Ok(runner.into())
 }

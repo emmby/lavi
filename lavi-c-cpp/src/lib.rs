@@ -40,6 +40,12 @@ pub type fsm_clock_callback_t = Option<extern "C" fn() -> u64>;
 pub type fsm_clock_with_data_callback_t = Option<extern "C" fn(user_data: *mut core::ffi::c_void) -> u64>;
 
 #[allow(non_camel_case_types)]
+pub type fsm_inspect_callback_t = Option<extern "C" fn(
+    inspect_json: *const c_char,
+    user_data: *mut core::ffi::c_void,
+)>;
+
+#[allow(non_camel_case_types)]
 pub type fsm_guard_callback_t = Option<extern "C" fn(
     guard_name: *const c_char,
     context: *const fsm_value_t,
@@ -390,6 +396,32 @@ pub extern "C" fn fsm_register_clock_with_data(
         let clock_millis_fn: alloc::rc::Rc<dyn Fn() -> u64> =
             alloc::rc::Rc::new(move || cb(user_data));
         ctx.machine.register_clock(clock_millis_fn);
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fsm_register_inspector(
+    ptr: *mut MachineContext,
+    callback: fsm_inspect_callback_t,
+    user_data: *mut core::ffi::c_void,
+) -> c_int {
+    let ctx = unsafe {
+        if ptr.is_null() {
+            return -1;
+        }
+        &mut *ptr
+    };
+    if let Some(cb) = callback {
+        let inspect_fn: lavi::InspectFunction = alloc::rc::Rc::new(move |evt: &lavi::InspectEvent| {
+            let json = evt.to_json_string();
+            if let Ok(c_str) = alloc::ffi::CString::new(json) {
+                cb(c_str.as_ptr(), user_data);
+            }
+        });
+        ctx.machine.register_inspector(inspect_fn);
+    } else {
+        ctx.machine.inspector_fn = None;
     }
     0
 }

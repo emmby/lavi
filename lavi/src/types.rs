@@ -369,6 +369,7 @@ pub struct ActionEffects {
     pub raised: alloc::collections::VecDeque<Value>,
     pub delayed_events: Vec<DelayedEvent>,
     pub cancel_ids: Vec<String>,
+    pub inspected_actions: Vec<InspectEvent>,
     pub error: Option<String>,
 }
 
@@ -378,6 +379,7 @@ impl ActionEffects {
             raised: alloc::collections::VecDeque::new(),
             delayed_events: Vec::new(),
             cancel_ids: Vec::new(),
+            inspected_actions: Vec::new(),
             error: None,
         }
     }
@@ -407,6 +409,136 @@ pub type DelayFunction = Rc<dyn Fn(&Value, &Value) -> u64>;
 pub type LoggerFunction = Rc<dyn Fn(&Option<String>, &Value)>;
 pub type WarnFunction = Rc<dyn Fn(&str)>;
 pub type OutputResolver = Rc<dyn Fn(&Value, &Value) -> Value>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InspectedTransition {
+    pub source_id: String,
+    pub target_ids: Option<Vec<String>>,
+    pub event_type: String,
+    pub actions: Vec<Action>,
+    pub guard: Option<TransitionGuard>,
+    pub reenter: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InspectEvent {
+    Actor,
+    Event {
+        event: Value,
+    },
+    Action {
+        action: Action,
+        params: Option<Value>,
+    },
+    Microstep {
+        event: Value,
+        transitions: Vec<InspectedTransition>,
+        state: StateValue,
+        context: Value,
+        status: MachineStatus,
+    },
+    Snapshot {
+        event: Value,
+        state: StateValue,
+        context: Value,
+        status: MachineStatus,
+    },
+}
+
+pub type InspectFunction = Rc<dyn Fn(&InspectEvent)>;
+
+impl InspectEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            InspectEvent::Actor => "@xstate.actor",
+            InspectEvent::Event { .. } => "@xstate.event",
+            InspectEvent::Action { .. } => "@xstate.action",
+            InspectEvent::Microstep { .. } => "@xstate.microstep",
+            InspectEvent::Snapshot { .. } => "@xstate.snapshot",
+        }
+    }
+
+    pub fn to_value(&self) -> Value {
+        let mut map = IndexMap::new();
+        match self {
+            InspectEvent::Actor => {
+                map.insert("type".to_string(), Value::String("@xstate.actor".to_string()));
+            }
+            InspectEvent::Event { event } => {
+                map.insert("type".to_string(), Value::String("@xstate.event".to_string()));
+                map.insert("event".to_string(), event.clone());
+            }
+            InspectEvent::Action { action, params } => {
+                map.insert("type".to_string(), Value::String("@xstate.action".to_string()));
+                let mut action_map = IndexMap::new();
+                let (action_type, resolved_params) = match action {
+                    Action::Named(name) => (name.clone(), params.clone()),
+                    Action::Generic(g) => (g.action_type.clone(), params.clone().or_else(|| g.params.clone())),
+                    Action::Assign(a) => (a.action_type.clone(), params.clone()),
+                    Action::Raise(_) | Action::DelayedRaise(_) => ("xstate.raise".to_string(), params.clone()),
+                    Action::Cancel(_) => ("xstate.cancel".to_string(), params.clone()),
+                    Action::Log(_) => ("xstate.log".to_string(), params.clone()),
+                    Action::RaiseInvalid(s) => (s.clone(), params.clone()),
+                };
+                action_map.insert("type".to_string(), Value::String(action_type));
+                if let Some(p) = resolved_params {
+                    action_map.insert("params".to_string(), p);
+                }
+                map.insert("action".to_string(), Value::Object(action_map));
+            }
+            InspectEvent::Microstep {
+                event,
+                transitions,
+                state,
+                context,
+                status,
+            } => {
+                map.insert("type".to_string(), Value::String("@xstate.microstep".to_string()));
+                map.insert("event".to_string(), event.clone());
+                let mut trans_arr = Vec::with_capacity(transitions.len());
+                for t in transitions {
+                    let mut t_map = IndexMap::new();
+                    t_map.insert("eventType".to_string(), Value::String(t.event_type.clone()));
+                    t_map.insert("reenter".to_string(), Value::Bool(t.reenter));
+                    t_map.insert("source".to_string(), Value::String(format!("#{}", t.source_id)));
+                    if let Some(ref targets) = t.target_ids {
+                        let target_vals = targets
+                            .iter()
+                            .map(|id| Value::String(format!("#{}", id)))
+                            .collect();
+                        t_map.insert("target".to_string(), Value::Array(target_vals));
+                    }
+                    trans_arr.push(Value::Object(t_map));
+                }
+                map.insert("_transitions".to_string(), Value::Array(trans_arr));
+                let mut snap_map = IndexMap::new();
+                snap_map.insert("status".to_string(), Value::String(status.as_str().to_string()));
+                snap_map.insert("value".to_string(), state.to_value());
+                snap_map.insert("context".to_string(), context.clone());
+                map.insert("snapshot".to_string(), Value::Object(snap_map));
+            }
+            InspectEvent::Snapshot {
+                event,
+                state,
+                context,
+                status,
+            } => {
+                map.insert("type".to_string(), Value::String("@xstate.snapshot".to_string()));
+                map.insert("event".to_string(), event.clone());
+                let mut snap_map = IndexMap::new();
+                snap_map.insert("status".to_string(), Value::String(status.as_str().to_string()));
+                snap_map.insert("value".to_string(), state.to_value());
+                snap_map.insert("context".to_string(), context.clone());
+                map.insert("snapshot".to_string(), Value::Object(snap_map));
+            }
+        }
+        Value::Object(map)
+    }
+
+    pub fn to_json_string(&self) -> String {
+        self.to_value().to_json_string()
+    }
+}
 
 /// Checks if an event type matches an event descriptor, supporting wildcards (`"*"`)
 /// and partial wildcards (`"prefix.*"`).

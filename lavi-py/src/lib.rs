@@ -797,6 +797,7 @@ pub struct MachineState {
     pub python_actions: RefCell<IndexMap<String, Py<PyAny>>>,
     pub python_guards: RefCell<IndexMap<String, Py<PyAny>>>,
     pub python_clock: RefCell<Option<Py<PyAny>>>,
+    pub python_inspector: RefCell<Option<Py<PyAny>>>,
     pub guards: RefCell<Rc<IndexMap<String, lavi::GuardFunction>>>,
     pub actions: RefCell<Rc<IndexMap<String, lavi::ActionFunction>>>,
     pub clock: RefCell<Option<SimulatedClock>>,
@@ -1056,6 +1057,24 @@ impl ClockDecorator {
     }
 }
 
+#[pyclass(unsendable, name = "_InspectorDecorator")]
+pub struct InspectorDecorator {
+    machine: Py<Machine>,
+}
+
+#[pymethods]
+impl InspectorDecorator {
+    fn __call__<'py>(
+        &self,
+        py: Python<'py>,
+        func: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let machine_bound = self.machine.bind(py);
+        Machine::register_inspector(machine_bound, &func)?;
+        Ok(func)
+    }
+}
+
 fn call_python_callback<'py>(
     py: Python<'py>,
     py_fn: &Bound<'py, PyAny>,
@@ -1133,6 +1152,7 @@ impl Machine {
             python_actions: RefCell::new(IndexMap::new()),
             python_guards: RefCell::new(IndexMap::new()),
             python_clock: RefCell::new(None),
+            python_inspector: RefCell::new(None),
             guards: RefCell::new(Rc::new(IndexMap::new())),
             actions: RefCell::new(Rc::new(IndexMap::new())),
             clock: RefCell::new(clock.clone()),
@@ -1344,6 +1364,68 @@ impl Machine {
         Ok(slf.clone())
     }
 
+    fn register_inspector<'py>(
+        slf: &Bound<'py, Self>,
+        callback: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let machine_self = slf.borrow();
+        if machine_self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        if !callback.is_callable() {
+            return Err(PyTypeError::new_err("inspector callback must be callable"));
+        }
+        let py_fn = callback.clone().unbind();
+        *machine_self.state.python_inspector.borrow_mut() = Some(py_fn);
+        let weak_state = Rc::downgrade(&machine_self.state);
+        let inspect_fn: lavi::InspectFunction = alloc::rc::Rc::new(move |evt: &lavi::InspectEvent| {
+            let Some(state) = weak_state.upgrade() else {
+                return;
+            };
+            if state.aborted.get() {
+                return;
+            }
+            let _guard = CallbackGuard::new(&state.callback_depth);
+            let result = Python::with_gil(|py| -> PyResult<()> {
+                let insp_opt = state.python_inspector.borrow();
+                if let Some(ref py_fn) = *insp_opt {
+                    let evt_val = Value(Arc::new(evt.to_value())).into_py(py);
+                    let _ = py_fn.bind(py).call1((evt_val,))?;
+                }
+                Ok(())
+            });
+            if let Err(err) = result {
+                state.aborted.set(true);
+                *state.last_error.borrow_mut() = Some(err);
+            }
+        });
+        if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+            m.register_inspector(inspect_fn);
+        }
+        drop(machine_self);
+        Ok(slf.clone())
+    }
+
+    #[pyo3(signature = (callback=None))]
+    fn inspector<'py>(
+        slf: &Bound<'py, Self>,
+        callback: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        match callback {
+            Some(cb) => {
+                Self::register_inspector(slf, cb)?;
+                Ok(cb.clone())
+            }
+            None => {
+                let decorator = InspectorDecorator {
+                    machine: slf.clone().unbind(),
+                };
+                Ok(Bound::new(py, decorator)?.into_any())
+            }
+        }
+    }
+
     #[pyo3(signature = (name))]
     fn action<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<ActionDecorator> {
         Ok(ActionDecorator {
@@ -1404,6 +1486,7 @@ impl Machine {
         self.state.python_actions.borrow_mut().clear();
         self.state.python_guards.borrow_mut().clear();
         *self.state.python_clock.borrow_mut() = None;
+        *self.state.python_inspector.borrow_mut() = None;
         *self.state.guards.borrow_mut() = Rc::new(IndexMap::new());
         *self.state.actions.borrow_mut() = Rc::new(IndexMap::new());
         self.state.pending_commands.borrow_mut().clear();
@@ -1642,6 +1725,10 @@ impl Machine {
         if let Some(ref py_fn) = *clock {
             visit.call(py_fn)?;
         }
+        let inspector = self.state.python_inspector.borrow();
+        if let Some(ref py_fn) = *inspector {
+            visit.call(py_fn)?;
+        }
         Ok(())
     }
 
@@ -1649,6 +1736,7 @@ impl Machine {
         self.state.python_actions.borrow_mut().clear();
         self.state.python_guards.borrow_mut().clear();
         *self.state.python_clock.borrow_mut() = None;
+        *self.state.python_inspector.borrow_mut() = None;
         *self.state.guards.borrow_mut() = Rc::new(IndexMap::new());
         *self.state.actions.borrow_mut() = Rc::new(IndexMap::new());
         self.state.pending_commands.borrow_mut().clear();
@@ -1667,6 +1755,7 @@ fn _lavi_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ActionDecorator>()?;
     m.add_class::<GuardDecorator>()?;
     m.add_class::<ClockDecorator>()?;
+    m.add_class::<InspectorDecorator>()?;
     Ok(())
 }
 

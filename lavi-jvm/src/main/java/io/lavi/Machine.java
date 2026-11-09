@@ -29,6 +29,7 @@ public final class Machine implements AutoCloseable {
     private final Map<String, GuardCallback> guards = new HashMap<String, GuardCallback>();
     private final Map<String, ParameterizedGuardCallback> parameterizedGuards = new HashMap<String, ParameterizedGuardCallback>();
     private ClockCallback clockCallback;
+    private InspectCallback inspectCallback;
     private SimulatedClock simulatedClock;
     private volatile boolean closed = false;
 
@@ -131,6 +132,16 @@ public final class Machine implements AutoCloseable {
         return this;
     }
 
+    public synchronized Machine registerInspector(InspectCallback cb) {
+        checkClosed();
+        if (cb == null) {
+            throw new IllegalArgumentException("InspectCallback cannot be null");
+        }
+        this.inspectCallback = cb;
+        nativeRegisterInspector(nativeHandle);
+        return this;
+    }
+
     public synchronized Machine start() {
         checkClosed();
         nativeStart(nativeHandle);
@@ -157,6 +168,7 @@ public final class Machine implements AutoCloseable {
         guards.clear();
         parameterizedGuards.clear();
         clockCallback = null;
+        inspectCallback = null;
     }
 
     public synchronized Value getContext() {
@@ -286,11 +298,23 @@ public final class Machine implements AutoCloseable {
         return 0L;
     }
 
+    // Called from JNI during inspection events
+    private void dispatchInspect(long evtHandle) {
+        InspectCallback cb = inspectCallback;
+        if (cb == null) {
+            if (evtHandle != 0L) Value.nativeFree(evtHandle);
+            return;
+        }
+        Value evt = Value.fromNativeHandle(evtHandle);
+        cb.onInspect(evt);
+    }
+
     private static native long nativeCreate(String jsonConfig, long clockHandle);
     private static native void nativeRegisterAction(long handle, String name);
     private static native void nativeRegisterGuard(long handle, String name);
     private static native void nativeRegisterClockCallback(long handle);
     private static native void nativeRegisterSimulatedClock(long handle, long clockHandle);
+    private static native void nativeRegisterInspector(long handle);
     private native void nativeStart(long handle);
     private native void nativeStop(long handle);
     private static native void nativeFree(long handle);

@@ -25,15 +25,15 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
    - Bounded $O(1)$ CPU call-stack parsing and traversal via explicit heap work-stacks (`Vec`), fitting comfortably inside an 8 KB ESP32 FreeRTOS `loopTask` stack.
    - Zero-copy `const char*` JSON configuration in C/C++ and bounded runtime memory (pre-start events are safely dropped rather than queued on the heap).
 3. **Idiomatic Target-Language APIs**:
-   - **JS / TS (WASM)**: `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock`.
-   - **C (`lavi.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers with `void* user_data`.
+   - **JS / TS (WASM)**: `createMachine`, `createActor`, `setup`, `assign`, `isMachineSnapshot`, `inspect` / `actor.system.inspect`, and `SimulatedClock`.
+   - **C (`lavi.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers (`fsm_register_action`, `fsm_register_guard`, `fsm_register_inspector`) with `void* user_data`.
    - **C++11 (`lavi.hpp`)**: Move-safe RAII classes (`lavi::Machine`, `lavi::SimulatedClock`, `lavi::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
-   - **Rust (`lavi`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, and `SimulatedClock`.
-   - **Python (`lavi-py`)**: Idiomatic `Machine`, `SimulatedClock`, `Value`, decorators (`@machine.action`, `@machine.guard`), context managers (`with Machine(...)`), and dict/list payload interop.
-   - **Java (`lavi-jvm`)**: `AutoCloseable` `Machine` and `SimulatedClock`, fluent registration (`registerAction`, `registerGuard`), and zero-GC-leak callback mechanics.
-   - **Kotlin (`lavi-jvm`)**: Trailing lambdas (`onAction`, `onGuard`, `onClock`), operator indexing (`ctx["key"]`), and `Map<String, Any?>` event payload support.
-   - **Swift (`lavi-swift`)**: ARC-managed `Machine` and `SimulatedClock`, subscript value access (`ctx["key"]`), trailing closures (`registerAction`, `registerGuard`, `registerDelay`), and `[String: Any]` payload support.
-   - **Dart / Flutter (`lavi-dart`)**: `Finalizer`-backed `Machine` and `SimulatedClock` with deterministic `.dispose()`, `operator []` value inspection, and `Map<String, Object?>` payload support.
+   - **Rust (`lavi`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, `InspectEvent`, and `SimulatedClock`.
+   - **Python (`lavi-py`)**: Idiomatic `Machine`, `SimulatedClock`, `Value`, decorators (`@machine.action`, `@machine.guard`, `@machine.inspector`), context managers (`with Machine(...)`), and dict/list payload interop.
+   - **Java (`lavi-jvm`)**: `AutoCloseable` `Machine` and `SimulatedClock`, fluent registration (`registerAction`, `registerGuard`, `registerInspector`), and zero-GC-leak callback mechanics.
+   - **Kotlin (`lavi-jvm`)**: Trailing lambdas (`onAction`, `onGuard`, `onClock`, `onInspect`), operator indexing (`ctx["key"]`), and `Map<String, Any?>` event payload support.
+   - **Swift (`lavi-swift`)**: ARC-managed `Machine` and `SimulatedClock`, subscript value access (`ctx["key"]`), trailing closures (`registerAction`, `registerGuard`, `registerDelay`, `registerInspector`), and `[String: Any]` payload support.
+   - **Dart / Flutter (`lavi-dart`)**: `Finalizer`-backed `Machine` and `SimulatedClock` with deterministic `.dispose()`, `operator []` value inspection, `registerInspector`, and `Map<String, Object?>` payload support.
 
 ## Interactive WASM Demos
 
@@ -431,7 +431,7 @@ clock.dispose();
 | **Shallow & Deep History** | ✅ | ✅ | ✅ *(Plugin/map)* | ✅ | ✅ | — | Shallow only |
 | **Declarative `after` & `SimulatedClock`** | ✅ | ✅ | Manual² | ✅ | Manual² | — | — |
 | **Snapshot Save / Restore** | ✅ | ✅ | — | — | — | — | — |
-| **XState v5 Conformance** | [◐ Core HSM (15/19 suites)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
+| **XState v5 Conformance** | [◐ Core HSM (16/19 suites)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
 
 *¹ Via QP's manual "Orthogonal Component" pattern. ² Via user-managed timer events rather than declarative `after` delays.*
 

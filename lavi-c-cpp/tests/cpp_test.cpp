@@ -857,6 +857,26 @@ int main() {
         clk_capturing_moved.tick();
         assert(clk_capturing_moved.matches("fired"));
 
+        // 5. registerInspector test (lambda + std::move)
+        std::vector<std::string> inspect_events;
+        lavi::Machine insp_fsm(STOPLIGHT_JSON);
+        insp_fsm.registerInspector([&inspect_events](const std::string& json) {
+            inspect_events.push_back(json);
+        });
+        insp_fsm.start();
+        lavi::Machine insp_fsm_moved = std::move(insp_fsm);
+        insp_fsm_moved.send("TIMER");
+        assert(insp_fsm_moved.matches("yellow"));
+        assert(inspect_events.size() >= 4);
+        bool saw_microstep = false;
+        bool saw_snapshot = false;
+        for (const auto& ev : inspect_events) {
+            if (ev.find("@xstate.microstep") != std::string::npos) saw_microstep = true;
+            if (ev.find("@xstate.snapshot") != std::string::npos) saw_snapshot = true;
+        }
+        assert(saw_microstep);
+        assert(saw_snapshot);
+
     } catch (const std::exception& e) {
 
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;
