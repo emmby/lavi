@@ -218,8 +218,8 @@ describe('build-release-natives', () => {
 
   it('tracks Dart pubspec.yaml manifests in sync-version.mjs', () => {
     const versions = readAllManifestVersions();
-    expect(versions['lavi-dart/pubspec.yaml']).toBe('0.1.0');
-    expect(versions['examples/dart/pubspec.yaml']).toBe('0.1.0');
+    expect(versions['lavi-dart/pubspec.yaml']).toBe('0.2.0');
+    expect(versions['examples/dart/pubspec.yaml']).toBe('0.2.0');
     const check = checkVersions();
     expect(check.ok).toBe(true);
   });

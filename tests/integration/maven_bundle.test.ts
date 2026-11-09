@@ -6,11 +6,12 @@ import { buildReleasePlan } from '../../scripts/build-release-natives.mjs';
 
 describe('Maven Central bundle packaging (io.github.emmby:lavi)', () => {
   const rootDir = path.resolve(__dirname, '../..');
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version;
 
-  it('resolves versioned lavi-jvm-0.1.0.jar for Android AAR classes.jar', () => {
+  it('resolves versioned lavi-jvm.jar for Android AAR classes.jar', () => {
     const plan = buildReleasePlan({ rootDir, dryRun: true });
     expect(plan.aarPackage.classesJar).toBe(
-      path.join(rootDir, 'lavi-jvm', 'build', 'libs', 'lavi-jvm-0.1.0.jar')
+      path.join(rootDir, 'lavi-jvm', 'build', 'libs', `lavi-jvm-${pkgVersion}.jar`)
     );
   });
 
@@ -25,9 +26,9 @@ describe('Maven Central bundle packaging (io.github.emmby:lavi)', () => {
       'emmby',
       'lavi'
     );
-    const stagingDir = path.join(artifactRootDir, '0.1.0');
+    const stagingDir = path.join(artifactRootDir, pkgVersion);
     fs.mkdirSync(stagingDir, { recursive: true });
-    fs.writeFileSync(path.join(stagingDir, 'lavi-0.1.0.jar.asc'), 'dummy-pgp-sig');
+    fs.writeFileSync(path.join(stagingDir, `lavi-${pkgVersion}.jar.asc`), 'dummy-pgp-sig');
 
     const bundleZip = path.join(rootDir, 'dist', 'maven', 'lavi-maven-central-bundle.zip');
     if (fs.existsSync(bundleZip)) {
@@ -48,15 +49,15 @@ describe('Maven Central bundle packaging (io.github.emmby:lavi)', () => {
 
     expect(fs.existsSync(bundleZip)).toBe(true);
 
-    expect(fs.existsSync(path.join(stagingDir, 'lavi-0.1.0.jar'))).toBe(true);
-    expect(fs.existsSync(path.join(stagingDir, 'lavi-0.1.0-sources.jar'))).toBe(true);
-    expect(fs.existsSync(path.join(stagingDir, 'lavi-0.1.0-javadoc.jar'))).toBe(true);
-    expect(fs.existsSync(path.join(stagingDir, 'lavi-0.1.0.pom'))).toBe(true);
+    expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}.jar`))).toBe(true);
+    expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}-sources.jar`))).toBe(true);
+    expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}-javadoc.jar`))).toBe(true);
+    expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}.pom`))).toBe(true);
 
     for (const ext of ['md5', 'sha1', 'sha256', 'sha512']) {
-      expect(fs.existsSync(path.join(stagingDir, `lavi-0.1.0.jar.${ext}`))).toBe(true);
-      expect(fs.existsSync(path.join(stagingDir, `lavi-0.1.0.pom.${ext}`))).toBe(true);
-      expect(fs.existsSync(path.join(stagingDir, `lavi-0.1.0.jar.asc.${ext}`))).toBe(false);
+      expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}.jar.${ext}`))).toBe(true);
+      expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}.pom.${ext}`))).toBe(true);
+      expect(fs.existsSync(path.join(stagingDir, `lavi-${pkgVersion}.jar.asc.${ext}`))).toBe(false);
     }
 
     const rootEntries = fs.readdirSync(artifactRootDir);

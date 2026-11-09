@@ -91,9 +91,9 @@ Or run individual suites:
 | **JavaScript / TypeScript (WASM)** | [npm](https://www.npmjs.com/package/lavi-fsm) | `lavi-fsm` | `npm install lavi-fsm` |
 | **Rust (`#![no_std]`)** | [crates.io](https://crates.io/crates/lavi) | `lavi` | `cargo add lavi` |
 | **Python (`abi3` wheels)** | [PyPI](https://pypi.org/project/lavi/) | `lavi` | `pip install lavi` / `uv add lavi` |
-| **Java / Kotlin (Desktop Fat JAR)** | [Maven Central](https://central.sonatype.com/artifact/io.github.emmby/lavi) | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.1.0")` |
+| **Java / Kotlin (Desktop Fat JAR)** | [Maven Central](https://central.sonatype.com/artifact/io.github.emmby/lavi) | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.2.0")` |
 | **Android (16 KB-aligned AAR)** | [GitHub Releases](https://github.com/emmby/lavi/releases) | `lavi-release.aar` | `implementation(files("libs/lavi-release.aar"))` |
-| **Swift (iOS / macOS / Linux)** | [Swift Package Manager & GitHub Releases](https://github.com/emmby/lavi/releases) | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.1.0")` |
+| **Swift (iOS / macOS / Linux)** | [Swift Package Manager & GitHub Releases](https://github.com/emmby/lavi/releases) | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.2.0")` |
 | **Dart / Flutter (`dart:ffi`)** | Git / Workspace (`lavi-dart`) | `lavi` | `dart pub add lavi --path lavi-dart` |
 | **C / C++ (Arduino IDE & PlatformIO)** | [GitHub Releases](https://github.com/emmby/lavi/releases) | `lavi-embedded.zip` | Arduino IDE *Add .ZIP Library...* or PlatformIO `lib_deps` |
 
@@ -245,7 +245,7 @@ fsm_simulated_clock_free(clock);
 
 For 32-bit embedded projects, precompiled static libraries (`liblavi_c_cpp.a`) are provided for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`) and 5 ARM Cortex-M architectures (`cortex-m0plus`, `cortex-m3`, `cortex-m4`, `cortex-m7`, `cortex-m33` — covering Arduino UNO R4, Nano 33 BLE, RP2040/RP2350, SAMD21/Zero/MKR, Due, STM32, and Teensy; no Rust toolchain required):
 - **Arduino IDE**: Search for **`lavi`** in the **Arduino Library Manager**, or download `lavi-embedded.zip` from [GitHub Releases](https://github.com/emmby/lavi/releases) and install via **Sketch → Include Library → Add .ZIP Library...** (see [`examples/esp32/Stoplight/Stoplight.ino`](./examples/esp32/Stoplight/Stoplight.ino)).
-- **PlatformIO**: Add `lib_deps = emmby/lavi@^0.1.0` (or `https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip`) to [`platformio.ini`](./examples/esp32/platformio.ini).
+- **PlatformIO**: Add `lib_deps = emmby/lavi@^0.2.0` (or `https://github.com/emmby/lavi/releases/download/v0.2.0/lavi-embedded.zip`) to [`platformio.ini`](./examples/esp32/platformio.ini).
 
 ```cpp
 #include "lavi.hpp"
@@ -300,7 +300,7 @@ with Machine(MACHINE_JSON, clock=clock) as machine:
 ```kotlin
 // build.gradle.kts (Maven Central desktop fat JAR; or use `lavi-release.aar` on Android)
 dependencies {
-    implementation("io.github.emmby:lavi:0.1.0")
+    implementation("io.github.emmby:lavi:0.2.0")
 }
 ```
 
@@ -328,7 +328,7 @@ try (SimulatedClock clock = new SimulatedClock(0);
 ```kotlin
 // build.gradle.kts (Maven Central desktop fat JAR; or use `lavi-release.aar` on Android)
 dependencies {
-    implementation("io.github.emmby:lavi:0.1.0")
+    implementation("io.github.emmby:lavi:0.2.0")
 }
 ```
 
@@ -358,7 +358,7 @@ SimulatedClock(0).use { clock ->
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/emmby/lavi.git", from: "0.1.0")
+    .package(url: "https://github.com/emmby/lavi.git", from: "0.2.0")
 ]
 ```
 

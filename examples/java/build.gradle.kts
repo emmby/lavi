@@ -12,7 +12,7 @@ java {
 }
 
 dependencies {
-    implementation("io.github.emmby:lavi:0.1.0")
+    implementation("io.github.emmby:lavi:0.2.0")
 }
 
 application {

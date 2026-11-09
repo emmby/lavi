@@ -395,8 +395,10 @@ class TestBuildRust(unittest.TestCase):
                     k, v = line.split("=", 1)
                     props[k.strip()] = v.strip()
 
+        with open(os.path.join(CRATE_DIR, "library.json"), "r", encoding="utf-8") as jf:
+            lib_json = json.load(jf)
         self.assertEqual(props.get("name"), "lavi")
-        self.assertEqual(props.get("version"), "0.1.0")
+        self.assertEqual(props.get("version"), lib_json.get("version"))
         self.assertEqual(props.get("precompiled"), "full")
         self.assertEqual(props.get("dot_a_linkage"), "true")
         self.assertEqual(props.get("ldflags"), "-llavi_c_cpp")
