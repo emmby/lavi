@@ -73,21 +73,57 @@ def get_include_dir(lib_root):
 INCLUDE_DIR = get_include_dir(LIB_ROOT)
 
 
-def get_prebuilt_lib_dir(lib_root, mcu, cpu=""):
+SOFTFP_SUBDIR_MAP = {
+    "cortex-m4":  "cortex-m4/fpv4-sp-d16-softfp",
+    "cortex-m7":  "cortex-m7/fpv5-d16-softfp",
+    "cortex-m33": "cortex-m33/fpv5-sp-d16-softfp",
+}
+
+
+def _detect_float_abi(active_env):
+    if active_env is None:
+        return ""
+    try:
+        board_cfg = active_env.BoardConfig()
+        fabi = str(board_cfg.get("build.float-abi", "")).strip().lower()
+        if fabi:
+            return fabi
+    except Exception:
+        pass
+    try:
+        ccflags = active_env.get("CCFLAGS", [])
+        flags_str = " ".join(str(x) for x in ccflags) if isinstance(ccflags, (list, tuple)) else str(ccflags)
+        if "-mfloat-abi=softfp" in flags_str:
+            return "softfp"
+        if "-mfloat-abi=soft" in flags_str:
+            return "soft"
+        if "-mfloat-abi=hard" in flags_str:
+            return "hard"
+    except Exception:
+        pass
+    return ""
+
+
+def get_prebuilt_lib_dir(lib_root, mcu, cpu="", float_abi=""):
     mcu_norm = (mcu or "").lower()
     cpu_norm = (cpu or "").lower()
+    fabi_norm = (float_abi or "").lower()
+    base = MCU_TO_PREBUILT_DIR.get(mcu_norm) or MCU_TO_PREBUILT_DIR.get(cpu_norm) or cpu_norm or mcu_norm
+    if fabi_norm in ("soft", "softfp") and base in SOFTFP_SUBDIR_MAP:
+        softfp_dir = os.path.join(lib_root, "src", SOFTFP_SUBDIR_MAP[base])
+        if os.path.isfile(os.path.join(softfp_dir, STATIC_LIB_FILENAME)):
+            return softfp_dir
     direct_dir = os.path.join(lib_root, "src", mcu_norm)
     if os.path.isfile(os.path.join(direct_dir, STATIC_LIB_FILENAME)):
         return direct_dir
-    mapped = MCU_TO_PREBUILT_DIR.get(mcu_norm) or MCU_TO_PREBUILT_DIR.get(cpu_norm) or cpu_norm
-    if mapped:
-        mapped_dir = os.path.join(lib_root, "src", mapped)
+    if base and base != mcu_norm:
+        mapped_dir = os.path.join(lib_root, "src", base)
         if os.path.isfile(os.path.join(mapped_dir, STATIC_LIB_FILENAME)):
             return mapped_dir
     return direct_dir
 
 
-def has_prebuilt_lib(lib_root, mcu, env_vars=None, cpu=""):
+def has_prebuilt_lib(lib_root, mcu, env_vars=None, cpu="", float_abi=""):
     mcu_norm = (mcu or "").lower()
     if mcu_norm in ("", "native"):
         return False
@@ -95,7 +131,10 @@ def has_prebuilt_lib(lib_root, mcu, env_vars=None, cpu=""):
     force_cargo = str(check_env.get("LAVI_FORCE_CARGO_BUILD", "")).strip().lower()
     if force_cargo in ("1", "true", "yes"):
         return False
-    archive_path = os.path.join(get_prebuilt_lib_dir(lib_root, mcu_norm, cpu=cpu), STATIC_LIB_FILENAME)
+    archive_path = os.path.join(
+        get_prebuilt_lib_dir(lib_root, mcu_norm, cpu=cpu, float_abi=float_abi),
+        STATIC_LIB_FILENAME,
+    )
     return os.path.isfile(archive_path)
 
 
@@ -110,16 +149,20 @@ def _detect_host_rust_target():
     return "native"
 
 
-def resolve_target(platform, mcu, cpu=""):
+def resolve_target(platform, mcu, cpu="", float_abi=""):
     platform_norm = (platform or "").lower()
     mcu_norm = (mcu or "").lower()
     cpu_norm = (cpu or "").lower()
+    fabi_norm = (float_abi or "").lower()
     if platform_norm == "native" or mcu_norm in ("", "native"):
         return _detect_host_rust_target(), "cargo", False, True
 
     rust_target = MCU_TO_RUST_TARGET.get(mcu_norm) or MCU_TO_RUST_TARGET.get(cpu_norm)
     if not rust_target:
         return None, "cargo", False, False
+
+    if fabi_norm in ("soft", "softfp") and rust_target.endswith("-none-eabihf"):
+        rust_target = rust_target[:-2]
 
     is_riscv = rust_target.startswith("riscv32")
     return rust_target, "cargo", is_riscv, False
@@ -131,7 +174,14 @@ def get_lib_release_dir(rust_dir, rust_target, is_native):
     return os.path.join(rust_dir, "target", rust_target, "release")
 
 
-def build_cargo_cmd(cargo_to_use, rust_target, is_riscv, is_native, manifest_path=CARGO_TOML):
+def build_cargo_cmd(
+    cargo_to_use,
+    rust_target,
+    is_riscv,
+    is_native,
+    manifest_path=CARGO_TOML,
+    use_build_std=None,
+):
     cmd = [
         cargo_to_use,
         "build",
@@ -140,8 +190,13 @@ def build_cargo_cmd(cargo_to_use, rust_target, is_riscv, is_native, manifest_pat
         "--release",
     ]
     if not is_native and rust_target:
-        build_std = "core,alloc,panic_abort" if rust_target.startswith("thumb") else "std,panic_abort"
-        cmd.extend(["-Z", f"build-std={build_std}", "--target", rust_target])
+        is_thumb = rust_target.startswith("thumb")
+        should_build_std = use_build_std if use_build_std is not None else (not is_thumb)
+        if should_build_std:
+            build_std = "core,alloc,panic_abort" if is_thumb else "std,panic_abort"
+            cmd.extend(["-Z", f"build-std={build_std}", "--target", rust_target])
+        else:
+            cmd.extend(["--target", rust_target])
     return cmd
 
 
@@ -193,7 +248,7 @@ def build_rust_lib(mcu, rust_target, active_env=None, *args, **kwargs):
         if path_from_env:
             build_env["PATH"] = path_from_env
 
-    if not is_native and rust_target is not None:
+    if not is_native and rust_target is not None and not rust_target.startswith("thumb"):
         _source_esp_env(build_env)
         _ensure_esp_toolchain_path(build_env)
 
@@ -232,12 +287,16 @@ if env is not None:
     if platform == "native":
         mcu = "native"
         cpu = ""
+        float_abi = ""
     else:
         board_cfg = env.BoardConfig()
         mcu = board_cfg.get("build.mcu", "esp32").lower()
         cpu = board_cfg.get("build.cpu", "").lower()
+        float_abi = _detect_float_abi(env)
 
-    rust_target, cargo_to_use, is_riscv, is_native = resolve_target(platform, mcu, cpu=cpu)
+    rust_target, cargo_to_use, is_riscv, is_native = resolve_target(
+        platform, mcu, cpu=cpu, float_abi=float_abi
+    )
     if is_native:
         print(f"Detected native platform. Building for host architecture ({rust_target}).")
     elif not rust_target:
@@ -250,8 +309,10 @@ if env is not None:
     if not env.GetOption("clean"):
         inc_dir = get_include_dir(LIB_ROOT)
         active_env_vars = dict(env["ENV"]) if "ENV" in env else None
-        if not is_native and has_prebuilt_lib(LIB_ROOT, mcu, env_vars=active_env_vars, cpu=cpu):
-            prebuilt_dir = get_prebuilt_lib_dir(LIB_ROOT, mcu, cpu=cpu)
+        if not is_native and has_prebuilt_lib(
+            LIB_ROOT, mcu, env_vars=active_env_vars, cpu=cpu, float_abi=float_abi
+        ):
+            prebuilt_dir = get_prebuilt_lib_dir(LIB_ROOT, mcu, cpu=cpu, float_abi=float_abi)
             print(f"Using precompiled {STATIC_LIB_FILENAME} from {prebuilt_dir}")
             env.Append(
                 CPPPATH=[inc_dir],

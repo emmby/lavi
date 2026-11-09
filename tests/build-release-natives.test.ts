@@ -95,7 +95,7 @@ describe('build-release-natives', () => {
     expect(result.commandsRun).toBe(0);
   });
 
-  it('includes all 6 ESP32 and 5 ARM Cortex-M embedded MCU targets in EMBEDDED_TARGETS and buildReleasePlan', () => {
+  it('includes all 6 ESP32 and ARM Cortex-M (including hard/softfp FPU variants) targets in EMBEDDED_TARGETS and buildReleasePlan', () => {
     const mcus = EMBEDDED_TARGETS.map((t: any) => t.mcu);
     expect(mcus).toEqual([
       'esp32',
@@ -107,15 +107,27 @@ describe('build-release-natives', () => {
       'cortex-m0plus',
       'cortex-m3',
       'cortex-m4',
+      'cortex-m4/fpv4-sp-d16-hard',
+      'cortex-m4/fpv4-sp-d16-softfp',
       'cortex-m7',
+      'cortex-m7/fpv5-d16-hard',
+      'cortex-m7/fpv5-sp-d16-hard',
+      'cortex-m7/fpv5-d16-softfp',
+      'cortex-m7/fpv5-sp-d16-softfp',
       'cortex-m33',
+      'cortex-m33/fpv5-sp-d16-hard',
+      'cortex-m33/fpv5-sp-d16-softfp',
     ]);
 
     const plan = buildReleasePlan({ dryRun: true });
-    expect(plan.embeddedCommands.length).toBe(11);
-    const cm4Cmd = plan.embeddedCommands.find((c: any) => c.mcu === 'cortex-m4');
-    expect(cm4Cmd.triple).toBe('thumbv7em-none-eabihf');
-    expect(cm4Cmd.args).toContain('build-std=core,alloc,panic_abort');
+    expect(plan.embeddedCommands.length).toBe(19);
+    const cm4Hard = plan.embeddedCommands.find((c: any) => c.mcu === 'cortex-m4');
+    expect(cm4Hard.triple).toBe('thumbv7em-none-eabihf');
+    expect(cm4Hard.args).toContain('build-std=core,alloc,panic_abort');
+    const cm4Softfp = plan.embeddedCommands.find((c: any) => c.mcu === 'cortex-m4/fpv4-sp-d16-softfp');
+    expect(cm4Softfp.triple).toBe('thumbv7em-none-eabi');
+    const cm33Softfp = plan.embeddedCommands.find((c: any) => c.mcu === 'cortex-m33/fpv5-sp-d16-softfp');
+    expect(cm33Softfp.triple).toBe('thumbv8m.main-none-eabi');
     expect(plan.embeddedPackage.zipPath).toContain('lavi-embedded.zip');
   });
 

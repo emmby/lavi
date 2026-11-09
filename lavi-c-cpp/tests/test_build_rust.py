@@ -44,19 +44,26 @@ class TestBuildRust(unittest.TestCase):
             self.assertFalse(is_native)
 
     def test_arm_cortex_m_targets(self):
-        for mcu, cpu, expected in [
-            ("cortex-m0plus", "", "thumbv6m-none-eabi"),
-            ("cortex-m3", "", "thumbv7m-none-eabi"),
-            ("cortex-m4", "", "thumbv7em-none-eabihf"),
-            ("cortex-m7", "", "thumbv7em-none-eabihf"),
-            ("cortex-m33", "", "thumbv8m.main-none-eabihf"),
-            ("rp2040", "cortex-m0plus", "thumbv6m-none-eabi"),
-            ("rp2350", "cortex-m33", "thumbv8m.main-none-eabihf"),
-            ("ra4m1", "cortex-m4", "thumbv7em-none-eabihf"),
-            ("stm32f407vg", "cortex-m4", "thumbv7em-none-eabihf"),
-            ("imxrt1062", "cortex-m7", "thumbv7em-none-eabihf"),
+        for mcu, cpu, float_abi, expected in [
+            ("cortex-m0plus", "", "", "thumbv6m-none-eabi"),
+            ("cortex-m3", "", "", "thumbv7m-none-eabi"),
+            ("cortex-m4", "", "", "thumbv7em-none-eabihf"),
+            ("cortex-m4", "", "hard", "thumbv7em-none-eabihf"),
+            ("cortex-m4", "", "softfp", "thumbv7em-none-eabi"),
+            ("cortex-m7", "", "", "thumbv7em-none-eabihf"),
+            ("cortex-m7", "", "softfp", "thumbv7em-none-eabi"),
+            ("cortex-m33", "", "", "thumbv8m.main-none-eabihf"),
+            ("cortex-m33", "", "softfp", "thumbv8m.main-none-eabi"),
+            ("rp2040", "cortex-m0plus", "", "thumbv6m-none-eabi"),
+            ("rp2350", "cortex-m33", "", "thumbv8m.main-none-eabihf"),
+            ("ra4m1", "cortex-m4", "hard", "thumbv7em-none-eabihf"),
+            ("nrf52840", "cortex-m4", "softfp", "thumbv7em-none-eabi"),
+            ("stm32f407vg", "cortex-m4", "", "thumbv7em-none-eabihf"),
+            ("imxrt1062", "cortex-m7", "", "thumbv7em-none-eabihf"),
         ]:
-            target, cargo, is_riscv, is_native = build_rust.resolve_target("arm", mcu, cpu=cpu)
+            target, cargo, is_riscv, is_native = build_rust.resolve_target(
+                "arm", mcu, cpu=cpu, float_abi=float_abi
+            )
             self.assertEqual(target, expected)
             self.assertEqual(cargo, "cargo")
             self.assertFalse(is_riscv)
@@ -114,11 +121,32 @@ class TestBuildRust(unittest.TestCase):
             ],
         )
 
-        arm_cmd = build_rust.build_cargo_cmd(
+        arm_stable_cmd = build_rust.build_cargo_cmd(
             "cargo", "thumbv7em-none-eabihf", False, False, manifest_path="/path/Cargo.toml"
         )
         self.assertEqual(
-            arm_cmd,
+            arm_stable_cmd,
+            [
+                "cargo",
+                "build",
+                "--manifest-path",
+                "/path/Cargo.toml",
+                "--release",
+                "--target",
+                "thumbv7em-none-eabihf",
+            ],
+        )
+
+        arm_build_std_cmd = build_rust.build_cargo_cmd(
+            "cargo",
+            "thumbv7em-none-eabihf",
+            False,
+            False,
+            manifest_path="/path/Cargo.toml",
+            use_build_std=True,
+        )
+        self.assertEqual(
+            arm_build_std_cmd,
             [
                 "cargo",
                 "build",

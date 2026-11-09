@@ -175,6 +175,20 @@ export const EMBEDDED_TARGETS = [
     libName: 'liblavi_c_cpp.a'
   },
   {
+    mcu: 'cortex-m4/fpv4-sp-d16-hard',
+    triple: 'thumbv7em-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m4/fpv4-sp-d16-softfp',
+    triple: 'thumbv7em-none-eabi',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
     mcu: 'cortex-m7',
     triple: 'thumbv7em-none-eabihf',
     isRiscv: false,
@@ -182,8 +196,50 @@ export const EMBEDDED_TARGETS = [
     libName: 'liblavi_c_cpp.a'
   },
   {
+    mcu: 'cortex-m7/fpv5-d16-hard',
+    triple: 'thumbv7em-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m7/fpv5-sp-d16-hard',
+    triple: 'thumbv7em-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m7/fpv5-d16-softfp',
+    triple: 'thumbv7em-none-eabi',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m7/fpv5-sp-d16-softfp',
+    triple: 'thumbv7em-none-eabi',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
     mcu: 'cortex-m33',
     triple: 'thumbv8m.main-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m33/fpv5-sp-d16-hard',
+    triple: 'thumbv8m.main-none-eabihf',
+    isRiscv: false,
+    buildStd: 'core,alloc,panic_abort',
+    libName: 'liblavi_c_cpp.a'
+  },
+  {
+    mcu: 'cortex-m33/fpv5-sp-d16-softfp',
+    triple: 'thumbv8m.main-none-eabi',
     isRiscv: false,
     buildStd: 'core,alloc,panic_abort',
     libName: 'liblavi_c_cpp.a'
