@@ -2,7 +2,7 @@
 
 **Violating the letter of these rules is violating the spirit of these rules.**
 
-`lavi` reproduces XState 5 state machine behavior and API semantics across `#![no_std]` Rust (`lavi`), WebAssembly/JS (`lavi-wasm`), and C/C++ for embedded microcontrollers (`lavi-c-cpp` / PlatformIO / Arduino IDE).
+`lavi` reproduces XState 5 state machine behavior and API semantics across `#![no_std]` Rust (`lavi`), WebAssembly/JS (`lavi-wasm`), C/C++ for embedded microcontrollers (`lavi-c-cpp` / PlatformIO / Arduino IDE), Python (`lavi-py`), Java/Kotlin (`lavi-jvm`), Swift (`lavi-swift`), and Dart/Flutter (`lavi-dart`).
 
 ---
 
@@ -75,8 +75,8 @@ Every statechart feature applies across **all three targets** (`lavi`, `lavi-was
    - Update `lavi-c-cpp` (`lavi.h`, `lavi.hpp`, `src/lib.rs`) and add C and C++ tests in `lavi-c-cpp/tests/c_test.c` and `cpp_test.cpp`.
 4. **Clean Up, Verify & Document**:
    - Run `cargo clippy --workspace --all-targets -- -D warnings` and fix all warnings.
-   - Run the full suite (`npm test`) and confirm `test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, and `test:unit` all pass.
-   - Log any out-of-scope legacy issues encountered into [`TECH_DEBT.md`](./TECH_DEBT.md) and update [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md).
+   - Run the full suite (`npm test`) and confirm `test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, `test:py`, `test:jvm`, `test:swift`, `test:dart`, `test:examples`, and `test:unit` all pass.
+   - Always update all affected documentation ([`README.md`](./README.md), [`RELEASING.md`](./RELEASING.md), [`PROCESS.md`](./PROCESS.md), [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md), [`AGENTS.md`](./AGENTS.md), and [`TECH_DEBT.md`](./TECH_DEBT.md)) before claiming completion.
 
 ---
 
