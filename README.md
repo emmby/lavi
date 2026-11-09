@@ -76,6 +76,17 @@ Or run individual suites:
 - `npm run test:examples` (Self-contained Rust, JS/WASM, C, C++, Python, Java, Kotlin, and ESP32 examples)
 - `npm run test:unit` (XState 5 conformance suite via Vitest)
 
+## Installation
+
+| Ecosystem | Registry | Package / Artifact | Install Command |
+| :--- | :--- | :--- | :--- |
+| **JavaScript / TypeScript (WASM)** | [npm](https://www.npmjs.com/package/lavi-fsm) | `lavi-fsm` | `npm install lavi-fsm` |
+| **Rust (`#![no_std]`)** | [crates.io](https://crates.io/crates/lavi) | `lavi` | `cargo add lavi` |
+| **Python (`abi3` wheels)** | [PyPI](https://pypi.org/project/lavi/) | `lavi` | `pip install lavi` / `uv add lavi` |
+| **Java / Kotlin (Desktop Fat JAR)** | [Maven Central](https://central.sonatype.com/artifact/io.github.emmby/lavi) | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.1.0")` |
+| **Android (16 KB-aligned AAR)** | [GitHub Releases](https://github.com/emmby/lavi/releases) | `lavi-release.aar` | `implementation(files("libs/lavi-release.aar"))` |
+| **C / C++ (Arduino IDE & PlatformIO)** | [GitHub Releases](https://github.com/emmby/lavi/releases) | `lavi-embedded.zip` | Arduino IDE *Add .ZIP Library...* or PlatformIO `lib_deps` |
+
 ## Usage Examples
 
 Every supported language has a self-contained, buildable example project under [`examples/`](./examples/) running the same `stoplight` statechart (`red` $\rightarrow$ `green` $\rightarrow$ `yellow` $\rightarrow$ `red` with `entry` actions, `after` delayed transitions via `SimulatedClock`, and a guarded `PEDESTRIAN_WAIT` event):
@@ -109,6 +120,11 @@ Every supported language has a self-contained, buildable example project under [
 ```
 
 ### Rust (`lavi` — [`examples/rust/`](./examples/rust/))
+
+```bash
+cargo add lavi
+```
+
 ```rust
 use indexmap::IndexMap;
 use lavi::{ActionFunction, GuardFunction, RuntimeMachine, SimulatedClock, Value};
@@ -140,20 +156,21 @@ machine.transition("PEDESTRIAN_WAIT", &Value::event("PEDESTRIAN_WAIT"), &guards,
 assert!(machine.matches("yellow"));
 ```
 
-### JavaScript / TypeScript (`lavi-wasm` — [`examples/js-wasm/`](./examples/js-wasm/))
+### JavaScript / TypeScript (`lavi-fsm` — [`examples/js-wasm/`](./examples/js-wasm/))
 
-For the supported statechart subset (see [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)), `lavi-fsm` (`lavi-wasm`) is a **1-line import replacement** for `xstate` in Node.js and browser bundlers:
+```bash
+npm install lavi-fsm
+```
+
+For the supported statechart subset (see [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)), `lavi-fsm` is a **1-line import replacement** for `xstate` in Node.js, browser bundlers, and ES modules:
 
 ```diff
 - import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'xstate';
 + import { createMachine, createActor, setup, assign, raise, SimulatedClock } from 'lavi-fsm';
 ```
 
-*(When running from a local repo build today, import `./lavi-wasm/pkg-npm/lavi.js` in Node.js/Vitest, or `./lavi-wasm/pkg/lavi.js` with `await init()` in browser ES modules—see [`examples/simple.html`](./examples/simple.html).)*
-
 ```javascript
 import { createMachine, createActor, SimulatedClock } from 'lavi-fsm';
-// (Or import from './lavi-wasm/pkg-npm/lavi.js' when running from a local repo build)
 
 const machine = createMachine(
   {
@@ -243,7 +260,12 @@ machine.send("PEDESTRIAN_WAIT");
 assert(machine.matches("yellow"));
 ```
 
-### Python (`lavi-py` — [`examples/python/`](./examples/python/))
+### Python (`lavi` — [`examples/python/`](./examples/python/))
+
+```bash
+pip install lavi
+```
+
 ```python
 from lavi import Machine, SimulatedClock, Value
 
@@ -263,7 +285,15 @@ with Machine(MACHINE_JSON, clock=clock) as machine:
     assert machine.matches("yellow")
 ```
 
-### Java (`lavi-jvm` — [`examples/java/`](./examples/java/))
+### Java (`io.github.emmby:lavi` — [`examples/java/`](./examples/java/))
+
+```kotlin
+// build.gradle.kts (Maven Central desktop fat JAR; or use `lavi-release.aar` on Android)
+dependencies {
+    implementation("io.github.emmby:lavi:0.1.0")
+}
+```
+
 ```java
 import io.lavi.Machine;
 import io.lavi.SimulatedClock;
@@ -283,7 +313,15 @@ try (SimulatedClock clock = new SimulatedClock(0);
 }
 ```
 
-### Kotlin (`lavi-jvm` — [`examples/kotlin/`](./examples/kotlin/))
+### Kotlin (`io.github.emmby:lavi` — [`examples/kotlin/`](./examples/kotlin/))
+
+```kotlin
+// build.gradle.kts (Maven Central desktop fat JAR; or use `lavi-release.aar` on Android)
+dependencies {
+    implementation("io.github.emmby:lavi:0.1.0")
+}
+```
+
 ```kotlin
 import io.lavi.*
 

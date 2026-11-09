@@ -575,7 +575,7 @@ export function executeReleasePlan(plan, options = {}) {
       }
       const env = { ...process.env };
       if (cmd.rustflags) {
-        env.RUSTFLAGS = cmd.rustflags;
+        env.RUSTFLAGS = [process.env.RUSTFLAGS, cmd.rustflags].filter(Boolean).join(' ');
       }
       const res = spawnSync(cmd.command, cmd.args, {
         stdio: 'inherit',
@@ -600,7 +600,7 @@ export function executeReleasePlan(plan, options = {}) {
       }
       const env = { ...process.env };
       if (cmd.rustflags) {
-        env.RUSTFLAGS = cmd.rustflags;
+        env.RUSTFLAGS = [process.env.RUSTFLAGS, cmd.rustflags].filter(Boolean).join(' ');
       }
       const res = spawnSync(cmd.command, cmd.args, {
         stdio: 'inherit',

@@ -42,7 +42,7 @@ else
   ARMORED_KEY=$(gpg --armor --export-secret-keys "${KEY_ID}")
 fi
 
-if command -v gh >/dev/null 2>&1; then
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   echo "Setting GitHub Actions secrets MAVEN_GPG_PRIVATE_KEY and MAVEN_GPG_PASSPHRASE via gh CLI..."
   printf "%s\n" "${ARMORED_KEY}" | gh secret set MAVEN_GPG_PRIVATE_KEY -R emmby/lavi
   printf "%s" "${GPG_PASSPHRASE:-}" | gh secret set MAVEN_GPG_PASSPHRASE -R emmby/lavi

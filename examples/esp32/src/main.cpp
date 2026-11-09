@@ -1,3 +1,12 @@
+// Lavi ESP32 Stoplight Example (PlatformIO & Arduino IDE)
+//
+// Installation (no Rust toolchain required):
+// - PlatformIO: Add `https://github.com/emmby/lavi/releases/download/v0.1.0/lavi-embedded.zip`
+//   to `lib_deps` in `platformio.ini`.
+// - Arduino IDE: Download `lavi-embedded.zip` from
+//   https://github.com/emmby/lavi/releases and install via
+//   Sketch -> Include Library -> Add .ZIP Library...
+
 #include <Arduino.h>
 #include <lavi.hpp>
 #include <memory>

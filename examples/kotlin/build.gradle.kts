@@ -26,6 +26,9 @@ application {
     mainClass.set("ExampleKt")
 }
 
+// Note: The published `io.github.emmby:lavi` JAR on Maven Central bundles and
+// auto-extracts the native library automatically. `lavi.library.path` below is
+// only used when running against the local monorepo `target/debug` build.
 tasks.named<JavaExec>("run") {
     systemProperty("lavi.library.path", "${projectDir}/../../target/debug")
 }
