@@ -8,7 +8,8 @@ Lavi publishes pre-built binary packages across four primary registries from a s
 | **Rust (`#![no_std]`)** | **crates.io** | `lavi` | `cargo add lavi` |
 | **Python (`abi3` wheels)** | **PyPI** | `lavi` | `pip install lavi` / `uv add lavi` |
 | **Java / Kotlin (Fat JNI JAR)** | **Maven Central** | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.1.0")` |
-| **C / C++ (Arduino IDE & PlatformIO)** | **GitHub Releases** | `lavi-embedded.zip` | Arduino IDE *Add .ZIP Library...* or PlatformIO `lib_deps` |
+| **C / C++ (PlatformIO)** | **PlatformIO Registry** | `emmby/lavi` | `lib_deps = emmby/lavi@^0.1.0` |
+| **C / C++ (Arduino IDE)** | **Arduino Library Manager & GitHub Releases** | `lavi` / `lavi-embedded.zip` | Arduino Library Manager (`lavi`) or *Add .ZIP Library...* |
 
 ---
 
@@ -56,8 +57,15 @@ Lavi publishes pre-built binary packages across four primary registries from a s
    - `MAVEN_GPG_PRIVATE_KEY`
    - `MAVEN_GPG_PASSPHRASE`
 
-### 1.5 Embedded C/C++ (`lavi-embedded.zip` for Arduino IDE & PlatformIO)
-No external secrets are required. The `build-embedded` job in `release.yml` automatically installs `espup`, cross-compiles `liblavi_c_cpp.a` for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`), packages `dist/embedded/lavi-embedded.zip` (containing `library.properties`, `library.json`, `build_rust.py`, headers, precompiled `.a` archives, and `examples/Stoplight/Stoplight.ino`), and attaches it to the GitHub Release.
+### 1.5 Embedded C/C++ (PlatformIO Registry, Arduino Library Manager & `lavi-embedded.zip`)
+The `build-embedded` job in `release.yml` automatically installs `espup`, cross-compiles `liblavi_c_cpp.a` for all 6 ESP32 architectures (`esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`), packages `dist/embedded/lavi-embedded.zip` (containing `library.properties`, `library.json`, `build_rust.py`, headers, precompiled `.a` archives, and `examples/Stoplight/Stoplight.ino`), and attaches it to the GitHub Release.
+
+In addition, the `publish` job automatically publishes the unpacked library to **PlatformIO Registry** (`emmby/lavi`) and **Arduino Library Manager** (`https://github.com/emmby/lavi-arduino`):
+1. **PlatformIO Registry (`emmby/lavi`)**:
+   - Generate an access token via `pio account token` or at `https://registry.platformio.org` and store it in GitHub repository secrets as `PLATFORMIO_AUTH_TOKEN`.
+2. **Arduino Library Manager (`emmby/lavi-arduino`)**:
+   - Because Arduino's Library Manager crawler clones git tags directly rather than downloading release assets, `release.yml` pushes the unpacked contents of `lavi-embedded.zip` to the distribution repository `https://github.com/emmby/lavi-arduino` (`main` branch + `vX.Y.Z` tag) using the SSH deploy key stored in `ARDUINO_DEPLOY_KEY`.
+   - One-time registration with Arduino is submitted by adding `https://github.com/emmby/lavi-arduino` to [`repositories.txt`](https://github.com/arduino/library-registry/blob/main/repositories.txt) in `arduino/library-registry`.
 
 ---
 

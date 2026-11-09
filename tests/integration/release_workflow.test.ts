@@ -26,6 +26,11 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(wf).not.toContain('rm -f');
     expect(wf).toContain('pypa/gh-action-pypi-publish@release/v1');
     expect(wf).toContain('https://central.sonatype.com/api/v1/publisher/upload');
+    expect(wf).toContain('PLATFORMIO_AUTH_TOKEN');
+    expect(wf).toContain('https://api.registry.platformio.org/v3/packages/emmby/library/lavi');
+    expect(wf).toContain('pio pkg publish');
+    expect(wf).toContain('ARDUINO_DEPLOY_KEY');
+    expect(wf).toContain('git@github.com:emmby/lavi-arduino.git');
   });
 
   it('provides RELEASING.md and scripts/setup-maven-gpg.sh for registry onboarding', () => {
@@ -40,5 +45,10 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(releasing).toContain('lavi-fsm');
     expect(releasing).toContain('io.github.emmby');
     expect(releasing).toContain('lavi-embedded.zip');
+    expect(releasing).toContain('PlatformIO Registry');
+    expect(releasing).toContain('PLATFORMIO_AUTH_TOKEN');
+    expect(releasing).toContain('Arduino Library Manager');
+    expect(releasing).toContain('ARDUINO_DEPLOY_KEY');
+    expect(releasing).toContain('emmby/lavi-arduino');
   });
 });

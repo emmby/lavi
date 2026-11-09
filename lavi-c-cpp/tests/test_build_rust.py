@@ -296,6 +296,11 @@ class TestBuildRust(unittest.TestCase):
         with open(lib_json_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
         self.assertEqual(manifest.get("name"), "lavi")
+        self.assertEqual(manifest.get("license"), "MIT")
+        authors = manifest.get("authors", [])
+        self.assertTrue(len(authors) >= 1)
+        self.assertEqual(authors[0].get("name"), "Mike Burton")
+        self.assertTrue(authors[0].get("maintainer"))
         self.assertEqual(manifest.get("frameworks"), ["*"])
         self.assertEqual(manifest.get("platforms"), ["*"])
         build_cfg = manifest.get("build", {})
@@ -328,6 +333,7 @@ class TestBuildRust(unittest.TestCase):
         self.assertEqual(props.get("name"), "lavi")
         self.assertEqual(props.get("version"), "0.1.0")
         self.assertEqual(props.get("precompiled"), "full")
+        self.assertEqual(props.get("dot_a_linkage"), "true")
         self.assertEqual(props.get("ldflags"), "-llavi_c_cpp")
         self.assertEqual(props.get("includes"), "lavi.h,lavi.hpp")
         archs = [a.strip() for a in props.get("architectures", "").split(",") if a.strip()]

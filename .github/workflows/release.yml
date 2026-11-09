@@ -218,6 +218,12 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install Python & PlatformIO CLI
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --upgrade platformio
+
       - name: Upgrade npm for OIDC Trusted Publishing
         run: npm install -g npm@latest
 
@@ -269,6 +275,47 @@ jobs:
               -H "Authorization: Bearer ${AUTH_HEADER}" \
               -F "bundle=@release-artifacts/jvm-dist/maven/lavi-maven-central-bundle.zip" \
               "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC"
+          fi
+
+      - name: Publish emmby/lavi to PlatformIO Registry
+        env:
+          PLATFORMIO_AUTH_TOKEN: ${{ secrets.PLATFORMIO_AUTH_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          ALREADY_PUBLISHED=$(curl -s "https://api.registry.platformio.org/v3/packages/emmby/library/lavi" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);console.log((j.versions||[]).some(v=>v.name==='${VERSION}')?'yes':'no')}catch{console.log('no')}})")
+          if [ "$ALREADY_PUBLISHED" = "yes" ]; then
+            echo "emmby/lavi@${VERSION} is already published on PlatformIO Registry; skipping."
+          else
+            mkdir -p "$RUNNER_TEMP/pio-pkg"
+            unzip -q release-artifacts/embedded-dist/lavi-embedded.zip -d "$RUNNER_TEMP/pio-pkg"
+            pio pkg publish "$RUNNER_TEMP/pio-pkg/lavi" --owner emmby --non-interactive
+          fi
+
+      - name: Sync & Tag Release on emmby/lavi-arduino (Arduino Library Manager)
+        env:
+          ARDUINO_DEPLOY_KEY: ${{ secrets.ARDUINO_DEPLOY_KEY }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          printf "%s\n" "${ARDUINO_DEPLOY_KEY}" > "$RUNNER_TEMP/arduino_deploy_key"
+          chmod 600 "$RUNNER_TEMP/arduino_deploy_key"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/arduino_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          if git ls-remote --exit-code --tags git@github.com:emmby/lavi-arduino.git "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "emmby/lavi-arduino@v${VERSION} is already tagged; skipping."
+          else
+            mkdir -p "$RUNNER_TEMP/arduino-pkg"
+            unzip -q release-artifacts/embedded-dist/lavi-embedded.zip -d "$RUNNER_TEMP/arduino-pkg"
+            git clone git@github.com:emmby/lavi-arduino.git "$RUNNER_TEMP/lavi-arduino-repo"
+            cd "$RUNNER_TEMP/lavi-arduino-repo"
+            git checkout -B main
+            git rm -rq --ignore-unmatch .
+            cp -R "$RUNNER_TEMP/arduino-pkg/lavi/." .
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore(release): v${VERSION}" --allow-empty
+            git tag -a "v${VERSION}" -m "v${VERSION}"
+            git push origin main
+            git push origin "v${VERSION}"
           fi
 
       - name: Attach Binary Archives to GitHub Release
