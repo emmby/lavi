@@ -8,6 +8,8 @@ Lavi publishes pre-built binary packages across four primary registries from a s
 | **Rust (`#![no_std]`)** | **crates.io** | `lavi` | `cargo add lavi` |
 | **Python (`abi3` wheels)** | **PyPI** | `lavi` | `pip install lavi` / `uv add lavi` |
 | **Java / Kotlin (Fat JNI JAR)** | **Maven Central** | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.1.0")` |
+| **Swift (iOS / macOS / Linux)** | **Swift Package Manager & GitHub Releases** | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.1.0")` |
+| **Dart / Flutter (`dart:ffi`)** | **Git / Workspace (`lavi-dart`)** | `lavi` | `dart pub add lavi --path lavi-dart` |
 | **C / C++ (PlatformIO)** | **PlatformIO Registry** | `emmby/lavi` | `lib_deps = emmby/lavi@^0.1.0` |
 | **C / C++ (Arduino IDE)** | **Arduino Library Manager & GitHub Releases** | `lavi` / `lavi-embedded.zip` | Arduino Library Manager (`lavi`) or *Add .ZIP Library...* |
 
@@ -64,6 +66,9 @@ In addition, the `publish` job automatically publishes the unpacked library to *
 2. **Arduino Library Manager (`emmby/lavi-arduino`)**:
    - Because Arduino's Library Manager crawler clones git tags directly rather than downloading release assets, `release.yml` pushes the unpacked contents of `lavi-embedded.zip` to the distribution repository `https://github.com/emmby/lavi-arduino` (`main` branch + `vX.Y.Z` tag) using the SSH deploy key stored in `ARDUINO_DEPLOY_KEY`.
    - One-time registration with Arduino is submitted by adding `https://github.com/emmby/lavi-arduino` to [`repositories.txt`](https://github.com/arduino/library-registry/blob/main/repositories.txt) in `arduino/library-registry`.
+
+### 1.6 Swift & Apple Platforms (`Package.swift` & `LaviFFI.xcframework.zip`)
+The `build-apple-xcframework` job in `release.yml` runs on `macos-15` to cross-compile `liblavi_c_cpp.a` across `aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`, and `x86_64-apple-ios`, bundles universal static libraries via `lipo` and `xcodebuild -create-xcframework` (`node scripts/build-release-natives.mjs --apple-only`), and attaches `dist/apple/LaviFFI.xcframework.zip` to the GitHub Release alongside the Swift Package Manager root `Package.swift` tag. No additional secrets are required.
 
 ---
 

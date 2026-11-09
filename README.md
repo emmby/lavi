@@ -1,6 +1,6 @@
 # Lavi
 
-**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`), **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO / Arduino IDE), **Python** (`lavi-py`), and **Java / Kotlin / Android** (`lavi-jvm`).
+**Lavi** is a portable, low-memory statechart and actor runtime compatible with **XState v5**, written in Rust (`lavi`) with idiomatic bindings for **WebAssembly / JavaScript / TypeScript** (`lavi-wasm`), **C / C++ on embedded microcontrollers** (`lavi-c-cpp` / PlatformIO / Arduino IDE), **Python** (`lavi-py`), **Java / Kotlin / Android** (`lavi-jvm`), **Swift / iOS / macOS** (`lavi-swift`), and **Dart / Flutter** (`lavi-dart`).
 
 ## Why Lavi?
 
@@ -11,6 +11,8 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
 - **Browsers & Node.js (WebAssembly)**: Use XState v5's `createMachine`, `createActor`, `setup`, `assign`, and `SimulatedClock` APIs backed by the compiled WASM core.
 - **Backend Services & Simulation (Python)**: Run statecharts in Python services or drive deterministic tests in `pytest` with `SimulatedClock` using `lavi-py`.
 - **Server JVM & Android (Java & Kotlin)**: Embed statecharts in server backends or Android mobile apps with zero-friction native loading (`.jar`) and 16 KB page-aligned AAR packaging (`.aar`) using `lavi-jvm`.
+- **Apple Platforms & Server (Swift)**: Run statecharts across iOS, macOS, and Linux via Swift Package Manager (`Package.swift`) and `LaviFFI.xcframework` using `lavi-swift`.
+- **Cross-Platform Mobile & Desktop (Dart & Flutter)**: Run statecharts in Dart CLI/server apps and Flutter iOS/Android/desktop apps via `dart:ffi` using `lavi-dart`.
 
 ### Why the Name "Lavi"?
 **Lavi** is named in honor of systems engineering pioneer **Dr. Jonah Z. Lavi**, who partnered with computer scientist **David Harel** in 1983–1987 to invent **Harel Statecharts** while specifying the embedded avionics software for the *Lavi* aircraft—where complex flight-control logic required a deterministic, hierarchical state model. *Lavi* (לָבִיא) also means "lion" in Hebrew.
@@ -30,6 +32,8 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
    - **Python (`lavi-py`)**: Idiomatic `Machine`, `SimulatedClock`, `Value`, decorators (`@machine.action`, `@machine.guard`), context managers (`with Machine(...)`), and dict/list payload interop.
    - **Java (`lavi-jvm`)**: `AutoCloseable` `Machine` and `SimulatedClock`, fluent registration (`registerAction`, `registerGuard`), and zero-GC-leak callback mechanics.
    - **Kotlin (`lavi-jvm`)**: Trailing lambdas (`onAction`, `onGuard`, `onClock`), operator indexing (`ctx["key"]`), and `Map<String, Any?>` event payload support.
+   - **Swift (`lavi-swift`)**: ARC-managed `Machine` and `SimulatedClock`, subscript value access (`ctx["key"]`), trailing closures (`registerAction`, `registerGuard`, `registerDelay`), and `[String: Any]` payload support.
+   - **Dart / Flutter (`lavi-dart`)**: `Finalizer`-backed `Machine` and `SimulatedClock` with deterministic `.dispose()`, `operator []` value inspection, and `Map<String, Object?>` payload support.
 
 ## Interactive WASM Demos
 
@@ -45,10 +49,12 @@ Hierarchical statecharts replace fragile `if/else` boolean-flag logic with decla
 
 * **`lavi`**: Pure `#![no_std]` + `alloc` Rust statechart engine, iterative JSON parser (`src/json.rs`), and move-based machine builder (`src/parser.rs`).
 * **`lavi-wasm`**: WebAssembly adapter exposing XState 5's JavaScript/TypeScript API and bridging inline JS callbacks to named runtime handlers.
-* **`lavi-c-cpp`**: C/C++ static library, headers (`include/lavi.h`, `include/lavi.hpp`), and PlatformIO/Arduino IDE manifests (`library.json`, `library.properties`, `build_rust.py`) for embedded (`espressif32`) and host (`native`) targets.
+* **`lavi-c-cpp`**: C/C++ static and shared library, headers (`include/lavi.h`, `include/lavi.hpp`), and PlatformIO/Arduino IDE manifests (`library.json`, `library.properties`, `build_rust.py`) for embedded (`espressif32`) and host (`native`) targets.
 * **`lavi-py`**: Python native extension via PyO3 (`abi3-py38`) with full `.pyi` type stubs and pytest integration.
 * **`lavi-jvm`**: Java and Kotlin JNI bridge via `jni-rs` with Gradle `java-library`, desktop resource extraction, and Android AAR packaging.
-* **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator, Android AAR packager (16 KB page-alignment check), and unified Arduino IDE / PlatformIO `.zip` packager (`dist/embedded/lavi-embedded.zip`).
+* **`lavi-swift` & `Package.swift`**: Swift Package Manager targets (`CLavi`, `Lavi`, `LaviTests`) wrapping the C ABI for iOS, macOS, and Linux.
+* **`lavi-dart`**: Dart / Flutter `dart:ffi` package (`package:lavi/lavi.dart`) wrapping `liblavi_c_cpp.{dylib,so,dll}` for mobile, desktop, and server.
+* **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator, Android AAR packager (16 KB page-alignment check), Apple `LaviFFI.xcframework.zip` packager, and unified Arduino IDE / PlatformIO `.zip` packager (`dist/embedded/lavi-embedded.zip`).
 * **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
 * **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
 
@@ -60,7 +66,7 @@ npm run build
 ```
 
 ### Run All Tests
-Runs the conformance provenance check, native Rust unit tests, headless Chrome WASM tests, Playwright E2E tests, C/C++ static library + PlatformIO build script tests, Python pytest tests, Java & Kotlin JUnit tests, and Vitest XState 5 conformance tests:
+Runs the conformance provenance check, native Rust unit tests, headless Chrome WASM tests, Playwright E2E tests, C/C++ static library + PlatformIO build script tests, Python pytest tests, Java & Kotlin JUnit tests, Swift XCTests, Dart tests, self-contained language examples, and Vitest XState 5 conformance tests:
 ```bash
 npm test
 ```
@@ -73,7 +79,9 @@ Or run individual suites:
 - `npm run test:c-cpp` (C, C++, and PlatformIO `build_rust.py` tests)
 - `npm run test:py` (Python unit tests via pytest)
 - `npm run test:jvm` (Java and Kotlin unit tests via Gradle JUnit 5)
-- `npm run test:examples` (Self-contained Rust, JS/WASM, C, C++, Python, Java, Kotlin, and ESP32 examples)
+- `npm run test:swift` (Swift Package Manager unit tests via `swift test`)
+- `npm run test:dart` (Dart FFI unit tests via `dart test`)
+- `npm run test:examples` (Self-contained Rust, JS/WASM, C, C++, Python, Java, Kotlin, Swift, Dart, and ESP32 examples)
 - `npm run test:unit` (XState 5 conformance suite via Vitest)
 
 ## Installation
@@ -85,6 +93,8 @@ Or run individual suites:
 | **Python (`abi3` wheels)** | [PyPI](https://pypi.org/project/lavi/) | `lavi` | `pip install lavi` / `uv add lavi` |
 | **Java / Kotlin (Desktop Fat JAR)** | [Maven Central](https://central.sonatype.com/artifact/io.github.emmby/lavi) | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.1.0")` |
 | **Android (16 KB-aligned AAR)** | [GitHub Releases](https://github.com/emmby/lavi/releases) | `lavi-release.aar` | `implementation(files("libs/lavi-release.aar"))` |
+| **Swift (iOS / macOS / Linux)** | [Swift Package Manager & GitHub Releases](https://github.com/emmby/lavi/releases) | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.1.0")` |
+| **Dart / Flutter (`dart:ffi`)** | Git / Workspace (`lavi-dart`) | `lavi` | `dart pub add lavi --path lavi-dart` |
 | **C / C++ (Arduino IDE & PlatformIO)** | [GitHub Releases](https://github.com/emmby/lavi/releases) | `lavi-embedded.zip` | Arduino IDE *Add .ZIP Library...* or PlatformIO `lib_deps` |
 
 ## Usage Examples
@@ -343,9 +353,68 @@ SimulatedClock(0).use { clock ->
 }
 ```
 
+### Swift (`Lavi` — [`examples/swift/`](./examples/swift/))
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/emmby/lavi.git", from: "0.1.0")
+]
+```
+
+```swift
+import Lavi
+
+let clock = SimulatedClock(initialMs: 0)
+let machine = try Machine(json: MACHINE_JSON, clock: clock)
+
+machine.registerGuard("canCross") { ctx, _ in
+    (ctx["cycles"].int ?? 0) >= 1
+}
+
+try machine.start()
+assert(machine.matches("red"))
+
+clock.increment(1000)
+assert(machine.matches("green"))
+
+machine.send("PEDESTRIAN_WAIT")
+assert(machine.matches("yellow"))
+```
+
+### Dart / Flutter (`lavi` — [`examples/dart/`](./examples/dart/))
+
+```yaml
+# pubspec.yaml
+dependencies:
+  lavi:
+    path: ../lavi-dart
+```
+
+```dart
+import 'package:lavi/lavi.dart';
+
+final clock = SimulatedClock(0);
+final machine = Machine(machineJson, clock: clock);
+
+machine.registerGuard('canCross', (ctx, _) => (ctx['cycles'].asInt ?? 0) >= 1);
+
+machine.start();
+assert(machine.matches('red'));
+
+clock.increment(1000);
+assert(machine.matches('green'));
+
+machine.send('PEDESTRIAN_WAIT');
+assert(machine.matches('yellow'));
+
+machine.dispose();
+clock.dispose();
+```
+
 ## How Lavi Compares
 
-- **[XState v5](https://stately.ai/docs/xstate)** is the reference standard when your entire stack runs on JavaScript/TypeScript; **Lavi** brings those exact statechart semantics and Stately Studio JSON definitions to `#![no_std]` Rust, C, C++, WebAssembly, Python, Java, and Kotlin (with Swift, Dart, and C# planned) via a single shared native engine.
+- **[XState v5](https://stately.ai/docs/xstate)** is the reference standard when your entire stack runs on JavaScript/TypeScript; **Lavi** brings those exact statechart semantics and Stately Studio JSON definitions to `#![no_std]` Rust, C, C++, WebAssembly, Python, Java, Kotlin, Swift, and Dart/Flutter (with C# planned) via a single shared native engine.
 - **[StateSmith](https://github.com/StateSmith/StateSmith)**, **[`statig`](https://github.com/mdeloof/statig)**, and **[Boost.SML](https://github.com/boost-ext/sml)** are ideal when you need compile-time code generators or macros with **zero heap (`no-alloc`)** on tiny 8-bit or Cortex-M0 chips; **Lavi** uses `#![no_std]` + `alloc` (targeting 32-bit MCUs like ESP32, desktop, and web) to unlock runtime/OTA JSON loading, snapshot persistence, parallel states, and declarative `after` timers across languages.
 - **[QP/C & QP/C++](https://www.state-machine.com/products/qp)** provide a full Active Object RTOS framework (dual GPLv3 / commercial); **Lavi** is an MIT-licensed, standalone statechart engine that drops into any existing RTOS (FreeRTOS, Zephyr), async runtime, or UI loop.
 - **[itemis CREATE](https://www.itemis.com/en/products/itemis-create/)** and **MathWorks Stateflow** serve enterprise workflows requiring proprietary IDEs and safety-certification kits; **Lavi** is open-source, uses standard XState v5 JSON, and verifies correctness directly against the upstream XState test suite.
@@ -355,7 +424,7 @@ SimulatedClock(0).use { clock ->
 | **License** | MIT | MIT | MIT / Apache-2.0 | Commercial | GPLv3 / Comm. | MIT / Apache-2.0 | Boost |
 | **Execution Model** | Runtime Engine | Runtime Engine | Code Generator | Code Generator | Framework + Codegen | Rust Macro | C++ Template |
 | **Visual Editor** | Stately Studio | Stately Studio | draw.io / PlantUML | itemis IDE | QM Modeler | — | — |
-| **Languages** | Rust, JS/TS, C, C++, Py, Java, Kotlin *(+Swift, Dart, C# planned)* | JS, TS | C, C++, C#, Py, JS/TS | C, C++, Java, Py, TS, C# | C, C++ | Rust | C++ |
+| **Languages** | Rust, JS/TS, C, C++, Py, Java, Kotlin, Swift, Dart *(+C# planned)* | JS, TS | C, C++, C#, Py, JS/TS | C, C++, Java, Py, TS, C# | C, C++ | Rust | C++ |
 | **Embedded Support** | `#![no_std]` + `alloc` ($O(1)$ stack) | — | Zero-heap | Zero-heap | Zero-heap | Zero-heap | Zero-heap |
 | **Runtime / OTA Config** | ✅ | ✅ | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* |
 | **Parallel States** | ✅ | ✅ | — | ✅ | Manual¹ | — | ✅ |
@@ -368,7 +437,7 @@ SimulatedClock(0).use { clock ->
 
 ## For Contributors: Agentic Development & Parallel Swarming
 
-In any new conversation on this repository, [`AGENTS.md`](./AGENTS.md) is automatically loaded into the agent's system prompt, enforcing the [`PROCESS.md`](./PROCESS.md) cross-target workflow (`Rust` $\rightarrow$ `WASM` $\rightarrow$ `C/C++` $\rightarrow$ `Python` $\rightarrow$ `Java/Kotlin`) and automated conformance provenance checks (`npm run test:conformance-check`).
+In any new conversation on this repository, [`AGENTS.md`](./AGENTS.md) is automatically loaded into the agent's system prompt, enforcing the [`PROCESS.md`](./PROCESS.md) cross-target workflow (`Rust` $\rightarrow$ `WASM` $\rightarrow$ `C/C++` $\rightarrow$ `Python` $\rightarrow$ `Java/Kotlin` $\rightarrow$ `Swift` $\rightarrow$ `Dart`) and automated conformance provenance checks (`npm run test:conformance-check`).
 
 You can launch agents in three ways:
 
@@ -392,7 +461,7 @@ If you prefer separate top-level chat threads instead of subagents:
 
 ## License & Attribution
 
-- **Lavi Runtime (`lavi`, `lavi-wasm`, `lavi-c-cpp`, `lavi-py`, `lavi-jvm`)**: Licensed under the [MIT License](./LICENSE) (`Copyright (c) 2025-2026 Mike Burton`).
+- **Lavi Runtime (`lavi`, `lavi-wasm`, `lavi-c-cpp`, `lavi-py`, `lavi-jvm`, `lavi-swift`, `lavi-dart`)**: Licensed under the [MIT License](./LICENSE) (`Copyright (c) 2025-2026 Mike Burton`).
 - **Conformance Test Suite (`tests/` & `tests/upstream/`)**: Adapted from the [statelyai/xstate](https://github.com/statelyai/xstate) repository (`xstate@5.25.0`), `Copyright (c) 2015 David Khourshid`, used under the MIT License. See [`tests/LICENSE-THIRD-PARTY`](./tests/LICENSE-THIRD-PARTY) for the full notice.
 - **Standards & Prior Art**: Statechart execution semantics follow David Harel's Statecharts formalism (1987) and the [W3C SCXML Specification](https://www.w3.org/TR/scxml/).
 - **Acknowledgments & Non-Affiliation**: With thanks to David Khourshid and the Stately.ai team for their work on XState and Stately Studio. Lavi is an independent community project and is not affiliated with, officially maintained by, or endorsed by Stately.ai or David Khourshid.
