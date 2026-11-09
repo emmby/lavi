@@ -1,6 +1,6 @@
 {
   "name": "lavi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Lavi statechart runtime for C/C++, PlatformIO, and Arduino IDE (XState v5 compatible), powered by Rust.",
   "authors": [

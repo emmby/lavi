@@ -1,6 +1,6 @@
 [package]
 name = "lavi-example-rust"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 
@@ -8,5 +8,5 @@ publish = false
 
 [dependencies]
 # In a standalone project using crates.io (`cargo add lavi`):
-# lavi = "0.1.0"
-lavi = { version = "0.1.0", path = "../../lavi" }
+# lavi = "0.2.0"
+lavi = { version = "0.2.0", path = "../../lavi" }

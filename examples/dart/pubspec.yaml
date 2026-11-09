@@ -1,6 +1,6 @@
 name: lavi_dart_example
 description: Stoplight state machine example using Lavi Dart FFI bindings.
-version: 0.1.0
+version: 0.2.0
 publish_to: none
 
 environment:

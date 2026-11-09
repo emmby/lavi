@@ -174,14 +174,14 @@ dependencies = [
 
 [[package]]
 name = "lavi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
 ]
 
 [[package]]
 name = "lavi-c-cpp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "lavi",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "lavi-jvm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "jni",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "lavi-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "lavi",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "lavi-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indexmap",
  "js-sys",
