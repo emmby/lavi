@@ -1,6 +1,6 @@
 name: lavi
 description: Portable XState 5 statechart runtime for Dart and Flutter (via dart:ffi).
-version: 0.2.0
+version: 0.3.0
 repository: https://github.com/emmby/lavi
 
 environment:

@@ -235,10 +235,10 @@ describe('build-release-natives', () => {
 
   it('tracks Dart pubspec.yaml and C# .csproj manifests in sync-version.mjs', () => {
     const versions = readAllManifestVersions();
-    expect(versions['lavi-dart/pubspec.yaml']).toBe('0.2.0');
-    expect(versions['examples/dart/pubspec.yaml']).toBe('0.2.0');
-    expect(versions['lavi-csharp/Lavi/Lavi.csproj']).toBe('0.2.0');
-    expect(versions['examples/csharp/StoplightExample.csproj']).toBe('0.2.0');
+    expect(versions['lavi-dart/pubspec.yaml']).toBe(versions['package.json']);
+    expect(versions['examples/dart/pubspec.yaml']).toBe(versions['package.json']);
+    expect(versions['lavi-csharp/Lavi/Lavi.csproj']).toBe(versions['package.json']);
+    expect(versions['examples/csharp/StoplightExample.csproj']).toBe(versions['package.json']);
     const check = checkVersions();
     expect(check.ok).toBe(true);
   });

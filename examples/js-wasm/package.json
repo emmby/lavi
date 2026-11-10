@@ -1,12 +1,12 @@
 {
   "name": "lavi-example-js-wasm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node index.mjs"
   },
   "dependencies": {
-    "lavi-fsm": "^0.2.0"
+    "lavi-fsm": "^0.3.0"
   }
 }
