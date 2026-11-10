@@ -108,7 +108,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
     - [x] `raise` (Self-send internal event queued in `internal_queue`, including delayed raise params) `[Rust | WASM | C/C++]`
     - [x] `log` (Logging action) `[Rust | WASM]`
     - [x] `cancel` (Delayed event cancellation) `[Rust | WASM]`
-    - [x] `enqueueActions` (Batch action enqueueing with context assignment and guard checks) `[Rust | WASM]`
+    - [x] `enqueueActions` (Batch action enqueueing with context assignment, guard `check`, `setup`/`provide` registration, static & dynamic `params`, and nested action delegation) `[Rust | WASM]`
     - [ ] `sendTo` / `sendParent` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actor.test.ts))
     - [ ] `stopChild`
     - [x] `emit` (Event emitter action capture in pure transitions) `[Rust | WASM]`
