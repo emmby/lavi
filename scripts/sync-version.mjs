@@ -28,6 +28,8 @@ export const MANIFEST_SPECS = [
   { relPath: 'examples/esp32/platformio.ini', kind: 'platformio-dep' },
   { relPath: 'lavi-dart/pubspec.yaml', kind: 'yaml-version' },
   { relPath: 'examples/dart/pubspec.yaml', kind: 'yaml-version' },
+  { relPath: 'lavi-csharp/Lavi/Lavi.csproj', kind: 'csproj-version' },
+  { relPath: 'examples/csharp/StoplightExample.csproj', kind: 'csproj-version' },
 ];
 
 export function normalizeVersion(raw) {
@@ -116,6 +118,9 @@ export function readAllManifestVersions(rootDir = DEFAULT_ROOT) {
     } else if (spec.kind === 'yaml-version') {
       const m = content.match(/^\s*version\s*:\s*([^\r\n#]+)/m);
       result[spec.relPath] = m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
+    } else if (spec.kind === 'csproj-version') {
+      const m = content.match(/<Version>([^<]+)<\/Version>/);
+      result[spec.relPath] = m ? m[1].trim() : null;
     }
   }
   return result;
@@ -195,6 +200,8 @@ export function syncVersions(newVersion, options = {}) {
       );
     } else if (spec.kind === 'yaml-version') {
       updated = original.replace(/^(\s*version\s*:\s*)[^\r\n#]+/m, `$1${version}`);
+    } else if (spec.kind === 'csproj-version') {
+      updated = original.replace(/(<Version>)[^<]+(<\/Version>)/, `$1${version}$2`);
     }
 
     if (updated !== original) {

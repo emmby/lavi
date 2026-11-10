@@ -233,10 +233,12 @@ describe('build-release-natives', () => {
     expect(result.entries).toContain('LaviFFI.xcframework/macos-arm64_x86_64/liblavi_c_cpp.a');
   });
 
-  it('tracks Dart pubspec.yaml manifests in sync-version.mjs', () => {
+  it('tracks Dart pubspec.yaml and C# .csproj manifests in sync-version.mjs', () => {
     const versions = readAllManifestVersions();
     expect(versions['lavi-dart/pubspec.yaml']).toBe('0.2.0');
     expect(versions['examples/dart/pubspec.yaml']).toBe('0.2.0');
+    expect(versions['lavi-csharp/Lavi/Lavi.csproj']).toBe('0.2.0');
+    expect(versions['examples/csharp/StoplightExample.csproj']).toBe('0.2.0');
     const check = checkVersions();
     expect(check.ok).toBe(true);
   });
