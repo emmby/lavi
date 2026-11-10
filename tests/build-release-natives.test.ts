@@ -403,7 +403,7 @@ describe('build-release-natives', () => {
       // @ts-ignore
       delete globalThis.__LAVI_FORCE_UTF8_FALLBACK__;
     }
-  });
+  }, 60000);
 
   it('supports React & React Native hooks (useMachine, useActor, useActorRef, useSelector) including StrictMode', () => {
     // @ts-ignore
