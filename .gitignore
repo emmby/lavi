@@ -31,3 +31,8 @@ examples/swift/.swiftpm/
 **/.dart_tool/
 **/pubspec.lock
 lavi-dart/native/
+lavi-csharp/native/
+lavi-csharp/**/bin/
+lavi-csharp/**/obj/
+examples/csharp/bin/
+examples/csharp/obj/

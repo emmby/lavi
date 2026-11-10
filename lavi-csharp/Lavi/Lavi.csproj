@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Version>0.2.0</Version>
+    <PackageId>Lavi</PackageId>
+    <Description>Idiomatic C# / .NET bindings for the Lavi XState v5 statechart runtime.</Description>
+    <Authors>Mike Burton</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Lavi</RootNamespace>
+    <AssemblyName>Lavi</AssemblyName>
+  </PropertyGroup>
+
+</Project>
