@@ -20,20 +20,6 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Root cause: Root-level history resolution in `RuntimeMachine` currently falls back to `refresh` (the history state node itself) without re-entering `running`. The exit loop executed `def.invoke` when `running` exited, which masked the lack of full re-entry and child actor lifecycle management.
   - Action taken: Retained lines 2213–2217 until the Actor Model (`invoke.test.ts`) is onboarded. Resolving `TD-7` cleanly requires implementing proper child actor lifecycle (`ActorRef` creation on state entry, termination on state exit) rather than simply deleting the exit loop.
 
-### `TD-9`: Consolidate Split-Brain WASM `Actor` State, Dual Reentrant Queues, and `Rc<MachineDefinition>`
-- **Files**: [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs), [`lavi/src/lib.rs`](./lavi/src/lib.rs)
-- **Problem**:
-  1. **Split-Brain State in WASM `Actor` and `SharedActorState`**: To allow JS action callbacks to reentrantly call `actorRef.send(...)` or `actorRef.stop()` without triggering a `wasm-bindgen` recursive `&mut self` borrow panic, `Actor` methods were changed to `&self` using `shared_state: Rc<RefCell<Option<SharedActorState>>>`. However, `Actor` still retains duplicate top-level fields (`machine`, `inspector`, `guards`, `actions`, `is_stopped`, `is_initialized`) alongside `shared_state`, syncing between them via `pull_shared()` and `push_shared()` by cloning the entire `RuntimeMachine` and `IndexMap`s back and forth.
-  2. **Two Separate Reentrant Queues**: `RuntimeMachine` already has an `external_queue` (`VecDeque<(String, Value)>`), and `SharedActorState` in WASM added a second `reentrant_queue` (`VecDeque<(String, Value)>`) because WASM clones `machine` out of the `RefCell` before running a transition step (`is_in_tick`).
-  3. **Deep `MachineDefinition` Clones**: `RuntimeMachine` stores `definition: MachineDefinition` by value rather than `Rc<MachineDefinition>`, causing every `RuntimeMachine::clone()` in WASM (`send()`, `tick()`, `getSnapshot()`, `StateNode` creation) to deep-clone the entire statechart AST.
-- **Required Fix**:
-  - Store only `Rc<RefCell<ActorInner>>` inside WASM `Actor` (eliminating duplicate top-level fields and `pull_shared()`/`push_shared()`), use fine-grained borrows so `RuntimeMachine::external_queue` serves as the single reentrant FIFO queue, and wrap `MachineDefinition` in `Rc<MachineDefinition>` inside `RuntimeMachine`.
-
-### `TD-10`: Decouple `extract_unprocessed_fn_actions` from `__xstate_track` Marker Property
-- **Files**: [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs) (lines 2786–2826), [`tests/utils.ts`](./tests/utils.ts)
-- **Problem**: `extract_unprocessed_fn_actions` in `lavi-wasm` checks for a `__xstate_track` property on JS functions (set by `trackEntries` in `tests/utils.ts`). While this kept `tests/utils.ts` free of monkey-patching `machine.createActor`, coupling the WASM runtime to a test-helper marker property (`__xstate_track`) is a leaky abstraction.
-- **Required Fix**: Update `sync_tracked_entry_exit` / `extract_unprocessed_fn_actions` to bridge *any* unbridged JS function found on `machine.config` `entry`/`exit` arrays (i.e. any JS `Function` that was mutated onto `config` after `createMachine` and does not already have a bridged action `type`), and remove the `__xstate_track` tag from `tests/utils.ts` and `lavi-wasm`.
-
 ### `TD-11`: Zero-Allocation Pass-1 Size Query in `fsm_get_snapshot_json`
 - **Files**: [`lavi-c-cpp/src/lib.rs`](./lavi-c-cpp/src/lib.rs) (lines 601–632), [`lavi/src/json.rs`](./lavi/src/json.rs)
 - **Problem**: In C FFI, `fsm_get_snapshot_json` allocates the full serialized JSON `String` on the heap during the pass-1 size query (`buffer == NULL` or `buffer_len == 0`) and serializes/allocates it a second time on pass 2 when copying into the caller's buffer (such as in `lavi::Machine::getSnapshot()`).
@@ -64,18 +50,6 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
     - Expose `const fsm_value_t* fsm_get_context(const MachineContext* ctx)`, `const fsm_value_t* fsm_get_output(const MachineContext* ctx)`, and `const fsm_value_t* fsm_get_state_meta(const MachineContext* ctx, const char* state_path)` in C (`lavi.h`) and `lavi::Value` wrappers (`getContext()`, `getOutputValue()`, `getStateMetaValue()`) in C++ (`lavi.hpp`).
     - Update `RuntimeMachine::get_output(&self)` to return `Option<Cow<'_, Value>>` (or cache dynamic output on `self.machine_output` when entering the final state) so static/cached outputs can be borrowed with zero heap allocation. Retain `fsm_get_meta_json` for aggregated multi-state metadata serialization.
 
-### `TD-17`: Wire Dynamic Action `params` Resolver in `Actor`, `setup()` `enqueueActions`, and Single-Pass `create_machine`
-- **Files**: [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
-- **Problem**:
-  1. Dynamic action `params: ({ context, event }) => ...` functions bridged as `__params_fn_id` in `extract_action_value` are evaluated inside `StateNode::resolve_pure_actions`, but are not yet evaluated before invoking the action in the live `Actor` execution path (`parse_implementations`).
-  2. `setup({ actions: { myBatch: enqueueActions(...) } })` drops `xstate.enqueueActions` objects inside `setup()`'s `actions` map because `setup()` currently only checks `act_val.is_function()` or `type == "xstate.assign"`.
-  3. `StateNode::resolve_pure_actions` duplicates the `enqueue` JS helper registration (`enqueue.assign`, `enqueue.raise`, `enqueue.sendTo`, `enqueue.cancel`) across two branches.
-  4. `create_machine` and `Actor::new` walk the JS config object twice (`process_config` + `extract_and_replace_inline_actions`), and `StateNode::_get_internal_state` passes a raw heap pointer via `f64` instead of borrowing via `is_wasm_machine` + `__wbg_ptr`.
-- **Required Fix**:
-  - Evaluate `__params_fn_id` from `PARAMS_FNS` in `Actor`'s action execution path before invoking the registered JS action callback.
-  - Support `xstate.enqueueActions` (and other built-in action descriptors) inside `setup({ actions: ... })`, and extract a single helper for constructing the `enqueue` object in `resolve_pure_actions`.
-  - Consolidate `process_config` and `extract_and_replace_inline_actions` into a single iterative pass and replace `_get_internal_state() -> f64` with safe `StateNode` borrowing.
-
 ### `TD-18`: Iterative Work-Stack for Nested `parse_guard` / `parse_action` & Richer TypeScript Generics in `lavi-wasm`
 - **Files**: [`lavi/src/parser.rs`](./lavi/src/parser.rs), [`lavi-wasm/pkg-npm/lavi.d.ts`](./lavi-wasm/pkg-npm/lavi.d.ts)
 - **Problem**:
@@ -88,6 +62,25 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 ---
 
 ## Resolved Cleanup Items
+
+### `TD-9`: Consolidate Split-Brain WASM `Actor` State, Dual Reentrant Queues, and `Rc<MachineDefinition>` [flowos: d78f08dc-4708-4c2b-b2a9-fa1e745eea12]
+- **Files Modified**: [`lavi/src/runtime.rs`](./lavi/src/runtime.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs), [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`lavi-wasm/src/state_node.rs`](./lavi-wasm/src/state_node.rs)
+- **Resolution**:
+  - Wrapped `MachineDefinition` in `alloc::rc::Rc<MachineDefinition>` inside `RuntimeMachine` (`lavi/src/runtime.rs`), turning `RuntimeMachine::clone()` into an $O(1)$ reference-count increment on the immutable statechart AST while supporting copy-on-write mutation via `Rc::make_mut` during setup/post-creation mutation.
+  - Consolidated split-brain WASM `Actor` and `SharedActorState` into `ActorInner` + `Actor { inner: Rc<RefCell<ActorInner>> }`, eliminating all duplicate top-level fields on `Actor` as well as `pull_shared()` and `push_shared()`.
+  - Unified reentrant event queueing into `RuntimeMachine::external_queue` (`drain_reentrant`), removing `SharedActorState::reentrant_queue`.
+
+### `TD-10`: Decouple `extract_unprocessed_fn_actions` from `__xstate_track` Marker Property [flowos: 683ef60b-c19d-47d3-8fa3-6461815691f8]
+- **Files Modified**: [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`tests/utils.ts`](./tests/utils.ts)
+- **Resolution**: Updated `extract_unprocessed_fn_actions` in `lavi-wasm/src/actions.rs` to bridge any unbridged JS function found on `machine.config` `entry`/`exit` arrays (any JS `Function` lacking an existing bridged action `type` string) and removed the `__xstate_track` marker property from `tests/utils.ts` and `lavi-wasm`.
+
+### `TD-17`: Wire Dynamic Action `params` Resolver in `Actor`, `setup()` `enqueueActions`, and Single-Pass `create_machine` [flowos: af3a1461-31a7-4c68-ba30-ebd224932310]
+- **Files Modified**: [`lavi/src/types.rs`](./lavi/src/types.rs), [`lavi/src/runtime.rs`](./lavi/src/runtime.rs), [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`lavi-wasm/src/state_node.rs`](./lavi-wasm/src/state_node.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs), [`tests/actions.test.ts`](./tests/actions.test.ts), [`tests/conformance-manifest.json`](./tests/conformance-manifest.json), [`XSTATE_5_FEATURES.md`](./XSTATE_5_FEATURES.md)
+- **Resolution**:
+  - Wired dynamic action `params: ({ context, event }) => ...` resolution in live `Actor` execution (`process_action_item`, `parse_implementations`, and `ActionEffects::delegated_actions` in `lavi`), unskipping all 3 `dynamic-params` conformance tests in `tests/actions.test.ts` (`111/136` passing).
+  - Added full support for built-in action descriptors (`xstate.enqueueActions`, `xstate.assign`, `xstate.raise`, `xstate.cancel`, `xstate.log`, `xstate.emit`) inside `setup({ actions: { ... } })` and `provide({ actions: { ... } })`, and passed resolved `params` to `enqueueActions` `collect` callbacks.
+  - Consolidated `create_machine` and `Actor::new` config preprocessing into a single pass (`process_config`), deleting redundant `extract_inline_assignments`, `extract_recursive`, `process_action_list`, and `convert_inline_action`.
+  - Replaced `StateNode::_get_internal_state() -> f64` (`Box::into_raw` / `Box::from_raw`) with safe `try_clone_state_node` using a `thread_local!` slot, eliminating all `unsafe` blocks in `lavi-wasm`.
 
 ### `TD-12`: Publish `lavi-wasm` (`lavi-fsm`) to npm with Node & Browser Bundler Exports [flowos: e9505536-8f94-4c57-8de4-944e1257ce7c]
 - **Files Modified**: [`scripts/build-npm-package.mjs`](./scripts/build-npm-package.mjs), [`.github/workflows/release.yml`](./.github/workflows/release.yml), [`lavi-wasm/README.md`](./lavi-wasm/README.md), [`README.md`](./README.md), [`RELEASING.md`](./RELEASING.md)

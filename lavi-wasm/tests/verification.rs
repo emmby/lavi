@@ -281,7 +281,7 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     js_sys::Reflect::set(&opts, &"guards".into(), &guards_obj).unwrap();
 
     let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
-    let mut actor = machine.create_actor_method(opts.into()).unwrap().start();
+    let actor = machine.create_actor_method(opts.into()).unwrap().start();
 
     assert_eq!(actor.get_next_deadline(), Some(100.0));
 

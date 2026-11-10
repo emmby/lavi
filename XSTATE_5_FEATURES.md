@@ -18,7 +18,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 
 | Suite | Provenance Status | Skipped Blocks (`it.skip` / `describe.skip`) | Upstream Reference |
 | :--- | :--- | :---: | :--- |
-| `actions.test.ts` | `strict` | 27 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
+| `actions.test.ts` | `strict` | 24 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
 | `after.test.ts` | `strict` | 3 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
 | `assign.test.ts` | `strict` | 0 | [`tests/upstream/assign.test.ts`](./tests/upstream/assign.test.ts) |
 | `eventDescriptors.test.ts` | `strict` | 0 | [`tests/upstream/eventDescriptors.test.ts`](./tests/upstream/eventDescriptors.test.ts) |
@@ -91,11 +91,11 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
   - [x] Guard override via `machine.provide()` `[WASM]`
   - [x] Parameterized Guards (`params` passed to guard callbacks) `[Rust | WASM | C/C++]` (`fsm_register_guard_with_params` in C, `registerGuardWithParams` in C++)
   - [x] Higher-Order Guards (`and`, `or`, `not`, `stateIn`) `[Rust | WASM | C/C++]`
-- [ ] **Actions** (`entry`, `exit`, `actions`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts) — 108/136 passing in `tests/actions.test.ts`, strict conformance, resolved in `TD-2` and `M3`)
+- [ ] **Actions** (`entry`, `exit`, `actions`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts) — 111/136 passing in `tests/actions.test.ts`, strict conformance, resolved in `TD-2`, `M3`, and `TD-17`)
   - [x] Named Actions (`fsm_register_action` in C, `registerAction` in C++, `actions` map in Rust, `setup`/`provide` in WASM) `[Rust | WASM | C/C++]`
   - [x] Inline Actions (`js_sys::Function` in WASM/JS bridged to synthetic named actions) `[WASM]`
   - [x] Action override via `machine.provide()` `[WASM]`
-  - [x] Parameterized Actions (`params` passed to action callbacks across `fsm_register_action_with_params` in `lavi.h`, `registerActionWithParams` in `lavi.hpp`, `actions` map in Rust, and inline action bridging in WASM) `[Rust | WASM | C/C++]` (dynamic parameter resolver functions skipped)
+  - [x] Parameterized Actions (`params` passed to action callbacks across `fsm_register_action_with_params` in `lavi.h`, `registerActionWithParams` in `lavi.hpp`, `actions` map in Rust, and static + dynamic `params: ({ context, event }) => ...` resolver bridging in WASM) `[Rust | WASM | C/C++]`
   - [x] Entry actions (state entry, including root initial `always` transition batching) `[Rust | WASM | C/C++]`
   - [x] Exit actions (state exit in reverse document order) `[Rust | WASM | C/C++]`
   - [x] Transition actions `[Rust | WASM | C/C++]`

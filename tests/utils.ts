@@ -93,7 +93,6 @@ export function trackEntries(machine: AnyStateMachine, _setupFn?: any) {
     const enter = () => {
       logs.push(`enter: ${path}`);
     };
-    (enter as any).__xstate_track = true;
     if (stateConf.entry === undefined) stateConf.entry = [];
     if (!Array.isArray(stateConf.entry)) stateConf.entry = [stateConf.entry];
     stateConf.entry.unshift(enter);
@@ -101,7 +100,6 @@ export function trackEntries(machine: AnyStateMachine, _setupFn?: any) {
     const exit = () => {
       logs.push(`exit: ${path}`);
     };
-    (exit as any).__xstate_track = true;
     if (stateConf.exit === undefined) stateConf.exit = [];
     if (!Array.isArray(stateConf.exit)) stateConf.exit = [stateConf.exit];
     stateConf.exit.unshift(exit);

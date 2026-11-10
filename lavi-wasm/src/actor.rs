@@ -7,13 +7,13 @@ use wasm_bindgen::JsCast;
 use lavi::{IndexMap, IndexMapExt, RuntimeMachine, StateType, Value};
 
 use crate::actions::{
-    configure_logger, extract_inline_assignments, extract_unprocessed_fn_actions,
+    configure_logger, extract_unprocessed_fn_actions,
     parse_and_register_delays, parse_implementations, process_config,
 };
-use crate::state_node::{compute_history_value_obj, InternalState, StateNode};
+use crate::state_node::{compute_history_value_obj, try_clone_state_node};
 use crate::value_bridge::{js_to_value, value_to_js};
 
-pub(crate) fn check_initial_entry_guards(runner: &Actor) {
+pub(crate) fn check_initial_entry_guards(runner: &ActorInner) {
     if runner.guards.is_empty() {
         return;
     }
@@ -67,18 +67,16 @@ impl SimulatedClock {
 
     #[wasm_bindgen(js_name = __registerActor)]
     pub fn register_actor(&mut self, actor: &Actor) {
-        let mut actor_clone = actor.clone();
-        actor_clone.pull_shared();
-        if let Some(shared) = actor_clone.shared_state.borrow_mut().as_mut() {
-            shared.is_simulated_clock = true;
+        {
+            let mut inner = actor.inner.borrow_mut();
+            inner.is_simulated_clock = true;
+            let tick_override = inner.tick_override.clone();
+            let core_clock = self.clock.clone();
+            inner.machine.register_clock(Rc::new(move || {
+                tick_override.get().unwrap_or_else(|| core_clock.now())
+            }));
         }
-        let tick_override = actor_clone.tick_override.clone();
-        let core_clock = self.clock.clone();
-        actor_clone.machine.register_clock(Rc::new(move || {
-            tick_override.get().unwrap_or_else(|| core_clock.now())
-        }));
-        actor_clone.push_shared();
-        self.actors.borrow_mut().push(actor_clone);
+        self.actors.borrow_mut().push(actor.clone());
     }
 
     #[wasm_bindgen]
@@ -100,15 +98,18 @@ impl SimulatedClock {
         let mut transitioned_indices = Vec::new();
 
         loop {
-            let mut actors = self.actors.borrow().clone();
-            for a in &mut actors {
-                a.pull_shared();
-            }
+            let actors = self.actors.borrow().clone();
 
             let next_deadline_opt = actors
                 .iter()
-                .filter(|a| !a.is_stopped && !a.machine.is_done() && a.machine.status != lavi::MachineStatus::Done)
-                .filter_map(|a| a.machine.next_timer_deadline())
+                .filter_map(|a| {
+                    let inner = a.inner.borrow();
+                    if !inner.is_stopped && !inner.machine.is_done() && inner.machine.status != lavi::MachineStatus::Done {
+                        inner.machine.next_timer_deadline()
+                    } else {
+                        None
+                    }
+                })
                 .min();
 
             let Some(next_deadline) = next_deadline_opt else {
@@ -133,21 +134,38 @@ impl SimulatedClock {
 
             self.clock.set_now_raw(next_deadline);
 
-            for (idx, a) in actors.iter_mut().enumerate() {
-                if !a.is_stopped && !a.machine.is_done() && a.machine.status != lavi::MachineStatus::Done {
-                    a.set_in_tick(true);
-                    let mut did_transition = a.machine.tick(&a.guards, &a.actions).is_some();
-                    if a.drain_reentrant_shared() {
+            for (idx, a) in actors.iter().enumerate() {
+                let step_state = {
+                    let mut inner = a.inner.borrow_mut();
+                    if !inner.is_stopped && !inner.machine.is_done() && inner.machine.status != lavi::MachineStatus::Done {
+                        inner.is_in_tick = true;
+                        Some((inner.machine.clone(), inner.guards.clone(), inner.actions.clone()))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((mut machine, guards, actions)) = step_state {
+                    let mut did_transition = machine.tick(&guards, &actions).is_some();
+                    if a.drain_reentrant(&mut machine, &guards, &actions) {
                         did_transition = true;
                     }
-                    a.set_in_tick(false);
-                    a.push_shared();
+                    {
+                        let mut inner = a.inner.borrow_mut();
+                        if machine.inspector_fn.is_none() {
+                            machine.inspector_fn = inner.machine.inspector_fn.clone();
+                        }
+                        if !machine.is_done() && machine.status != lavi::MachineStatus::Done {
+                            inner.cached_output = None;
+                            inner.is_completed_emitted = false;
+                        }
+                        inner.machine = machine;
+                        inner.is_in_tick = false;
+                    }
                     if did_transition && !transitioned_indices.contains(&idx) {
                         transitioned_indices.push(idx);
                     }
                 }
             }
-            *self.actors.borrow_mut() = actors;
         }
 
         self.clock.set_now_raw(target_ms);
@@ -204,17 +222,19 @@ pub(crate) struct ActiveTimeout {
     pub handle: JsValue,
 }
 
-pub(crate) struct SharedActorState {
+pub(crate) struct ActorInner {
     pub machine: RuntimeMachine,
     pub inspector: Option<js_sys::Function>,
     pub inspectors: Vec<(u64, Subscriber)>,
     pub subscribers: Vec<(u64, Subscriber)>,
     pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    pub guards_holder: Rc<RefCell<IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>>>,
     pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    pub action_descriptors: IndexMap<String, JsValue>,
+    pub config: JsValue,
     pub is_stopped: bool,
     pub is_initialized: bool,
     pub is_in_tick: bool,
-    pub reentrant_queue: std::collections::VecDeque<(String, Value)>,
     pub tick_override: Rc<core::cell::Cell<Option<u64>>>,
     pub host_clock: Option<JsValue>,
     pub is_simulated_clock: bool,
@@ -225,192 +245,11 @@ pub(crate) struct SharedActorState {
     pub logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
     pub input_js: Option<JsValue>,
     pub initialization_error: Option<JsValue>,
-    pub action_descriptors: IndexMap<String, JsValue>,
     pub session_id: String,
     pub custom_id: Option<String>,
 }
 
-pub(crate) fn resolve_host_clock(custom_clock: Option<&JsValue>) -> Option<(js_sys::Function, js_sys::Function)> {
-    if let Some(opts) = custom_clock {
-        if opts.is_object() && !opts.is_null() {
-            let st = js_sys::Reflect::get(opts, &JsValue::from_str("setTimeout")).unwrap_or(JsValue::UNDEFINED);
-            let ct = js_sys::Reflect::get(opts, &JsValue::from_str("clearTimeout")).unwrap_or(JsValue::UNDEFINED);
-            if let (Ok(st_fn), Ok(ct_fn)) = (st.dyn_into::<js_sys::Function>(), ct.dyn_into::<js_sys::Function>()) {
-                return Some((st_fn, ct_fn));
-            }
-        }
-    }
-    let global = js_sys::global();
-    let st = js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout")).unwrap_or(JsValue::UNDEFINED);
-    let ct = js_sys::Reflect::get(&global, &JsValue::from_str("clearTimeout")).unwrap_or(JsValue::UNDEFINED);
-    if let (Ok(st_fn), Ok(ct_fn)) = (st.dyn_into::<js_sys::Function>(), ct.dyn_into::<js_sys::Function>()) {
-        Some((st_fn, ct_fn))
-    } else {
-        None
-    }
-}
-
-#[wasm_bindgen]
-#[derive(Clone)]
-pub struct Actor {
-    pub(crate) machine: RuntimeMachine,
-    pub(crate) inspector: Option<js_sys::Function>,
-    pub(crate) guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-    pub(crate) actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
-    pub(crate) action_descriptors: IndexMap<String, JsValue>,
-    pub(crate) config: JsValue,
-    pub is_stopped: bool,
-    pub(crate) is_initialized: bool,
-    pub(crate) shared_state: Rc<RefCell<Option<SharedActorState>>>,
-    pub(crate) tick_override: Rc<core::cell::Cell<Option<u64>>>,
-    pub(crate) logger: Option<js_sys::Function>,
-    pub(crate) logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
-    pub(crate) input_js: Option<JsValue>,
-    pub(crate) initialization_error: Option<JsValue>,
-    pub(crate) session_id: String,
-    pub(crate) custom_id: Option<String>,
-}
-
-#[wasm_bindgen]
-impl Actor {
-    #[wasm_bindgen(constructor)]
-    pub fn new(val: JsValue, options: JsValue) -> Result<Actor, JsValue> {
-        let mut guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = IndexMap::new();
-        let mut actions = IndexMap::new();
-        let mut actions_with_effects = IndexMap::new();
-        let mut action_descriptors = IndexMap::new();
-
-        parse_implementations(&options, &mut guards, &mut actions, &mut actions_with_effects);
-
-        let machine_data: Option<InternalState> = if val.is_object() {
-             let is_wasm_fn = js_sys::Reflect::get(&val, &JsValue::from_str("is_wasm_machine"))
-                 .map(|v| v.is_function())
-                 .unwrap_or(false);
-             let ptr_key = JsValue::from_str("__wbg_ptr");
-             let ptr_check = js_sys::Reflect::get(&val, &ptr_key);
-             if is_wasm_fn {
-                 if let Ok(ptr_val) = ptr_check {
-                     if !ptr_val.is_undefined() {
-                         let ptr = ptr_val.as_f64().unwrap_or(0.0) as usize as *mut StateNode;
-                         if !ptr.is_null() {
-                             unsafe {
-                                 let wasm_machine_ref = &*ptr;
-                                 let state = InternalState {
-                                     machine: wasm_machine_ref.machine.clone(),
-                                     guards: wasm_machine_ref.guards.clone(),
-                                     actions: wasm_machine_ref.actions.clone(),
-                                     action_descriptors: wasm_machine_ref.action_descriptors.clone(),
-                                 };
-                                 Some(state)
-                             }
-                         } else { None }
-                     } else { None }
-                 } else { None }
-             } else { None }
-        } else { None };
-
-        let mut machine = if let Some(mut internal_state) = machine_data {
-             internal_state.guards.extend(guards);
-             guards = internal_state.guards;
-             internal_state.actions.extend(actions);
-             actions = internal_state.actions;
-             action_descriptors = internal_state.action_descriptors;
-             let mut m = internal_state.machine;
-             m.actions_with_effects.extend(actions_with_effects);
-             m
-        } else if val.is_string() {
-             let json_definition = val.as_string().unwrap();
-             let def = lavi::create_machine(&json_definition)
-                .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
-             let mut m = RuntimeMachine::from_definition(def).map_err(|e| JsValue::from_str(&e))?;
-             m.actions_with_effects.extend(actions_with_effects);
-             m
-        } else {
-             let normalized_val = normalize_undefined(&val, 0);
-             let mut dummy_guards = IndexMap::new();
-             let mut dummy_actions = IndexMap::new();
-             let mut dummy_actions_with_effects = IndexMap::new();
-             let mut dummy_action_descriptors = IndexMap::new();
-             let mut counter = 0;
-             let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
-             let dummy_logger_holder = Rc::new(RefCell::new(None));
-             process_config(&normalized_val, &mut dummy_guards, &mut dummy_actions, &mut dummy_actions_with_effects, &mut dummy_action_descriptors, 0, &mut counter, "", &guards_holder, &dummy_logger_holder);
-             let (cleaned_val, extra_actions) = extract_inline_assignments(&normalized_val)?;
-             guards.extend(dummy_guards);
-             guards_holder.borrow_mut().extend(guards.clone());
-             actions.extend(dummy_actions);
-             actions.extend(extra_actions);
-             action_descriptors.extend(dummy_action_descriptors);
-
-             let json_string = js_sys::JSON::stringify(&cleaned_val)
-                .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
-                .as_string().unwrap_or_default();
-             let machine_def = lavi::create_machine(&json_string)
-                .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
-             let mut m = RuntimeMachine::from_definition(machine_def).map_err(|e| JsValue::from_str(&e))?;
-             m.actions_with_effects.extend(dummy_actions_with_effects);
-             m.actions_with_effects.extend(actions_with_effects);
-             m
-        };
-
-        parse_and_register_delays(&options, &mut machine);
-
-        let tick_override = Rc::new(core::cell::Cell::new(None));
-        let override_cell = tick_override.clone();
-        machine.register_clock(Rc::new(move || {
-            override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
-        }));
-        machine.register_warn_fn(Rc::new(|msg| {
-            web_sys::console::warn_1(&JsValue::from_str(msg));
-        }));
-
-        let mut output_funcs = IndexMap::new();
-        if val.is_object() {
-            collect_output_resolvers(&val, "", &mut output_funcs);
-        }
-        for (p, func) in output_funcs {
-            let f = func.clone();
-            let resolver: lavi::OutputResolver = Rc::new(move |ctx: &Value, evt: &Value| {
-                let ctx_js = value_to_js(ctx);
-                let evt_js = value_to_js(evt);
-                let arg_obj = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
-                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
-                if let Ok(res) = f.call1(&JsValue::NULL, &arg_obj) {
-                    crate::utils::js_to_value(&res)
-                } else {
-                    Value::Null
-                }
-            });
-            machine.register_output_resolver(&p, resolver);
-        }
-
-        let mut actor = Actor { 
-            machine, 
-            inspector: None,
-            guards,
-            actions,
-            action_descriptors,
-            is_stopped: false,
-            config: val.clone(),
-            is_initialized: false,
-            shared_state: Rc::new(RefCell::new(None)),
-            tick_override,
-            logger: None,
-            logger_holder: Rc::new(RefCell::new(None)),
-            input_js: None,
-            initialization_error: None,
-            session_id: String::new(),
-            custom_id: None,
-        };
-        configure_logger(&options, &mut actor);
-        actor.restore_snapshot_option(&options)?;
-        actor.sync_tracked_entry_exit(&actor.config.clone());
-        actor.apply_clock_option(&options);
-        actor.push_shared();
-        Ok(actor)
-    }
-
+impl ActorInner {
     pub(crate) fn restore_snapshot_option(&mut self, options: &JsValue) -> Result<(), JsValue> {
         if !options.is_object() || options.is_null() {
             return Ok(());
@@ -482,16 +321,20 @@ impl Actor {
                 &mut counter,
             );
             if path.is_empty() {
-                if !entry_actions.is_empty() {
-                    entry_actions.append(&mut self.machine.definition.entry);
-                    self.machine.definition.entry = entry_actions;
-                }
-                if !exit_actions.is_empty() {
-                    exit_actions.append(&mut self.machine.definition.exit);
-                    self.machine.definition.exit = exit_actions;
+                if !entry_actions.is_empty() || !exit_actions.is_empty() {
+                    let root_def = Rc::make_mut(&mut self.machine.definition);
+                    if !entry_actions.is_empty() {
+                        entry_actions.append(&mut root_def.entry);
+                        root_def.entry = entry_actions;
+                    }
+                    if !exit_actions.is_empty() {
+                        exit_actions.append(&mut root_def.exit);
+                        root_def.exit = exit_actions;
+                    }
                 }
             } else if !entry_actions.is_empty() || !exit_actions.is_empty() {
-                if let Some(def) = get_state_def_mut(&mut self.machine.definition.states, &path) {
+                let root_def = Rc::make_mut(&mut self.machine.definition);
+                if let Some(def) = get_state_def_mut(&mut root_def.states, &path) {
                     if !entry_actions.is_empty() {
                         entry_actions.append(&mut def.entry);
                         def.entry = entry_actions;
@@ -523,79 +366,182 @@ impl Actor {
             }
         }
     }
+}
 
-    pub(crate) fn pull_shared(&mut self) {
-        if let Some(shared) = self.shared_state.borrow().as_ref() {
-            self.machine = shared.machine.clone();
-            self.inspector = shared.inspector.clone();
-            self.guards = shared.guards.clone();
-            self.actions = shared.actions.clone();
-            self.is_stopped = shared.is_stopped;
-            self.is_initialized = shared.is_initialized || self.machine.is_started;
-            self.session_id = shared.session_id.clone();
-            self.custom_id = shared.custom_id.clone();
+pub(crate) fn resolve_host_clock(custom_clock: Option<&JsValue>) -> Option<(js_sys::Function, js_sys::Function)> {
+    if let Some(opts) = custom_clock {
+        if opts.is_object() && !opts.is_null() {
+            let st = js_sys::Reflect::get(opts, &JsValue::from_str("setTimeout")).unwrap_or(JsValue::UNDEFINED);
+            let ct = js_sys::Reflect::get(opts, &JsValue::from_str("clearTimeout")).unwrap_or(JsValue::UNDEFINED);
+            if let (Ok(st_fn), Ok(ct_fn)) = (st.dyn_into::<js_sys::Function>(), ct.dyn_into::<js_sys::Function>()) {
+                return Some((st_fn, ct_fn));
+            }
         }
     }
+    let global = js_sys::global();
+    let st = js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout")).unwrap_or(JsValue::UNDEFINED);
+    let ct = js_sys::Reflect::get(&global, &JsValue::from_str("clearTimeout")).unwrap_or(JsValue::UNDEFINED);
+    if let (Ok(st_fn), Ok(ct_fn)) = (st.dyn_into::<js_sys::Function>(), ct.dyn_into::<js_sys::Function>()) {
+        Some((st_fn, ct_fn))
+    } else {
+        None
+    }
+}
 
-    pub(crate) fn push_shared(&self) {
-        let mut borrow = self.shared_state.borrow_mut();
-        if let Some(shared) = borrow.as_mut() {
-            shared.machine = self.machine.clone();
-            shared.inspector = self.inspector.clone();
-            shared.guards = self.guards.clone();
-            shared.actions = self.actions.clone();
-            shared.is_stopped = self.is_stopped;
-            shared.is_initialized = self.is_initialized;
-            shared.logger = self.logger.clone();
-            shared.logger_holder = self.logger_holder.clone();
-            shared.action_descriptors = self.action_descriptors.clone();
-            if !self.session_id.is_empty() {
-                shared.session_id = self.session_id.clone();
-            }
-            if self.custom_id.is_some() {
-                shared.custom_id = self.custom_id.clone();
-            }
-            if !shared.machine.is_done() && shared.machine.status != lavi::MachineStatus::Done {
-                shared.cached_output = None;
-                shared.is_completed_emitted = false;
-            }
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Actor {
+    pub(crate) inner: Rc<RefCell<ActorInner>>,
+}
+
+#[wasm_bindgen]
+impl Actor {
+    #[wasm_bindgen(getter)]
+    pub fn is_stopped(&self) -> bool {
+        self.inner.borrow().is_stopped
+    }
+
+    #[wasm_bindgen(constructor)]
+    pub fn new(val: JsValue, options: JsValue) -> Result<Actor, JsValue> {
+        let mut guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>> = IndexMap::new();
+        let mut actions = IndexMap::new();
+        let mut actions_with_effects = IndexMap::new();
+        let mut action_descriptors = IndexMap::new();
+        let mut guards_holder = Rc::new(RefCell::new(IndexMap::new()));
+        let mut logger_holder = Rc::new(RefCell::new(None));
+
+        let mut machine = if let Some(state_node) = try_clone_state_node(&val) {
+            guards = state_node.guards;
+            guards_holder = state_node.guards_holder;
+            actions = state_node.actions;
+            action_descriptors = state_node.action_descriptors;
+            logger_holder = state_node.logger_holder;
+            state_node.machine
+        } else if val.is_string() {
+            let json_definition = val.as_string().unwrap();
+            let def = lavi::create_machine(&json_definition)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse machine: {}", e)))?;
+            RuntimeMachine::from_definition(def).map_err(|e| JsValue::from_str(&e))?
         } else {
-            *borrow = Some(SharedActorState {
-                machine: self.machine.clone(),
-                inspector: self.inspector.clone(),
-                inspectors: Vec::new(),
-                subscribers: Vec::new(),
-                guards: self.guards.clone(),
-                actions: self.actions.clone(),
-                is_stopped: self.is_stopped,
-                is_initialized: self.is_initialized,
-                is_in_tick: false,
-                reentrant_queue: std::collections::VecDeque::new(),
-                tick_override: self.tick_override.clone(),
-                host_clock: None,
-                is_simulated_clock: false,
-                active_timeout: None,
-                cached_output: None,
-                is_completed_emitted: false,
-                logger: self.logger.clone(),
-                logger_holder: self.logger_holder.clone(),
-                input_js: self.input_js.clone(),
-                initialization_error: self.initialization_error.clone(),
-                action_descriptors: self.action_descriptors.clone(),
-                session_id: self.session_id.clone(),
-                custom_id: self.custom_id.clone(),
-            });
+            let mut counter = 0;
+            process_config(
+                &val,
+                &mut guards,
+                &mut actions,
+                &mut actions_with_effects,
+                &mut action_descriptors,
+                0,
+                &mut counter,
+                "",
+                &guards_holder,
+                &logger_holder,
+            );
+            let normalized_val = normalize_undefined(&val, 0);
+            if normalized_val.is_object() && !normalized_val.is_null() {
+                let context_key = JsValue::from_str("context");
+                let context_val =
+                    js_sys::Reflect::get(&normalized_val, &context_key).unwrap_or(JsValue::UNDEFINED);
+                if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+                    let arg_obj = js_sys::Object::new();
+                    let _ =
+                        js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &JsValue::UNDEFINED);
+                    if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
+                        let _ = js_sys::Reflect::set(&normalized_val, &context_key, &res);
+                    }
+                }
+            }
+
+            let json_string = js_sys::JSON::stringify(&normalized_val)
+                .map_err(|_| JsValue::from_str("Failed to stringify machine definition"))?
+                .as_string()
+                .unwrap_or_default();
+            let machine_def = lavi::create_machine(&json_string)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse definition: {}", e)))?;
+            let mut m = RuntimeMachine::from_definition(machine_def).map_err(|e| JsValue::from_str(&e))?;
+            m.actions_with_effects.extend(actions_with_effects.drain(..));
+            m
+        };
+
+        parse_implementations(
+            &options,
+            &mut guards,
+            &mut actions,
+            &mut machine.actions_with_effects,
+            &mut action_descriptors,
+            &logger_holder,
+        );
+        guards_holder.borrow_mut().extend(guards.clone());
+
+        parse_and_register_delays(&options, &mut machine);
+
+        let tick_override = Rc::new(core::cell::Cell::new(None));
+        let override_cell = tick_override.clone();
+        machine.register_clock(Rc::new(move || {
+            override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
+        }));
+        machine.register_warn_fn(Rc::new(|msg| {
+            web_sys::console::warn_1(&JsValue::from_str(msg));
+        }));
+
+        let mut output_funcs = IndexMap::new();
+        if val.is_object() {
+            collect_output_resolvers(&val, "", &mut output_funcs);
         }
+        for (p, func) in output_funcs {
+            let f = func.clone();
+            let resolver: lavi::OutputResolver = Rc::new(move |ctx: &Value, evt: &Value| {
+                let ctx_js = value_to_js(ctx);
+                let evt_js = value_to_js(evt);
+                let arg_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("context"), &ctx_js);
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("event"), &evt_js);
+                if let Ok(res) = f.call1(&JsValue::NULL, &arg_obj) {
+                    crate::utils::js_to_value(&res)
+                } else {
+                    Value::Null
+                }
+            });
+            machine.register_output_resolver(&p, resolver);
+        }
+
+        let mut inner = ActorInner {
+            machine,
+            inspector: None,
+            inspectors: Vec::new(),
+            subscribers: Vec::new(),
+            guards,
+            guards_holder,
+            actions,
+            action_descriptors,
+            config: val.clone(),
+            is_stopped: false,
+            is_initialized: false,
+            is_in_tick: false,
+            tick_override,
+            host_clock: None,
+            is_simulated_clock: false,
+            active_timeout: None,
+            cached_output: None,
+            is_completed_emitted: false,
+            logger: None,
+            logger_holder,
+            input_js: None,
+            initialization_error: None,
+            session_id: String::new(),
+            custom_id: None,
+        };
+        configure_logger(&options, &mut inner);
+        inner.restore_snapshot_option(&options)?;
+        inner.sync_tracked_entry_exit(&val);
+        let actor = Actor {
+            inner: Rc::new(RefCell::new(inner)),
+        };
+        actor.apply_clock_option(&options);
+        Ok(actor)
     }
 
     pub(crate) fn emit_error(&self, err_val: &JsValue) {
-        let subscribers = {
-            let borrow = self.shared_state.borrow();
-            borrow
-                .as_ref()
-                .map(|s| s.subscribers.clone())
-                .unwrap_or_default()
-        };
+        let subscribers = self.inner.borrow().subscribers.clone();
         for (_, sub) in &subscribers {
             if let Subscriber::Observer { error: Some(ref err_fn), .. } = sub {
                 let _ = err_fn.call1(&JsValue::NULL, err_val);
@@ -603,36 +549,37 @@ impl Actor {
         }
     }
 
-    pub(crate) fn set_in_tick(&self, in_tick: bool) {
-        if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-            shared.is_in_tick = in_tick;
-        }
-    }
-
-    pub(crate) fn drain_reentrant_shared(&mut self) -> bool {
+    pub(crate) fn drain_reentrant(
+        &self,
+        machine: &mut RuntimeMachine,
+        guards: &IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+        actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
+    ) -> bool {
         let mut transitioned = false;
         loop {
-            if self.is_stopped
-                || self.machine.status == lavi::MachineStatus::Stopped
-                || self.machine.status == lavi::MachineStatus::Done
-                || self.machine.is_done()
+            let is_now_stopped = self.inner.borrow().is_stopped;
+            if is_now_stopped
+                || machine.status == lavi::MachineStatus::Stopped
+                || machine.status == lavi::MachineStatus::Done
+                || machine.is_done()
             {
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.reentrant_queue.clear();
+                machine.external_queue.clear();
+                self.inner.borrow_mut().machine.external_queue.clear();
+                if is_now_stopped || machine.status == lavi::MachineStatus::Stopped {
+                    machine.stop();
+                    self.inner.borrow_mut().is_stopped = true;
                 }
                 break;
             }
-            let next_evt = self
-                .shared_state
-                .borrow_mut()
-                .as_mut()
-                .and_then(|s| s.reentrant_queue.pop_front());
+            let next_evt = machine
+                .external_queue
+                .pop_front()
+                .or_else(|| self.inner.borrow_mut().machine.external_queue.pop_front());
             let Some((ev_name, ev_payload)) = next_evt else {
                 break;
             };
-            if self
-                .machine
-                .transition(&ev_name, &ev_payload, &self.guards, &self.actions)
+            if machine
+                .transition(&ev_name, &ev_payload, guards, actions)
                 .is_some()
             {
                 transitioned = true;
@@ -641,7 +588,7 @@ impl Actor {
         transitioned
     }
 
-    pub(crate) fn apply_clock_option(&mut self, options: &JsValue) {
+    pub(crate) fn apply_clock_option(&self, options: &JsValue) {
         if !options.is_object() || options.is_null() {
             return;
         }
@@ -651,11 +598,9 @@ impl Actor {
             return;
         }
 
-        self.push_shared();
-
-        let tick_override = self.tick_override.clone();
+        let tick_override = self.inner.borrow().tick_override.clone();
         if let Ok(func) = clock_val.clone().dyn_into::<js_sys::Function>() {
-            self.machine.register_clock(Rc::new(move || {
+            self.inner.borrow_mut().machine.register_clock(Rc::new(move || {
                 if let Some(override_now) = tick_override.get() {
                     return override_now;
                 }
@@ -672,12 +617,9 @@ impl Actor {
             let attach = js_sys::Reflect::get(&clock_val, &JsValue::from_str("__registerActor"))
                 .unwrap_or(JsValue::UNDEFINED);
             if let Ok(attach_fn) = attach.dyn_into::<js_sys::Function>() {
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.is_simulated_clock = true;
-                }
+                self.inner.borrow_mut().is_simulated_clock = true;
                 let actor_js: JsValue = self.clone().into();
                 let _ = attach_fn.call1(&clock_val, &actor_js);
-                self.pull_shared();
                 return;
             }
 
@@ -685,7 +627,7 @@ impl Actor {
                 .unwrap_or(JsValue::UNDEFINED);
             if let Ok(now_fn) = now_prop.dyn_into::<js_sys::Function>() {
                 let clock_this = clock_val.clone();
-                self.machine.register_clock(Rc::new(move || {
+                self.inner.borrow_mut().machine.register_clock(Rc::new(move || {
                     if let Some(override_now) = tick_override.get() {
                         return override_now;
                     }
@@ -703,9 +645,7 @@ impl Actor {
             let ct = js_sys::Reflect::get(&clock_val, &JsValue::from_str("clearTimeout"))
                 .unwrap_or(JsValue::UNDEFINED);
             if st.is_function() && ct.is_function() {
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.host_clock = Some(clock_val.clone());
-                }
+                self.inner.borrow_mut().host_clock = Some(clock_val.clone());
             }
         }
     }
@@ -795,10 +735,10 @@ impl Actor {
     }
 
     pub(crate) fn build_machine_inspector(&self) -> lavi::InspectFunction {
-        let shared_weak = Rc::downgrade(&self.shared_state);
-        let config_clone = self.config.clone();
+        let inner_weak = Rc::downgrade(&self.inner);
+        let config_clone = self.inner.borrow().config.clone();
         Rc::new(move |ev: &lavi::InspectEvent| {
-            let Some(shared_rc) = shared_weak.upgrade() else {
+            let Some(inner_rc) = inner_weak.upgrade() else {
                 return;
             };
             let (
@@ -812,10 +752,7 @@ impl Actor {
                 actions,
                 logger_holder,
             ) = {
-                let Ok(borrow) = shared_rc.try_borrow() else {
-                    return;
-                };
-                let Some(shared) = borrow.as_ref() else {
+                let Ok(shared) = inner_rc.try_borrow() else {
                     return;
                 };
                 if shared.inspectors.is_empty() && shared.inspector.is_none() {
@@ -1136,13 +1073,11 @@ impl Actor {
 
         {
             let insp_fn = self.build_machine_inspector();
-            let mut borrow = self.shared_state.borrow_mut();
-            if let Some(shared) = borrow.as_mut() {
-                if shared.machine.inspector_fn.is_none() {
-                    shared.machine.register_inspector(insp_fn);
-                }
-                shared.inspectors.push((insp_id, sub.clone()));
+            let mut inner = self.inner.borrow_mut();
+            if inner.machine.inspector_fn.is_none() {
+                inner.machine.register_inspector(insp_fn);
             }
+            inner.inspectors.push((insp_id, sub.clone()));
         }
 
         if emit_actor_event {
@@ -1165,15 +1100,13 @@ impl Actor {
             }
         }
 
-        let shared_weak = Rc::downgrade(&self.shared_state);
+        let inner_weak = Rc::downgrade(&self.inner);
         let unsub_closure = Closure::wrap(Box::new(move || {
-            if let Some(shared_rc) = shared_weak.upgrade() {
-                if let Ok(mut borrow) = shared_rc.try_borrow_mut() {
-                    if let Some(shared) = borrow.as_mut() {
-                        shared.inspectors.retain(|(id, _)| *id != insp_id);
-                        if shared.inspectors.is_empty() && shared.inspector.is_none() {
-                            shared.machine.inspector_fn = None;
-                        }
+            if let Some(inner_rc) = inner_weak.upgrade() {
+                if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                    inner.inspectors.retain(|(id, _)| *id != insp_id);
+                    if inner.inspectors.is_empty() && inner.inspector.is_none() {
+                        inner.machine.inspector_fn = None;
                     }
                 }
             }
@@ -1190,25 +1123,13 @@ impl Actor {
 
     #[wasm_bindgen(getter, js_name = sessionId)]
     pub fn session_id(&self) -> String {
-        if let Some(shared) = self.shared_state.borrow().as_ref() {
-            if !shared.session_id.is_empty() {
-                return shared.session_id.clone();
-            }
-        }
-        self.session_id.clone()
+        self.inner.borrow().session_id.clone()
     }
 
     #[wasm_bindgen(getter)]
     pub fn id(&self) -> String {
-        if let Some(shared) = self.shared_state.borrow().as_ref() {
-            if let Some(ref cid) = shared.custom_id {
-                return cid.clone();
-            }
-            if !shared.session_id.is_empty() {
-                return shared.session_id.clone();
-            }
-        }
-        self.custom_id.clone().unwrap_or_else(|| self.session_id.clone())
+        let inner = self.inner.borrow();
+        inner.custom_id.clone().unwrap_or_else(|| inner.session_id.clone())
     }
 
     #[wasm_bindgen(js_name = toJSON)]
@@ -1236,50 +1157,67 @@ impl Actor {
         sys_obj.into()
     }
 
-
-
     fn get_history_value_obj(&self, machine: &RuntimeMachine) -> JsValue {
+        let (guards, actions, action_descriptors, config, logger_holder) = {
+            let inner = self.inner.borrow();
+            (
+                inner.guards.clone(),
+                inner.actions.clone(),
+                inner.action_descriptors.clone(),
+                inner.config.clone(),
+                inner.logger_holder.clone(),
+            )
+        };
         compute_history_value_obj(
             machine,
-            &self.guards,
-            &self.actions,
-            &self.action_descriptors,
-            &self.config,
-            &self.logger_holder,
+            &guards,
+            &actions,
+            &action_descriptors,
+            &config,
+            &logger_holder,
         )
     }
 
     #[wasm_bindgen(js_name = getSnapshot)]
     pub fn get_snapshot(&self) -> Snapshot {
-        let init_err = {
-            let borrow = self.shared_state.borrow();
-            borrow
-                .as_ref()
-                .and_then(|s| s.initialization_error.clone())
-                .or_else(|| self.initialization_error.clone())
+        let (
+            init_err,
+            mut active_machine,
+            is_stopped,
+            is_initialized,
+            cached_out,
+            guards,
+            actions,
+            action_descriptors,
+            config,
+        ) = {
+            let inner = self.inner.borrow();
+            (
+                inner.initialization_error.clone(),
+                inner.machine.clone(),
+                inner.is_stopped,
+                inner.is_initialized,
+                inner.cached_output.clone(),
+                inner.guards.clone(),
+                inner.actions.clone(),
+                inner.action_descriptors.clone(),
+                inner.config.clone(),
+            )
         };
         if let Some(err) = init_err {
             return Snapshot {
                 value: JsValue::UNDEFINED,
                 context: JsValue::UNDEFINED,
                 status: "error".to_string(),
-                machine_ref: self.machine.clone(),
-                guards: self.guards.clone(),
+                machine_ref: active_machine,
+                guards,
                 history_value: js_sys::Object::new().into(),
-                config: self.config.clone(),
+                config,
                 output: JsValue::UNDEFINED,
                 error: err,
             };
         }
 
-        let (mut active_machine, is_stopped, is_initialized, cached_out, guards) = {
-            let shared_borrow = self.shared_state.borrow();
-            if let Some(s) = shared_borrow.as_ref() {
-                (s.machine.clone(), s.is_stopped, s.is_initialized, s.cached_output.clone(), s.guards.clone())
-            } else {
-                (self.machine.clone(), self.is_stopped, self.is_initialized, None, self.guards.clone())
-            }
-        };
         if !active_machine.is_started && !is_initialized {
             active_machine.inspector_fn = None;
             let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
@@ -1287,8 +1225,16 @@ impl Actor {
                 "__lavi_snapshot_mode__".to_string(),
                 Rc::new(|_, _, _| {}),
             );
-            for (k, v) in &self.actions {
-                if k.starts_with("generated_assign_") || k.starts_with("auto_action_assign_") {
+            for (k, v) in &actions {
+                let is_assign = k.starts_with("generated_assign_")
+                    || k.starts_with("auto_action_assign_")
+                    || action_descriptors
+                        .get(k)
+                        .and_then(|d| js_sys::Reflect::get(d, &JsValue::from_str("actionType")).ok())
+                        .and_then(|t| t.as_string())
+                        .as_deref()
+                        == Some("xstate.assign");
+                if is_assign {
                     snapshot_actions.insert(k.clone(), v.clone());
                 }
             }
@@ -1324,10 +1270,8 @@ impl Actor {
             if let Some(c) = cached_out {
                 c
             } else {
-                let evaluated = Self::compute_output_js(&self.config, machine_ref, &ctx_val);
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.cached_output = Some(evaluated.clone());
-                }
+                let evaluated = Self::compute_output_js(&config, machine_ref, &ctx_val);
+                self.inner.borrow_mut().cached_output = Some(evaluated.clone());
                 evaluated
             }
         } else {
@@ -1339,9 +1283,9 @@ impl Actor {
             context: ctx_val,
             status,
             machine_ref: final_machine,
-            guards: self.guards.clone(),
+            guards,
             history_value: history_obj,
-            config: self.config.clone(),
+            config,
             output: output_val,
             error: JsValue::UNDEFINED,
         }
@@ -1482,39 +1426,25 @@ impl Actor {
 
     #[wasm_bindgen]
     pub fn start(&self) -> Actor {
-        if self.initialization_error.is_some() || {
-            let borrow = self.shared_state.borrow();
-            borrow.as_ref().and_then(|s| s.initialization_error.as_ref()).is_some()
-        } {
-            return self.clone();
-        }
-
-        let (mut machine, guards, actions, is_started, is_initialized) = {
-            let borrow = self.shared_state.borrow();
-            if let Some(shared) = borrow.as_ref() {
-                (
-                    shared.machine.clone(),
-                    shared.guards.clone(),
-                    shared.actions.clone(),
-                    shared.machine.is_started,
-                    shared.is_initialized,
-                )
-            } else {
-                (
-                    self.machine.clone(),
-                    self.guards.clone(),
-                    self.actions.clone(),
-                    self.machine.is_started,
-                    self.is_initialized,
-                )
+        let (mut machine, guards, actions, is_started, is_initialized, has_init_err) = {
+            let mut inner = self.inner.borrow_mut();
+            if inner.initialization_error.is_some() || inner.machine.is_started {
+                return self.clone();
             }
+            inner.is_in_tick = true;
+            (
+                inner.machine.clone(),
+                inner.guards.clone(),
+                inner.actions.clone(),
+                inner.machine.is_started,
+                inner.is_initialized,
+                inner.initialization_error.is_some(),
+            )
         };
 
-        if is_started {
+        if has_init_err || is_started {
             return self.clone();
         }
-
-        self.set_in_tick(true);
 
         if !is_initialized {
             machine.start(&guards, &actions);
@@ -1531,48 +1461,24 @@ impl Actor {
             }
         }
 
-        loop {
-            let is_now_stopped = {
-                let borrow = self.shared_state.borrow();
-                borrow.as_ref().map(|s| s.is_stopped).unwrap_or(false)
-            };
-            if is_now_stopped || machine.status == lavi::MachineStatus::Stopped {
-                machine.stop();
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.reentrant_queue.clear();
-                    shared.is_stopped = true;
-                }
-                break;
-            }
-            if machine.is_done() || machine.status == lavi::MachineStatus::Done {
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.reentrant_queue.clear();
-                }
-                break;
-            }
-            let next_reentrant = {
-                let mut borrow = self.shared_state.borrow_mut();
-                borrow.as_mut().and_then(|s| s.reentrant_queue.pop_front())
-            };
-            let Some((re_name, re_payload)) = next_reentrant else {
-                break;
-            };
-            let _ = machine.transition(&re_name, &re_payload, &guards, &actions);
-        }
-
-        {
-            let mut borrow = self.shared_state.borrow_mut();
-            if let Some(shared) = borrow.as_mut() {
-                shared.machine = machine;
-                shared.is_initialized = true;
-                shared.is_in_tick = false;
-            }
-        }
+        self.drain_reentrant(&mut machine, &guards, &actions);
 
         let last_err = {
-            let mut borrow = self.shared_state.borrow_mut();
-            borrow.as_mut().and_then(|s| s.machine.last_error.take())
+            let mut inner = self.inner.borrow_mut();
+            if machine.inspector_fn.is_none() {
+                machine.inspector_fn = inner.machine.inspector_fn.clone();
+            }
+            let err = machine.last_error.take();
+            if !machine.is_done() && machine.status != lavi::MachineStatus::Done {
+                inner.cached_output = None;
+                inner.is_completed_emitted = false;
+            }
+            inner.machine = machine;
+            inner.is_initialized = true;
+            inner.is_in_tick = false;
+            err
         };
+
         if let Some(err_msg) = last_err {
             let js_err = js_sys::Error::new(&err_msg);
             self.emit_error(&js_err.into());
@@ -1582,7 +1488,7 @@ impl Actor {
         self.emit_snapshot();
 
         // Schedule host timer for any active deadline
-        Actor::reschedule_host_timer(&self.shared_state);
+        Actor::reschedule_host_timer(&self.inner);
 
         self.clone()
     }
@@ -1592,16 +1498,12 @@ impl Actor {
         let status_str = snapshot.status();
         let should_complete = status_str == "done";
         let is_completed = if should_complete {
-            let mut borrow = self.shared_state.borrow_mut();
-            if let Some(shared) = borrow.as_mut() {
-                if !shared.is_completed_emitted {
-                    shared.is_completed_emitted = true;
-                    true
-                } else {
-                    false
-                }
-            } else {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.is_completed_emitted {
+                inner.is_completed_emitted = true;
                 true
+            } else {
+                false
             }
         } else {
             false
@@ -1609,14 +1511,7 @@ impl Actor {
         let obj: JsValue = snapshot.into();
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str(&status_str));
 
-        let subscribers = {
-            let borrow = self.shared_state.borrow();
-            if let Some(shared) = borrow.as_ref() {
-                shared.subscribers.clone()
-            } else {
-                Vec::new()
-            }
-        };
+        let subscribers = self.inner.borrow().subscribers.clone();
 
         for (_, sub) in &subscribers {
             match sub {
@@ -1637,7 +1532,6 @@ impl Actor {
         }
     }
 
-
     pub fn send(&self, event: JsValue) -> Result<JsValue, JsValue> {
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
@@ -1650,90 +1544,43 @@ impl Actor {
              (name, payload)
         };
 
-        let (is_started, is_stopped, is_done, is_in_tick) = {
-            let borrow = self.shared_state.borrow();
-            if let Some(shared) = borrow.as_ref() {
-                (
-                    shared.machine.is_started,
-                    shared.is_stopped || shared.machine.status == lavi::MachineStatus::Stopped,
-                    shared.machine.is_done(),
-                    shared.is_in_tick,
-                )
-            } else {
-                (
-                    self.machine.is_started,
-                    self.is_stopped || self.machine.status == lavi::MachineStatus::Stopped,
-                    self.machine.is_done(),
-                    false,
-                )
+        let step_state = {
+            let mut inner = self.inner.borrow_mut();
+            let is_started = inner.machine.is_started;
+            let is_stopped = inner.is_stopped || inner.machine.status == lavi::MachineStatus::Stopped;
+            let is_done = inner.machine.is_done();
+            if !is_started || is_stopped || is_done {
+                return Ok(JsValue::UNDEFINED);
             }
+            if inner.is_in_tick {
+                inner.machine.external_queue.push_back((event_name, event_payload));
+                return Ok(JsValue::UNDEFINED);
+            }
+            inner.is_in_tick = true;
+            (inner.machine.clone(), inner.guards.clone(), inner.actions.clone())
         };
 
-        if !is_started || is_stopped || is_done {
-            return Ok(JsValue::UNDEFINED);
-        }
-
-        if is_in_tick {
-            if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                shared.reentrant_queue.push_back((event_name, event_payload));
-            }
-            return Ok(JsValue::UNDEFINED);
-        }
-
-        self.set_in_tick(true);
-
-        let (mut machine, guards, actions) = {
-            let borrow = self.shared_state.borrow();
-            if let Some(shared) = borrow.as_ref() {
-                (shared.machine.clone(), shared.guards.clone(), shared.actions.clone())
-            } else {
-                (self.machine.clone(), self.guards.clone(), self.actions.clone())
-            }
-        };
+        let (mut machine, guards, actions) = step_state;
 
         let _ = machine.transition(&event_name, &event_payload, &guards, &actions);
 
-        loop {
-            let is_now_stopped = {
-                let borrow = self.shared_state.borrow();
-                borrow.as_ref().map(|s| s.is_stopped).unwrap_or(false)
-            };
-            if is_now_stopped || machine.status == lavi::MachineStatus::Stopped {
-                machine.stop();
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.reentrant_queue.clear();
-                    shared.is_stopped = true;
-                }
-                break;
-            }
-            if machine.is_done() {
-                if let Some(shared) = self.shared_state.borrow_mut().as_mut() {
-                    shared.reentrant_queue.clear();
-                }
-                break;
-            }
-            let next_reentrant = {
-                let mut borrow = self.shared_state.borrow_mut();
-                borrow.as_mut().and_then(|s| s.reentrant_queue.pop_front())
-            };
-            let Some((re_name, re_payload)) = next_reentrant else {
-                break;
-            };
-            let _ = machine.transition(&re_name, &re_payload, &guards, &actions);
-        }
-
-        {
-            let mut borrow = self.shared_state.borrow_mut();
-            if let Some(shared) = borrow.as_mut() {
-                shared.machine = machine;
-                shared.is_in_tick = false;
-            }
-        }
+        self.drain_reentrant(&mut machine, &guards, &actions);
 
         let last_err = {
-            let mut borrow = self.shared_state.borrow_mut();
-            borrow.as_mut().and_then(|s| s.machine.last_error.take())
+            let mut inner = self.inner.borrow_mut();
+            if machine.inspector_fn.is_none() {
+                machine.inspector_fn = inner.machine.inspector_fn.clone();
+            }
+            let err = machine.last_error.take();
+            if !machine.is_done() && machine.status != lavi::MachineStatus::Done {
+                inner.cached_output = None;
+                inner.is_completed_emitted = false;
+            }
+            inner.machine = machine;
+            inner.is_in_tick = false;
+            err
         };
+
         if let Some(err_msg) = last_err {
             let js_err = js_sys::Error::new(&err_msg);
             self.emit_error(&js_err.into());
@@ -1743,7 +1590,7 @@ impl Actor {
         self.emit_snapshot();
 
         // Host timer scheduling
-        Actor::reschedule_host_timer(&self.shared_state);
+        Actor::reschedule_host_timer(&self.inner);
         Ok(JsValue::UNDEFINED)
     }
 
@@ -1779,11 +1626,8 @@ impl Actor {
         let sub_id = NEXT_SUB_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         let is_done = {
-            let borrow = self.shared_state.borrow();
-            borrow
-                .as_ref()
-                .map(|s| s.machine.is_done() || s.machine.status == lavi::MachineStatus::Done)
-                .unwrap_or(false)
+            let inner = self.inner.borrow();
+            inner.machine.is_done() || inner.machine.status == lavi::MachineStatus::Done
         };
 
         if is_done {
@@ -1792,20 +1636,13 @@ impl Actor {
             }
         }
 
-        {
-            let mut borrow = self.shared_state.borrow_mut();
-            if let Some(shared) = borrow.as_mut() {
-                shared.subscribers.push((sub_id, sub));
-            }
-        }
+        self.inner.borrow_mut().subscribers.push((sub_id, sub));
 
-        let shared_weak = Rc::downgrade(&self.shared_state);
+        let inner_weak = Rc::downgrade(&self.inner);
         let unsub_closure = Closure::wrap(Box::new(move || {
-            if let Some(shared_rc) = shared_weak.upgrade() {
-                if let Ok(mut borrow) = shared_rc.try_borrow_mut() {
-                    if let Some(shared) = borrow.as_mut() {
-                        shared.subscribers.retain(|(id, _)| *id != sub_id);
-                    }
+            if let Some(inner_rc) = inner_weak.upgrade() {
+                if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                    inner.subscribers.retain(|(id, _)| *id != sub_id);
                 }
             }
         }) as Box<dyn FnMut()>);
@@ -1822,91 +1659,79 @@ impl Actor {
 
     #[wasm_bindgen]
     pub fn stop(&self) -> Actor {
-        let mut borrow = self.shared_state.borrow_mut();
-        if let Some(shared) = borrow.as_mut() {
-            if shared.machine.status == lavi::MachineStatus::Done || shared.machine.is_done() {
-                return self.clone();
-            }
-            shared.is_stopped = true;
-            shared.machine.stop();
-            if let Some((_, clear_timeout)) = resolve_host_clock(shared.host_clock.as_ref()) {
-                if let Some(active) = shared.active_timeout.take() {
-                    let _ = clear_timeout.call1(&JsValue::NULL, &active.handle);
-                }
+        let mut inner = self.inner.borrow_mut();
+        if inner.machine.status == lavi::MachineStatus::Done || inner.machine.is_done() {
+            return self.clone();
+        }
+        inner.is_stopped = true;
+        inner.machine.stop();
+        if let Some((_, clear_timeout)) = resolve_host_clock(inner.host_clock.as_ref()) {
+            if let Some(active) = inner.active_timeout.take() {
+                let _ = clear_timeout.call1(&JsValue::NULL, &active.handle);
             }
         }
         self.clone()
     }
 
     #[wasm_bindgen(js_name = __resumeAfterCleanup)]
-    pub fn resume_after_cleanup(&mut self) {
-        self.pull_shared();
-        if !self.is_initialized
-            || self.machine.is_done()
-            || self.machine.status == lavi::MachineStatus::Done
+    pub fn resume_after_cleanup(&self) {
         {
-            return;
+            let mut inner = self.inner.borrow_mut();
+            if !inner.is_initialized
+                || inner.machine.is_done()
+                || inner.machine.status == lavi::MachineStatus::Done
+            {
+                return;
+            }
+            inner.is_stopped = false;
+            inner.machine.is_started = true;
+            inner.machine.status = lavi::MachineStatus::Active;
+            inner.machine.revive_timers();
         }
-        self.is_stopped = false;
-        self.machine.is_started = true;
-        self.machine.status = lavi::MachineStatus::Active;
-        self.machine.revive_timers();
-        self.push_shared();
-        Actor::reschedule_host_timer(&self.shared_state);
+        Actor::reschedule_host_timer(&self.inner);
     }
 
     #[wasm_bindgen(js_name = __syncImplementations)]
-    pub fn sync_implementations(&mut self, machine_or_logic: JsValue, options: JsValue) {
-        self.pull_shared();
-        if machine_or_logic.is_object() && !machine_or_logic.is_null() {
-            if let Ok(func_val) = js_sys::Reflect::get(
-                &machine_or_logic,
-                &JsValue::from_str("_get_internal_state"),
-            ) {
-                if let Ok(func) = func_val.dyn_into::<js_sys::Function>() {
-                    if let Ok(ptr_num_val) = func.call0(&machine_or_logic) {
-                        let ptr = js_sys::Number::from(ptr_num_val).value_of() as usize;
-                        if ptr != 0 {
-                            let internal = unsafe { Box::from_raw(ptr as *mut InternalState) };
-                            self.guards.extend(internal.guards);
-                            self.actions.extend(internal.actions);
-                            self.action_descriptors.extend(internal.action_descriptors);
-                            self.machine
-                                .actions_with_effects
-                                .extend(internal.machine.actions_with_effects);
-                            self.machine.delays.extend(internal.machine.delays);
-                        }
-                    }
-                }
-            }
+    pub fn sync_implementations(&self, machine_or_logic: JsValue, options: JsValue) {
+        let mut inner = self.inner.borrow_mut();
+        let ActorInner {
+            ref mut guards,
+            ref guards_holder,
+            ref mut actions,
+            ref mut action_descriptors,
+            ref mut machine,
+            ref logger_holder,
+            ..
+        } = *inner;
+        if let Some(state_node) = try_clone_state_node(&machine_or_logic) {
+            guards.extend(state_node.guards);
+            actions.extend(state_node.actions);
+            action_descriptors.extend(state_node.action_descriptors);
+            machine
+                .actions_with_effects
+                .extend(state_node.machine.actions_with_effects);
+            machine.delays.extend(state_node.machine.delays);
         }
         if options.is_object() && !options.is_null() {
             parse_implementations(
                 &options,
-                &mut self.guards,
-                &mut self.actions,
-                &mut self.machine.actions_with_effects,
+                guards,
+                actions,
+                &mut machine.actions_with_effects,
+                action_descriptors,
+                logger_holder,
             );
-            parse_and_register_delays(&options, &mut self.machine);
+            parse_and_register_delays(&options, machine);
         }
-        self.push_shared();
+        guards_holder.borrow_mut().extend(guards.clone());
     }
 
     #[wasm_bindgen(js_name = getPersistedSnapshot)]
     pub fn get_persisted_snapshot(&self) -> Result<JsValue, JsValue> {
-        let shared_borrow = self.shared_state.borrow();
-        let active_machine = shared_borrow
-            .as_ref()
-            .map(|s| &s.machine)
-            .unwrap_or(&self.machine);
-        let is_stopped = shared_borrow
-            .as_ref()
-            .map(|s| s.is_stopped)
-            .unwrap_or(self.is_stopped);
-        let is_initialized = shared_borrow
-            .as_ref()
-            .map(|s| s.is_initialized)
-            .unwrap_or(self.is_initialized);
+        let inner = self.inner.borrow();
+        let active_machine = &inner.machine;
+        let is_stopped = inner.is_stopped;
+        let is_initialized = inner.is_initialized;
         let preview;
         let machine_ref = if !active_machine.is_started && !is_initialized {
             let mut m = active_machine.clone();
@@ -1916,12 +1741,21 @@ impl Actor {
                 "__lavi_snapshot_mode__".to_string(),
                 Rc::new(|_, _, _| {}),
             );
-            for (k, v) in &self.actions {
-                if k.starts_with("generated_assign_") || k.starts_with("auto_action_assign_") {
+            for (k, v) in &inner.actions {
+                let is_assign = k.starts_with("generated_assign_")
+                    || k.starts_with("auto_action_assign_")
+                    || inner
+                        .action_descriptors
+                        .get(k)
+                        .and_then(|d| js_sys::Reflect::get(d, &JsValue::from_str("actionType")).ok())
+                        .and_then(|t| t.as_string())
+                        .as_deref()
+                        == Some("xstate.assign");
+                if is_assign {
                     snapshot_actions.insert(k.clone(), v.clone());
                 }
             }
-            m.start(&self.guards, &snapshot_actions);
+            m.start(&inner.guards, &snapshot_actions);
             preview = m;
             &preview
         } else if is_stopped
@@ -1943,34 +1777,39 @@ impl Actor {
 
     #[wasm_bindgen(js_name = getNextDeadline)]
     pub fn get_next_deadline(&self) -> Option<f64> {
-        let shared_borrow = self.shared_state.borrow();
-        if shared_borrow.as_ref().map(|s| s.is_stopped).unwrap_or(self.is_stopped) {
+        let inner = self.inner.borrow();
+        if inner.is_stopped {
             return None;
         }
-        let active_machine = shared_borrow
-            .as_ref()
-            .map(|s| &s.machine)
-            .unwrap_or(&self.machine);
-        if active_machine.is_done() || active_machine.status == lavi::MachineStatus::Done {
+        if inner.machine.is_done() || inner.machine.status == lavi::MachineStatus::Done {
             return None;
         }
-        active_machine.next_timer_deadline().map(|d| d as f64)
+        inner.machine.next_timer_deadline().map(|d| d as f64)
     }
 
     #[wasm_bindgen]
-    pub fn tick(&mut self) -> Result<(), JsValue> {
-        self.pull_shared();
-        if !self.machine.is_started
-            || self.is_stopped
-            || self.machine.status == lavi::MachineStatus::Stopped
-            || self.machine.status == lavi::MachineStatus::Done
-            || self.machine.is_done()
-        {
-            return Ok(());
-        }
-        let target_ms = if let Some(override_now) = self.tick_override.get() {
+    pub fn tick(&self) -> Result<(), JsValue> {
+        let (mut machine, guards, actions, tick_override) = {
+            let inner = self.inner.borrow();
+            if !inner.machine.is_started
+                || inner.is_stopped
+                || inner.machine.status == lavi::MachineStatus::Stopped
+                || inner.machine.status == lavi::MachineStatus::Done
+                || inner.machine.is_done()
+            {
+                return Ok(());
+            }
+            (
+                inner.machine.clone(),
+                inner.guards.clone(),
+                inner.actions.clone(),
+                inner.tick_override.clone(),
+            )
+        };
+
+        let target_ms = if let Some(override_now) = tick_override.get() {
             override_now
-        } else if let Some(clock_fn) = &self.machine.clock_millis_fn {
+        } else if let Some(clock_fn) = &machine.clock_millis_fn {
             clock_fn()
         } else {
             js_sys::Date::now() as u64
@@ -1980,7 +1819,7 @@ impl Actor {
         let mut same_deadline_steps = 0usize;
         let mut total_steps = 0usize;
 
-        while let Some(deadline) = self.machine.next_timer_deadline() {
+        while let Some(deadline) = machine.next_timer_deadline() {
             if deadline > target_ms {
                 break;
             }
@@ -1998,62 +1837,70 @@ impl Actor {
                 break;
             }
 
-            self.tick_override.set(Some(deadline));
-            self.set_in_tick(true);
-            let mut did_transition = self.machine.tick(&self.guards, &self.actions).is_some();
-            if self.drain_reentrant_shared() {
+            tick_override.set(Some(deadline));
+            self.inner.borrow_mut().is_in_tick = true;
+            let mut did_transition = machine.tick(&guards, &actions).is_some();
+            if self.drain_reentrant(&mut machine, &guards, &actions) {
                 did_transition = true;
             }
-            self.set_in_tick(false);
-            self.tick_override.set(None);
+            self.inner.borrow_mut().is_in_tick = false;
+            tick_override.set(None);
 
             if did_transition {
                 transitioned = true;
             }
         }
-        self.tick_override.set(None);
-        self.push_shared();
+        tick_override.set(None);
+        {
+            let mut inner = self.inner.borrow_mut();
+            if machine.inspector_fn.is_none() {
+                machine.inspector_fn = inner.machine.inspector_fn.clone();
+            }
+            if !machine.is_done() && machine.status != lavi::MachineStatus::Done {
+                inner.cached_output = None;
+                inner.is_completed_emitted = false;
+            }
+            inner.machine = machine;
+            inner.is_in_tick = false;
+        }
         if transitioned {
             self.emit_snapshot();
         }
-        Actor::reschedule_host_timer(&self.shared_state);
+        Actor::reschedule_host_timer(&self.inner);
         Ok(())
     }
 
-    pub(crate) fn reschedule_host_timer(shared_rc: &Rc<RefCell<Option<SharedActorState>>>) {
-        let mut borrow = shared_rc.borrow_mut();
-        let Some(shared) = borrow.as_mut() else {
-            return;
-        };
+    pub(crate) fn reschedule_host_timer(inner_rc: &Rc<RefCell<ActorInner>>) {
+        let mut inner = inner_rc.borrow_mut();
 
-        if shared.is_simulated_clock {
+        if inner.is_simulated_clock {
             return;
         }
 
-        let Some((set_timeout, clear_timeout)) = resolve_host_clock(shared.host_clock.as_ref()) else {
+        let Some((set_timeout, clear_timeout)) = resolve_host_clock(inner.host_clock.as_ref()) else {
             return;
         };
 
         // Cancel existing timer handle if any
-        if let Some(active) = shared.active_timeout.take() {
+        if let Some(active) = inner.active_timeout.take() {
             let _ = clear_timeout.call1(&JsValue::NULL, &active.handle);
         }
 
         // If stopped or done, do not schedule
-        if shared.is_stopped
-            || shared.machine.status == lavi::MachineStatus::Stopped
-            || shared.machine.status == lavi::MachineStatus::Done
-            || shared.machine.is_done()
+        if inner.is_stopped
+            || inner.machine.status == lavi::MachineStatus::Stopped
+            || inner.machine.status == lavi::MachineStatus::Done
+            || inner.machine.is_done()
         {
             return;
         }
 
         // Check if there is an active deadline
-        let Some(deadline) = shared.machine.next_timer_deadline() else {
+        let Some(deadline) = inner.machine.next_timer_deadline() else {
             return;
         };
 
-        let now = shared
+        let now = inner
             .machine
             .clock_millis_fn
             .as_ref()
@@ -2062,82 +1909,50 @@ impl Actor {
 
         let delay_ms = deadline.saturating_sub(now) as f64;
 
-        let shared_clone = shared_rc.clone();
+        let inner_clone = inner_rc.clone();
         let func = Closure::once_into_js(move || {
-            Actor::on_host_timeout(&shared_clone);
+            Actor::on_host_timeout(&inner_clone);
         });
         let delay_val = JsValue::from_f64(delay_ms);
 
         if let Ok(handle) = set_timeout.call2(&JsValue::NULL, &func, &delay_val) {
-            shared.active_timeout = Some(ActiveTimeout {
+            inner.active_timeout = Some(ActiveTimeout {
                 handle,
             });
         }
     }
 
-    fn on_host_timeout(shared_rc: &Rc<RefCell<Option<SharedActorState>>>) {
+    fn on_host_timeout(inner_rc: &Rc<RefCell<ActorInner>>) {
         // Step 1: Pre-clear active_timeout handle so exiting source state doesn't cancel it
         {
-            let mut borrow = shared_rc.borrow_mut();
-            if let Some(shared) = borrow.as_mut() {
-                shared.active_timeout = None;
-            }
-        }
-
-        // Step 2: Create temp actor and tick
-        let mut temp_actor = {
-            let borrow = shared_rc.borrow();
-            let Some(shared) = borrow.as_ref() else {
-                return;
-            };
-            if shared.is_stopped
-                || shared.machine.status == lavi::MachineStatus::Stopped
-                || shared.machine.status == lavi::MachineStatus::Done
-                || shared.machine.is_done()
+            let mut inner = inner_rc.borrow_mut();
+            inner.active_timeout = None;
+            if inner.is_stopped
+                || inner.machine.status == lavi::MachineStatus::Stopped
+                || inner.machine.status == lavi::MachineStatus::Done
+                || inner.machine.is_done()
             {
                 return;
             }
-            Actor {
-                machine: shared.machine.clone(),
-                inspector: shared.inspector.clone(),
-                guards: shared.guards.clone(),
-                actions: shared.actions.clone(),
-                is_stopped: shared.is_stopped,
-                config: JsValue::NULL,
-                is_initialized: shared.is_initialized,
-                shared_state: shared_rc.clone(),
-                tick_override: shared.tick_override.clone(),
-                logger: shared.logger.clone(),
-                logger_holder: shared.logger_holder.clone(),
-                input_js: shared.input_js.clone(),
-                initialization_error: shared.initialization_error.clone(),
-                action_descriptors: shared.action_descriptors.clone(),
-                session_id: shared.session_id.clone(),
-                custom_id: shared.custom_id.clone(),
+            if let Some(dl) = inner.machine.next_timer_deadline() {
+                inner.tick_override.set(Some(dl));
             }
-        };
-
-        let next_deadline = {
-            let borrow = shared_rc.borrow();
-            borrow.as_ref().and_then(|s| s.machine.next_timer_deadline())
-        };
-        if let Some(dl) = next_deadline {
-            temp_actor.tick_override.set(Some(dl));
         }
 
-        let _ = temp_actor.tick();
-
-        let last_err = {
-            let mut borrow = shared_rc.borrow_mut();
-            borrow.as_mut().and_then(|s| s.machine.last_error.take())
+        // Step 2: Tick via Actor wrapper around inner_rc
+        let actor = Actor {
+            inner: inner_rc.clone(),
         };
+        let _ = actor.tick();
+
+        let last_err = inner_rc.borrow_mut().machine.last_error.take();
         if let Some(err_msg) = last_err {
             let js_err = js_sys::Error::new(&err_msg);
-            temp_actor.emit_error(&js_err.into());
+            actor.emit_error(&js_err.into());
         }
 
         // Step 3: Reschedule for next deadline if any
-        Actor::reschedule_host_timer(shared_rc);
+        Actor::reschedule_host_timer(inner_rc);
     }
 }
 
@@ -2306,93 +2121,63 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
 
     // 2. Treat as Machine Config Object (POJO)
     let config = machine_def.clone();
-    let mut inline_guards = IndexMap::new();
-    let mut inline_actions = IndexMap::new();
-    let mut inline_actions_with_effects = IndexMap::new();
-    let mut inline_action_descriptors = IndexMap::new();
-    let mut counter = 0;
-    let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
-    let logger_holder = Rc::new(RefCell::new(None));
-    process_config(
-        &config,
-        &mut inline_guards,
-        &mut inline_actions,
-        &mut inline_actions_with_effects,
-        &mut inline_action_descriptors,
-        0,
-        &mut counter,
-        "",
-        &guards_holder,
-        &logger_holder,
-    );
-    let mut runner = Actor::new(config.clone(), options.clone())?;
-    runner.session_id = next_session_id();
-    if options.is_object() && !options.is_null() {
-        runner.custom_id = js_sys::Reflect::get(&options, &JsValue::from_str("id"))
-            .ok()
-            .and_then(|v| v.as_string());
-    }
-    runner.logger_holder = logger_holder.clone();
-    runner.guards.extend(inline_guards);
-    runner.actions.extend(inline_actions);
-    runner.action_descriptors.extend(inline_action_descriptors);
-    runner.machine.actions_with_effects.extend(inline_actions_with_effects);
+    let runner = Actor::new(config.clone(), options.clone())?;
+    let mut initial_inspect_val = JsValue::UNDEFINED;
+    {
+        let mut inner = runner.inner.borrow_mut();
+        inner.session_id = next_session_id();
+        if options.is_object() && !options.is_null() {
+            inner.custom_id = js_sys::Reflect::get(&options, &JsValue::from_str("id"))
+                .ok()
+                .and_then(|v| v.as_string());
+        }
 
-    configure_logger(&options, &mut runner);
-    parse_and_register_delays(&options, &mut runner.machine);
+        let input_val = if options.is_object() {
+            js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        };
+        if !input_val.is_undefined() {
+            inner.input_js = Some(input_val.clone());
+            inner.machine.input = Some(js_to_value(&input_val));
+        }
 
-    let input_val = if options.is_object() {
-        js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
-    } else {
-        JsValue::UNDEFINED
-    };
-    if !input_val.is_undefined() {
-        runner.input_js = Some(input_val.clone());
-        runner.machine.input = Some(js_to_value(&input_val));
-    }
-
-    if config.is_object() {
-        let context_key = JsValue::from_str("context");
-        let context_val = js_sys::Reflect::get(&config, &context_key).unwrap_or(JsValue::UNDEFINED);
-        if context_val.is_function() {
-            if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
-                let arg_obj = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &input_val);
-                let self_obj = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
-                match func.call1(&JsValue::NULL, &arg_obj) {
-                    Ok(res) => {
-                        runner.machine.context = js_to_value(&res);
-                    }
-                    Err(err) => {
-                        runner.initialization_error = Some(err);
+        if config.is_object() {
+            let context_key = JsValue::from_str("context");
+            let context_val = js_sys::Reflect::get(&config, &context_key).unwrap_or(JsValue::UNDEFINED);
+            if context_val.is_function() {
+                if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+                    let arg_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &input_val);
+                    let self_obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
+                    match func.call1(&JsValue::NULL, &arg_obj) {
+                        Ok(res) => {
+                            inner.machine.context = js_to_value(&res);
+                        }
+                        Err(err) => {
+                            inner.initialization_error = Some(err);
+                        }
                     }
                 }
             }
         }
-    }
 
-    let mut initial_inspect_val = JsValue::UNDEFINED;
-    // Apply common options (inspect, implementations, snapshot)
-    if options.is_object() {
-        let inspect_key = JsValue::from_str("inspect");
-        let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
-        if !inspect_val.is_undefined() && !inspect_val.is_null() {
-             initial_inspect_val = inspect_val;
+        if options.is_object() {
+            let inspect_key = JsValue::from_str("inspect");
+            let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
+            if !inspect_val.is_undefined() && !inspect_val.is_null() {
+                 initial_inspect_val = inspect_val;
+            }
+
+            let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
+            if !context_opt.is_undefined() {
+                inner.machine.context = js_to_value(&context_opt);
+            }
         }
 
-        let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
-        if !context_opt.is_undefined() {
-            runner.machine.context = js_to_value(&context_opt);
-        }
-
-        parse_implementations(&options, &mut runner.guards, &mut runner.actions, &mut runner.machine.actions_with_effects);
+        check_initial_entry_guards(&inner);
     }
-
-    guards_holder.borrow_mut().extend(runner.guards.clone());
-
-    check_initial_entry_guards(&runner);
-    runner.push_shared();
     if !initial_inspect_val.is_undefined() {
         let _ = runner.add_inspector(initial_inspect_val, true);
     }

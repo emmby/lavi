@@ -2299,7 +2299,7 @@ describe('action meta', () => {
     expect(spy).toHaveBeenCalledWith(undefined);
   });
 
-  it.skip('should provide the action with resolved params when they are dynamic', () => {
+  it('should provide the action with resolved params when they are dynamic', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2325,7 +2325,7 @@ describe('action meta', () => {
     });
   });
 
-  it.skip('should resolve dynamic params using context value', () => {
+  it('should resolve dynamic params using context value', () => {
     const spy = vi.fn();
 
     const machine = createMachine(
@@ -2354,7 +2354,7 @@ describe('action meta', () => {
     });
   });
 
-  it.skip('should resolve dynamic params using event value', () => {
+  it('should resolve dynamic params using event value', () => {
     const spy = vi.fn();
 
     const machine = createMachine(

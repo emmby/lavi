@@ -50,27 +50,6 @@
           "ref": "XSTATE_5_FEATURES.md"
         },
         {
-          "title": "should provide the action with resolved params when they are dynamic",
-          "category": "unimplemented-feature",
-          "feature": "dynamic-params",
-          "reason": "Dynamic action parameter resolution functions ({ context, event }) => params are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should resolve dynamic params using context value",
-          "category": "unimplemented-feature",
-          "feature": "dynamic-params",
-          "reason": "Dynamic action parameter resolution functions ({ context, event }) => params are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should resolve dynamic params using event value",
-          "category": "unimplemented-feature",
-          "feature": "dynamic-params",
-          "reason": "Dynamic action parameter resolution functions ({ context, event }) => params are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
           "title": "should provide self",
           "category": "unimplemented-feature",
           "feature": "action-self",

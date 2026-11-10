@@ -7,16 +7,22 @@ use lavi::{IndexMap, IndexMapExt, RuntimeMachine, StateType, Value};
 
 use crate::actions::{
     configure_logger, format_and_resolve_action, parse_and_register_delays, parse_implementations,
-    process_config,
 };
-use crate::actor::{check_initial_entry_guards, create_actor, Actor, Snapshot};
+use crate::actor::{check_initial_entry_guards, create_actor, Actor, ActorInner, Snapshot};
 use crate::value_bridge::{js_to_value, value_to_js};
 
-pub(crate) struct InternalState {
-    pub machine: RuntimeMachine,
-    pub guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
-    pub actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
-    pub action_descriptors: IndexMap<String, JsValue>,
+thread_local! {
+    static CAPTURED_STATE_NODE: RefCell<Option<StateNode>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn try_clone_state_node(val: &JsValue) -> Option<StateNode> {
+    if !val.is_object() || val.is_null() {
+        return None;
+    }
+    let func_val = js_sys::Reflect::get(val, &JsValue::from_str("__capture_state_node")).ok()?;
+    let func = func_val.dyn_into::<js_sys::Function>().ok()?;
+    let _ = func.call0(val).ok()?;
+    CAPTURED_STATE_NODE.with(|slot| slot.borrow_mut().take())
 }
 
 #[wasm_bindgen]
@@ -25,6 +31,7 @@ pub struct StateNode {
     pub(crate) machine: RuntimeMachine,
     pub(crate) path: String,
     pub(crate) guards: IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>,
+    pub(crate) guards_holder: Rc<RefCell<IndexMap<String, Rc<dyn Fn(&Value, &Value, &Option<Value>) -> bool>>>>,
     pub(crate) actions: IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
     pub(crate) action_descriptors: IndexMap<String, JsValue>,
     pub(crate) config: JsValue,
@@ -148,15 +155,11 @@ impl StateNode {
         self.types()
     }
 
-    #[wasm_bindgen(js_name = _get_internal_state)]
-    pub fn _get_internal_state(&self) -> f64 {
-        let state = InternalState {
-            machine: self.machine.clone(),
-            guards: self.guards.clone(),
-            actions: self.actions.clone(),
-            action_descriptors: self.action_descriptors.clone(),
-        };
-        Box::into_raw(Box::new(state)) as usize as f64
+    #[wasm_bindgen(js_name = __capture_state_node)]
+    pub fn __capture_state_node(&self) {
+        CAPTURED_STATE_NODE.with(|slot| {
+            *slot.borrow_mut() = Some(self.clone());
+        });
     }
 
     #[wasm_bindgen(js_name = is_wasm_machine)]
@@ -303,6 +306,7 @@ pub(crate) fn compute_history_value_obj(
                             machine: machine.clone(),
                             path: target_path,
                             guards: guards.clone(),
+                            guards_holder: Rc::new(RefCell::new(guards.clone())),
                             actions: actions.clone(),
                             action_descriptors: action_descriptors.clone(),
                             config: config.clone(),
@@ -446,7 +450,18 @@ impl StateNode {
     pub fn provide(&self, implementations: JsValue, context: Option<JsValue>) -> Result<StateNode, JsValue> {
          let mut new_machine = self.clone_machine(); 
          // Parse implementations and merge
-         parse_implementations(&implementations, &mut new_machine.guards, &mut new_machine.actions, &mut new_machine.machine.actions_with_effects);
+         parse_implementations(
+             &implementations,
+             &mut new_machine.guards,
+             &mut new_machine.actions,
+             &mut new_machine.machine.actions_with_effects,
+             &mut new_machine.action_descriptors,
+             &new_machine.logger_holder,
+         );
+         new_machine
+             .guards_holder
+             .borrow_mut()
+             .extend(new_machine.guards.clone());
          parse_and_register_delays(&implementations, &mut new_machine.machine);
 
          // Handle context override (second argument)
@@ -463,6 +478,7 @@ impl StateNode {
             machine: self.machine.clone(),
             path: self.path.clone(),
             guards: self.guards.clone(),
+            guards_holder: self.guards_holder.clone(),
             actions: self.actions.clone(),
             action_descriptors: self.action_descriptors.clone(),
             config: self.config.clone(),
@@ -866,22 +882,44 @@ impl SetupObject {
     pub fn create_wasm_machine(&self, val: JsValue) -> Result<StateNode, JsValue> {
          // Create the inner machine using Actor constructor logic
          let runner = Actor::new(val.clone(), JsValue::UNDEFINED)?;
-         // Clone the runtime machine to modify it (inject schemas)
-         let mut runtime_machine = runner.machine.clone();
+         let (
+             mut runtime_machine,
+             mut guards,
+             guards_holder,
+             mut actions,
+             mut action_descriptors,
+             logger_holder,
+         ) = {
+             let inner = runner.inner.borrow();
+             (
+                 inner.machine.clone(),
+                 inner.guards.clone(),
+                 inner.guards_holder.clone(),
+                 inner.actions.clone(),
+                 inner.action_descriptors.clone(),
+                 inner.logger_holder.clone(),
+             )
+         };
          let schemas_key = JsValue::from_str("schemas");
          let schemas_val = js_sys::Reflect::get(&self.config, &schemas_key).unwrap_or(JsValue::UNDEFINED);
          if !schemas_val.is_undefined() {
              let schemas = js_to_value(&schemas_val);
              if schemas != Value::Null {
                  // Overwrite types with schemas (or merge if needed, but usually one source)
-                 runtime_machine.definition.types = Some(schemas);
+                 Rc::make_mut(&mut runtime_machine.definition).types = Some(schemas);
              }
          }
 
-         let mut guards = runner.guards.clone();
-         let mut actions = runner.actions.clone();
          // Parse config
-         parse_implementations(&self.config, &mut guards, &mut actions, &mut runtime_machine.actions_with_effects);
+         parse_implementations(
+             &self.config,
+             &mut guards,
+             &mut actions,
+             &mut runtime_machine.actions_with_effects,
+             &mut action_descriptors,
+             &logger_holder,
+         );
+         guards_holder.borrow_mut().extend(guards.clone());
          parse_and_register_delays(&self.config, &mut runtime_machine);
          let machine = runtime_machine;
 
@@ -889,10 +927,11 @@ impl SetupObject {
              machine,
              path: "".to_string(),
              guards,
+             guards_holder,
              actions,
-             action_descriptors: runner.action_descriptors.clone(),
+             action_descriptors,
              config: val,
-             logger_holder: runner.logger_holder.clone(),
+             logger_holder,
          })
     }
 }
@@ -916,36 +955,44 @@ impl StateNode {
          } else {
              None
          };
-         let mut runner = Actor { 
-            machine: self.machine.clone(), 
+         let mut inner = ActorInner {
+            machine: self.machine.clone(),
             inspector: None,
+            inspectors: Vec::new(),
+            subscribers: Vec::new(),
             guards: self.guards.clone(),
+            guards_holder: self.guards_holder.clone(),
             actions: self.actions.clone(),
-            is_stopped: false,
+            action_descriptors: self.action_descriptors.clone(),
             config: self.config.clone(),
+            is_stopped: false,
             is_initialized: false,
-            shared_state: Rc::new(RefCell::new(None)),
+            is_in_tick: false,
             tick_override: tick_override.clone(),
+            host_clock: None,
+            is_simulated_clock: false,
+            active_timeout: None,
+            cached_output: None,
+            is_completed_emitted: false,
             logger: None,
             logger_holder: self.logger_holder.clone(),
             input_js: None,
             initialization_error: None,
-            action_descriptors: self.action_descriptors.clone(),
             session_id,
             custom_id,
         };
-        runner.sync_tracked_entry_exit(&self.config);
+        inner.sync_tracked_entry_exit(&self.config);
 
         let override_cell = tick_override;
-        runner.machine.register_clock(Rc::new(move || {
+        inner.machine.register_clock(Rc::new(move || {
             override_cell.get().unwrap_or_else(|| js_sys::Date::now() as u64)
         }));
-        runner.machine.register_warn_fn(Rc::new(|msg| {
+        inner.machine.register_warn_fn(Rc::new(|msg| {
             web_sys::console::warn_1(&JsValue::from_str(msg));
         }));
 
-        configure_logger(&options, &mut runner);
-        parse_and_register_delays(&options, &mut runner.machine);
+        configure_logger(&options, &mut inner);
+        parse_and_register_delays(&options, &mut inner.machine);
 
         let input_val = if options.is_object() {
             js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
@@ -953,8 +1000,8 @@ impl StateNode {
             JsValue::UNDEFINED
         };
         if !input_val.is_undefined() {
-            runner.input_js = Some(input_val.clone());
-            runner.machine.input = Some(js_to_value(&input_val));
+            inner.input_js = Some(input_val.clone());
+            inner.machine.input = Some(js_to_value(&input_val));
         }
 
         if self.config.is_object() {
@@ -968,10 +1015,10 @@ impl StateNode {
                      let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
                      match func.call1(&JsValue::NULL, &arg_obj) {
                          Ok(res) => {
-                             runner.machine.context = js_to_value(&res);
+                             inner.machine.context = js_to_value(&res);
                          }
                          Err(err) => {
-                             runner.initialization_error = Some(err);
+                             inner.initialization_error = Some(err);
                          }
                      }
                  }
@@ -988,15 +1035,27 @@ impl StateNode {
              }
              let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
              if !context_opt.is_undefined() {
-                 runner.machine.context = js_to_value(&context_opt);
+                 inner.machine.context = js_to_value(&context_opt);
              }
-             runner.restore_snapshot_option(&options)?;
-             parse_implementations(&options, &mut runner.guards, &mut runner.actions, &mut runner.machine.actions_with_effects);
-             runner.apply_clock_option(&options);
+             inner.restore_snapshot_option(&options)?;
+             parse_implementations(
+                 &options,
+                 &mut inner.guards,
+                 &mut inner.actions,
+                 &mut inner.machine.actions_with_effects,
+                 &mut inner.action_descriptors,
+                 &inner.logger_holder,
+             );
+             inner.guards_holder.borrow_mut().extend(inner.guards.clone());
         }
 
-        check_initial_entry_guards(&runner);
-        runner.push_shared();
+        check_initial_entry_guards(&inner);
+        let runner = Actor {
+            inner: Rc::new(RefCell::new(inner)),
+        };
+        if options.is_object() {
+            runner.apply_clock_option(&options);
+        }
         if !initial_inspect_val.is_undefined() {
             let _ = runner.add_inspector(initial_inspect_val, true);
         }
@@ -1007,47 +1066,18 @@ impl StateNode {
 #[wasm_bindgen(js_name = createMachine)]
 pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<StateNode, JsValue> {
     let options_val = options.unwrap_or(JsValue::UNDEFINED);
-    let config_processed = config.clone();
-    let mut inline_guards = IndexMap::new();
-    let mut inline_actions = IndexMap::new();
-    let mut inline_actions_with_effects = IndexMap::new();
-    let mut inline_action_descriptors = IndexMap::new();
-    let mut counter = 0;
-    let guards_holder = Rc::new(RefCell::new(IndexMap::new()));
-    let logger_holder = Rc::new(RefCell::new(None));
-    process_config(
-        &config_processed,
-        &mut inline_guards,
-        &mut inline_actions,
-        &mut inline_actions_with_effects,
-        &mut inline_action_descriptors,
-        0,
-        &mut counter,
-        "",
-        &guards_holder,
-        &logger_holder,
-    );
-    let mut runner = Actor::new(config_processed, options_val.clone())?;
-    runner.logger_holder = logger_holder.clone();
-    runner.guards.extend(inline_guards);
-    runner.actions.extend(inline_actions);
-    runner.action_descriptors.extend(inline_action_descriptors.clone());
-    runner.machine.actions_with_effects.extend(inline_actions_with_effects);
-
-    configure_logger(&options_val, &mut runner);
-    parse_and_register_delays(&options_val, &mut runner.machine);
-    parse_implementations(&options_val, &mut runner.guards, &mut runner.actions, &mut runner.machine.actions_with_effects);
-
-    guards_holder.borrow_mut().extend(runner.guards.clone());
+    let runner = Actor::new(config.clone(), options_val)?;
+    let inner = runner.inner.borrow();
 
     Ok(StateNode {
-        machine: runner.machine,
+        machine: inner.machine.clone(),
         path: "".to_string(),
-        guards: runner.guards,
-        actions: runner.actions,
-        action_descriptors: runner.action_descriptors,
-        config: config.clone(),
-        logger_holder: logger_holder.clone(),
+        guards: inner.guards.clone(),
+        guards_holder: inner.guards_holder.clone(),
+        actions: inner.actions.clone(),
+        action_descriptors: inner.action_descriptors.clone(),
+        config,
+        logger_holder: inner.logger_holder.clone(),
     })
 }
 
@@ -1083,28 +1113,16 @@ pub(crate) struct MachineSession {
 }
 
 pub(crate) fn extract_machine_session(val: &JsValue) -> Result<MachineSession, JsValue> {
-    if val.is_object() {
-        if let Ok(func_val) = js_sys::Reflect::get(val, &JsValue::from_str("_get_internal_state")) {
-            if func_val.is_function() {
-                let func = func_val.dyn_into::<js_sys::Function>()?;
-                let ptr_num_val = func.call0(val)?;
-                let num = js_sys::Number::from(ptr_num_val);
-                let ptr = num.value_of() as usize;
-                if ptr != 0 {
-                    let mut internal = unsafe { Box::from_raw(ptr as *mut InternalState) };
-                    internal.machine.guards.extend(internal.guards.clone());
-                    internal.machine.actions.extend(internal.actions.clone());
-                    let config = js_sys::Reflect::get(val, &JsValue::from_str("config")).unwrap_or(JsValue::UNDEFINED);
-                    return Ok(MachineSession {
-                        machine: internal.machine,
-                        guards: internal.guards,
-                        actions: internal.actions,
-                        action_descriptors: internal.action_descriptors,
-                        config,
-                    });
-                }
-            }
-        }
+    if let Some(mut state_node) = try_clone_state_node(val) {
+        state_node.machine.guards.extend(state_node.guards.clone());
+        state_node.machine.actions.extend(state_node.actions.clone());
+        return Ok(MachineSession {
+            machine: state_node.machine,
+            guards: state_node.guards,
+            actions: state_node.actions,
+            action_descriptors: state_node.action_descriptors,
+            config: state_node.config,
+        });
     }
     let node = create_machine(val.clone(), None)?;
     let mut m = node.machine.clone();

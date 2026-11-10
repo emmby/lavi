@@ -10,7 +10,7 @@ use crate::types::*;
 
 #[derive(Clone)]
 pub struct RuntimeMachine {
-    pub definition: MachineDefinition,
+    pub definition: alloc::rc::Rc<MachineDefinition>,
     pub current_state: StateValue,
     pub context: Value,
     pub input: Option<Value>,
@@ -121,7 +121,7 @@ impl RuntimeMachine {
 
         let input = definition.input.clone();
         let mut machine = Self {
-            definition,
+            definition: alloc::rc::Rc::new(definition),
             current_state: initial_state,
             context,
             input,
@@ -221,6 +221,7 @@ impl RuntimeMachine {
                 if name.starts_with("auto_action_assign_")
                     || name.starts_with("generated_assign_")
                     || name.starts_with("auto_action_enqueue_")
+                    || name.starts_with("auto_action_dynparams_")
                 {
                     None
                 } else {
@@ -235,6 +236,7 @@ impl RuntimeMachine {
                     || gen.action_type.starts_with("auto_action_assign_")
                     || gen.action_type.starts_with("generated_assign_")
                     || gen.action_type.starts_with("auto_action_enqueue_")
+                    || gen.action_type.starts_with("auto_action_dynparams_")
                 {
                     None
                 } else {
@@ -2408,6 +2410,18 @@ impl RuntimeMachine {
             }
             Action::RaiseInvalid(msg) => {
                 effects.error = Some(msg.clone());
+            }
+        }
+        let mut delegated_steps = 0usize;
+        while !effects.delegated_actions.is_empty() && delegated_steps < 64 {
+            delegated_steps += 1;
+            let pending = core::mem::take(&mut effects.delegated_actions);
+            for gen in pending {
+                if let Some(f) = actions_with_effects.get(&gen.action_type) {
+                    f(ctx, event, &gen.params, actions_map, guards_map, delays, current_state, &mut effects);
+                } else if let Some(f) = actions_map.get(&gen.action_type) {
+                    f(ctx, event, &gen.params);
+                }
             }
         }
         for raised in effects.raised {

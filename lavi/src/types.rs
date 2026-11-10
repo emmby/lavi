@@ -370,6 +370,7 @@ pub struct ActionEffects {
     pub delayed_events: Vec<DelayedEvent>,
     pub cancel_ids: Vec<String>,
     pub inspected_actions: Vec<InspectEvent>,
+    pub delegated_actions: Vec<GenericAction>,
     pub error: Option<String>,
 }
 
@@ -380,6 +381,7 @@ impl ActionEffects {
             delayed_events: Vec::new(),
             cancel_ids: Vec::new(),
             inspected_actions: Vec::new(),
+            delegated_actions: Vec::new(),
             error: None,
         }
     }
