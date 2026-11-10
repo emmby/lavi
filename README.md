@@ -459,6 +459,15 @@ If you prefer separate top-level chat threads instead of subagents:
 - Give it a single one-liner:
   > *"Follow `PROCESS.md` to onboard `final.test.ts` across Rust, WASM, and C/C++."* or *"Resolve `TD-6` from `TECH_DEBT.md`."*
 
+## Reporting Issues
+
+Found a bug, a discrepancy with XState v5 behavior, or a language-binding issue? Please [open an issue on GitHub](https://github.com/emmby/lavi/issues/new)!
+
+To help us reproduce and fix it quickly, please include:
+- The **machine JSON definition** (or XState config)
+- The **relevant host code** (registered actions/guards/delays, events sent, and target language/platform)
+- The **expected vs. actual state or snapshot**
+
 ## License & Attribution
 
 - **Lavi Runtime (`lavi`, `lavi-wasm`, `lavi-c-cpp`, `lavi-py`, `lavi-jvm`, `lavi-swift`, `lavi-dart`)**: Licensed under the [MIT License](./LICENSE) (`Copyright (c) 2025-2026 Mike Burton`).
