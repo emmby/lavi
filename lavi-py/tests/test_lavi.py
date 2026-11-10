@@ -432,5 +432,33 @@ def test_context_inspection_and_parameterized_callbacks():
         assert captured_params["action_step"] == "toActive"
 
 
+def test_inspector_events():
+    json_config = json.dumps({
+        "id": "inspectDemo",
+        "initial": "idle",
+        "states": {
+            "idle": {
+                "on": {
+                    "NEXT": "active"
+                }
+            },
+            "active": {}
+        }
+    })
+    events = []
+    with Machine(json_config) as m:
+        @m.inspector()
+        def on_inspect(evt):
+            events.append(evt["type"].as_str())
+
+        m.start()
+        m.send("NEXT")
+        assert m.matches("active")
+        assert "@xstate.event" in events
+        assert "@xstate.microstep" in events
+        assert "@xstate.snapshot" in events
+
+
+
 
 

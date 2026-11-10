@@ -908,6 +908,14 @@ impl StateNode {
     #[wasm_bindgen(js_name = createActor)]
     pub fn create_actor_method(&self, options: JsValue) -> Result<Actor, JsValue> {
          let tick_override = Rc::new(core::cell::Cell::new(None));
+         let session_id = crate::actor::next_session_id();
+         let custom_id = if options.is_object() && !options.is_null() {
+             js_sys::Reflect::get(&options, &JsValue::from_str("id"))
+                 .ok()
+                 .and_then(|v| v.as_string())
+         } else {
+             None
+         };
          let mut runner = Actor { 
             machine: self.machine.clone(), 
             inspector: None,
@@ -923,6 +931,8 @@ impl StateNode {
             input_js: None,
             initialization_error: None,
             action_descriptors: self.action_descriptors.clone(),
+            session_id,
+            custom_id,
         };
         runner.sync_tracked_entry_exit(&self.config);
 
@@ -968,13 +978,13 @@ impl StateNode {
              }
         }
 
+        let mut initial_inspect_val = JsValue::UNDEFINED;
         // Apply options
         if options.is_object() {
              let inspect_key = JsValue::from_str("inspect");
              let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
-             if inspect_val.is_function() {
-                  let func: js_sys::Function = inspect_val.dyn_into().unwrap();
-                  runner.set_inspector(func);
+             if !inspect_val.is_undefined() && !inspect_val.is_null() {
+                  initial_inspect_val = inspect_val;
              }
              let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
              if !context_opt.is_undefined() {
@@ -987,6 +997,9 @@ impl StateNode {
 
         check_initial_entry_guards(&runner);
         runner.push_shared();
+        if !initial_inspect_val.is_undefined() {
+            let _ = runner.add_inspector(initial_inspect_val, true);
+        }
         Ok(runner)
     }
 }
@@ -1032,7 +1045,7 @@ pub fn create_machine(config: JsValue, options: Option<JsValue>) -> Result<State
         path: "".to_string(),
         guards: runner.guards,
         actions: runner.actions,
-        action_descriptors: inline_action_descriptors,
+        action_descriptors: runner.action_descriptors,
         config: config.clone(),
         logger_holder: logger_holder.clone(),
     })

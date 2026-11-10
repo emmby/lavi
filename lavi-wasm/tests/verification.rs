@@ -39,7 +39,8 @@ fn verify_scenario(scenario: JsValue) {
     let inspector = Closure::wrap(Box::new(move |evt: JsValue| {
         let evt_type = js_sys::Reflect::get(&evt, &"type".into()).unwrap();
         if evt_type.as_string().unwrap_or_default() == "@xstate.snapshot" {
-            wasm_snapshots_clone.borrow_mut().push(js_sys::JSON::stringify(&evt).unwrap().as_string().unwrap());
+            let snap = js_sys::Reflect::get(&evt, &"snapshot".into()).unwrap();
+            wasm_snapshots_clone.borrow_mut().push(js_sys::JSON::stringify(&snap).unwrap().as_string().unwrap());
         }
     }) as Box<dyn FnMut(JsValue)>);
 

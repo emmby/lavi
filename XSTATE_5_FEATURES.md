@@ -26,6 +26,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 | `guards.test.ts` | `strict` | 0 | [`tests/upstream/guards.test.ts`](./tests/upstream/guards.test.ts) |
 | `history.test.ts` | `strict` | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
 | `input.test.ts` | `strict` | 10 | [`tests/upstream/input.test.ts`](./tests/upstream/input.test.ts) |
+| `inspect.test.ts` | `strict` | 1 | [`tests/upstream/inspect.test.ts`](./tests/upstream/inspect.test.ts) |
 | `json.test.ts` | `strict` | 1 | [`tests/upstream/json.test.ts`](./tests/upstream/json.test.ts) |
 | `machine.test.ts` | `strict` | 1 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
 | `meta.test.ts` | `strict` | 0 | [`tests/upstream/meta.test.ts`](./tests/upstream/meta.test.ts) |
@@ -35,7 +36,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 | `transition.test.ts` | `strict` | 3 | [`tests/upstream/transition.test.ts`](./tests/upstream/transition.test.ts) |
 
 ### Upstream Suites Not Yet Onboarded
-`invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`, `inspect.test.ts`.
+`invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`.
 
 ---
 
@@ -157,9 +158,9 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
   - [x] Persisting/Restoring state snapshots (`getPersistedSnapshot()`, `createActor(machine, { snapshot })`, `RuntimeMachine::get_snapshot_json`/`restore_from_snapshot_json`, `fsm_get_snapshot_json`/`fsm_restore_snapshot_json`, `lavi::Machine::getSnapshot`/`restoreSnapshot`) `[Rust | WASM | C/C++]`
   - [x] History value persistence and `StateNode` reference revival `[Rust | WASM | C/C++]`
   - [x] Machine definition schema conformity and serialization (`machine.definition`, `JSON.stringify(machine.definition)`) `[Rust | WASM]`
-- [ ] **Inspection & Telemetry**
-  - [x] Basic `inspect` callback (`@xstate.snapshot` and `@xstate.event` emission in `createActor(machine, { inspect })`) `[WASM]`
-  - [ ] Full `@xstate.actor` / `@xstate.microstep` inspection protocol
+- [ ] **Inspection & Telemetry** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/inspect.test.ts) — 11/12 passing in `tests/inspect.test.ts`, strict conformance, 1 multi-actor skip)
+  - [x] `inspect` callback & observer (`createActor(machine, { inspect })`, `actor.system.inspect(fnOrObserver)`, `RuntimeMachine::register_inspector`, `fsm_register_inspector` in `lavi.h`, `registerInspector` in `lavi.hpp`, `register_inspector` / `@machine.inspector()` in Python, `registerInspector` / `onInspect` in Java/Kotlin, `registerInspector` in Swift, and `registerInspector` in Dart) `[Rust | WASM | C/C++]`
+  - [x] Full `@xstate.actor`, `@xstate.event`, `@xstate.action`, `@xstate.microstep`, and `@xstate.snapshot` inspection protocol (including `isMachineSnapshot` type guard) `[Rust | WASM | C/C++]`
 - [x] **Tags** (`tags: [...]`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/tags.test.ts) — 6/6 passing in `tests/tags.test.ts`, 0 skips)
   - [x] Tag definition on atomic, compound, parallel, and root machine states `[Rust | WASM | C/C++]`
   - [x] Tag checking via `snapshot.hasTag(tag)` / `RuntimeMachine::has_tag` / `fsm_has_tag` / `lavi::Machine::hasTag` `[Rust | WASM | C/C++]`

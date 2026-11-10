@@ -76,6 +76,7 @@ public typealias GuardCallback = (_ context: Value, _ event: Value) -> Bool
 public typealias GuardWithParamsCallback = (_ context: Value, _ event: Value, _ params: Value) -> Bool
 public typealias DelayCallback = (_ context: Value, _ event: Value) -> UInt64
 public typealias ClockCallback = () -> UInt64
+public typealias InspectCallback = (_ inspectJson: String) -> Void
 
 /// Virtual clock modeled on XState 5's `SimulatedClock`.
 public final class SimulatedClock {
@@ -195,6 +196,15 @@ private let swiftClockThunk: @convention(c) (
     return machine.clockFn?() ?? 0
 }
 
+private let swiftInspectThunk: @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafeMutableRawPointer?
+) -> Void = { jsonPtr, userData in
+    guard let userData = userData, let jsonPtr = jsonPtr else { return }
+    let machine = Unmanaged<Machine>.fromOpaque(userData).takeUnretainedValue()
+    machine.inspectFn?(String(cString: jsonPtr))
+}
+
 /// Swift wrapper for the Lavi statechart runtime.
 public final class Machine {
     private var machinePtr: OpaquePointer?
@@ -208,6 +218,7 @@ public final class Machine {
     internal var guardsWithParams: [String: GuardWithParamsCallback] = [:]
     internal var delays: [String: DelayCallback] = [:]
     internal var clockFn: ClockCallback?
+    internal var inspectFn: InspectCallback?
     private var simClock: SimulatedClock?
 
     public init(jsonConfig: String, inputJson: String? = nil, clock: SimulatedClock? = nil) {
@@ -232,6 +243,7 @@ public final class Machine {
         guardsWithParams.removeAll()
         delays.removeAll()
         clockFn = nil
+        inspectFn = nil
         simClock = nil
     }
 
@@ -297,6 +309,9 @@ public final class Machine {
             _ = fsm_register_simulated_clock(ptr, simPtr)
         } else if clockFn != nil {
             _ = fsm_register_clock_with_data(ptr, swiftClockThunk, userData)
+        }
+        if inspectFn != nil {
+            _ = fsm_register_inspector(ptr, swiftInspectThunk, userData)
         }
     }
 
@@ -382,6 +397,14 @@ public final class Machine {
         clockFn = nil
         if let ptr = machinePtr, let simPtr = clock.ptr {
             _ = fsm_register_simulated_clock(ptr, simPtr)
+        }
+    }
+
+    public func registerInspector(_ callback: @escaping InspectCallback) {
+        if closed { return }
+        inspectFn = callback
+        if let ptr = machinePtr {
+            _ = fsm_register_inspector(ptr, swiftInspectThunk, selfOpaque)
         }
     }
 

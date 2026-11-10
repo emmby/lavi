@@ -37,6 +37,8 @@ pub struct RuntimeMachine {
     pub actions: IndexMap<String, ActionFunction>,
     pub actions_with_effects: IndexMap<String, ActionWithEffectsFunction>,
     pub logger_fn: Option<LoggerFunction>,
+    pub inspector_fn: Option<InspectFunction>,
+    pub pending_init_actions: Option<Vec<InspectEvent>>,
     pub last_error: Option<String>,
 }
 
@@ -83,6 +85,7 @@ enum ResolveFrame {
 
 struct SelectedTransition<'a> {
     source_path: String,
+    event_type: String,
     t: &'a TransitionDefinition,
     lowest_domain_depth: usize,
     is_targetless: bool,
@@ -145,6 +148,8 @@ impl RuntimeMachine {
             actions: IndexMap::new(),
             actions_with_effects: IndexMap::new(),
             logger_fn: None,
+            inspector_fn: None,
+            pending_init_actions: None,
             last_error: None,
         };
         machine.refresh_status();
@@ -188,6 +193,101 @@ impl RuntimeMachine {
         self.logger_fn = Some(logger);
     }
 
+    pub fn register_inspector(&mut self, inspector: InspectFunction) {
+        self.inspector_fn = Some(inspector);
+    }
+
+    pub fn get_state_node_id(&self, path: &str) -> String {
+        let machine_id = if self.definition.id.is_empty() {
+            "(machine)"
+        } else {
+            &self.definition.id
+        };
+        if path.is_empty() {
+            return machine_id.to_string();
+        }
+        if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
+            if let Some(ref explicit_id) = def.id {
+                return explicit_id.clone();
+            }
+        }
+        format!("{}.{}", machine_id, path)
+    }
+
+    pub(crate) fn make_inspect_action_event(action: &Action) -> Option<InspectEvent> {
+        match action {
+            Action::Assign(_) | Action::RaiseInvalid(_) => None,
+            Action::Named(name) => {
+                if name.starts_with("auto_action_assign_")
+                    || name.starts_with("generated_assign_")
+                    || name.starts_with("auto_action_enqueue_")
+                {
+                    None
+                } else {
+                    Some(InspectEvent::Action {
+                        action: action.clone(),
+                        params: None,
+                    })
+                }
+            }
+            Action::Generic(gen) => {
+                if gen.action_type == "xstate.assign"
+                    || gen.action_type.starts_with("auto_action_assign_")
+                    || gen.action_type.starts_with("generated_assign_")
+                    || gen.action_type.starts_with("auto_action_enqueue_")
+                {
+                    None
+                } else {
+                    Some(InspectEvent::Action {
+                        action: action.clone(),
+                        params: gen.params.clone(),
+                    })
+                }
+            }
+            Action::Raise(_) | Action::DelayedRaise(_) | Action::Cancel(_) | Action::Log(_) => {
+                Some(InspectEvent::Action {
+                    action: action.clone(),
+                    params: None,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn emit_action_inspection(
+        inspector_fn: &Option<InspectFunction>,
+        pending_init_actions: &mut Option<Vec<InspectEvent>>,
+        action: &Action,
+    ) {
+        if inspector_fn.is_none() {
+            return;
+        }
+        let Some(evt) = Self::make_inspect_action_event(action) else {
+            return;
+        };
+        if let Some(ref mut pending) = pending_init_actions {
+            pending.push(evt);
+        } else if let Some(ref insp) = inspector_fn {
+            insp(&evt);
+        }
+    }
+
+    pub(crate) fn emit_extra_inspected_actions(
+        inspector_fn: &Option<InspectFunction>,
+        pending_init_actions: &mut Option<Vec<InspectEvent>>,
+        extra_events: Vec<InspectEvent>,
+    ) {
+        if inspector_fn.is_none() || extra_events.is_empty() {
+            return;
+        }
+        if let Some(ref mut pending) = pending_init_actions {
+            pending.extend(extra_events);
+        } else if let Some(ref insp) = inspector_fn {
+            for evt in &extra_events {
+                insp(evt);
+            }
+        }
+    }
+
     pub fn cancel_delayed_event(&mut self, send_id: &str) {
         self.delayed_events.retain(|e| e.id.as_deref() != Some(send_id));
     }
@@ -214,6 +314,8 @@ impl RuntimeMachine {
         event_payload: &Value,
     ) -> (StateValue, Value, Vec<Action>, IndexMap<String, StateValue>) {
         let mut m = self.clone();
+        m.inspector_fn = None;
+        m.pending_init_actions = None;
         m.current_state = state.clone();
         m.context = context.clone();
         if let Some(hist) = history {
@@ -276,6 +378,8 @@ impl RuntimeMachine {
         input: Option<&Value>,
     ) -> (StateValue, Value, Vec<Action>) {
         let mut m = self.clone();
+        m.inspector_fn = None;
+        m.pending_init_actions = None;
         if let Some(inp) = input.or(self.input.as_ref()) {
             m.input = Some(inp.clone());
         }
@@ -974,7 +1078,12 @@ impl RuntimeMachine {
                                 }
                             }
                         } else {
-                            Self::execute_action_with_effects(
+                            Self::emit_action_inspection(
+                                &self.inspector_fn,
+                                &mut self.pending_init_actions,
+                                act,
+                            );
+                            let extra_inspected = Self::execute_action_with_effects(
                                 &mut self.context,
                                 act,
                                 event_payload,
@@ -988,6 +1097,11 @@ impl RuntimeMachine {
                                 now,
                                 &self.logger_fn,
                                 &mut self.last_error,
+                            );
+                            Self::emit_extra_inspected_actions(
+                                &self.inspector_fn,
+                                &mut self.pending_init_actions,
+                                extra_inspected,
                             );
                         }
                     }
@@ -1025,7 +1139,12 @@ impl RuntimeMachine {
                         }
                     }
                 } else {
-                    Self::execute_action_with_effects(
+                    Self::emit_action_inspection(
+                        &self.inspector_fn,
+                        &mut self.pending_init_actions,
+                        act,
+                    );
+                    let extra_inspected = Self::execute_action_with_effects(
                         &mut self.context,
                         act,
                         event_payload,
@@ -1039,6 +1158,11 @@ impl RuntimeMachine {
                         now,
                         &self.logger_fn,
                         &mut self.last_error,
+                    );
+                    Self::emit_extra_inspected_actions(
+                        &self.inspector_fn,
+                        &mut self.pending_init_actions,
+                        extra_inspected,
                     );
                 }
             }
@@ -1230,7 +1354,7 @@ impl RuntimeMachine {
             } else {
                 Vec::new()
             };
-            for t in candidates {
+            for (_, t) in candidates {
                 if let Some(guard) = &t.guard {
                     let is_allowed = self.evaluate_guard_ast(guard, event_payload, guards).unwrap_or(false);
                     if !is_allowed {
@@ -1247,9 +1371,9 @@ impl RuntimeMachine {
         on_map: &'a IndexMap<String, Vec<TransitionDefinition>>,
         event_type: &str,
         warn_fn: &Option<WarnFunction>,
-    ) -> Vec<&'a TransitionDefinition> {
-        if let Some(exact) = on_map.get(event_type) {
-            return exact.iter().collect();
+    ) -> Vec<(&'a str, &'a TransitionDefinition)> {
+        if let Some((k, exact)) = on_map.get_key_value(event_type) {
+            return exact.iter().map(|t| (k.as_str(), t)).collect();
         }
         if event_type.is_empty() {
             return Vec::new();
@@ -1269,7 +1393,7 @@ impl RuntimeMachine {
         let mut candidates = Vec::new();
         for key in matching_keys {
             if let Some(transitions) = on_map.get(key) {
-                candidates.extend(transitions.iter());
+                candidates.extend(transitions.iter().map(|t| (key.as_str(), t)));
             }
         }
         candidates
@@ -1308,6 +1432,9 @@ impl RuntimeMachine {
         if self.is_initialized {
             self.revive_timers();
             self.is_processing = true;
+            if self.inspector_fn.is_some() {
+                self.pending_init_actions = Some(Vec::new());
+            }
             let mut init_map = IndexMap::new();
             init_map.insert("type".to_string(), Value::String("xstate.init".to_string()));
             if let Some(ref inp) = self.input {
@@ -1317,15 +1444,33 @@ impl RuntimeMachine {
             self.last_received_event = init_event.clone();
             let _ = self.transition_internal("", &init_event, guards, actions, 0, None, None);
             let _ = self.drain_internal_queue(guards, actions);
-            self.is_processing = false;
-            let _ = self.drain_external_queue(guards, actions);
             self.refresh_status();
             self.handle_machine_completion(&init_event, actions, guards, None);
+            let pending_actions = self.pending_init_actions.take().unwrap_or_default();
+            if let Some(ref insp) = self.inspector_fn {
+                insp(&InspectEvent::Event {
+                    event: init_event.clone(),
+                });
+                for act_evt in pending_actions {
+                    insp(&act_evt);
+                }
+                insp(&InspectEvent::Snapshot {
+                    event: init_event.clone(),
+                    state: self.current_state.clone(),
+                    context: self.context.clone(),
+                    status: self.status(),
+                });
+            }
+            self.is_processing = false;
+            let _ = self.drain_external_queue(guards, actions);
             return;
         }
 
         self.is_initialized = true;
         self.is_processing = true;
+        if self.inspector_fn.is_some() {
+            self.pending_init_actions = Some(Vec::new());
+        }
 
         let mut init_map = IndexMap::new();
         init_map.insert("type".to_string(), Value::String("xstate.init".to_string()));
@@ -1410,7 +1555,12 @@ impl RuntimeMachine {
         }
 
         for action in &init_actions_to_run {
-            Self::execute_action_with_effects(
+            Self::emit_action_inspection(
+                &self.inspector_fn,
+                &mut self.pending_init_actions,
+                action,
+            );
+            let extra_inspected = Self::execute_action_with_effects(
                 &mut self.context,
                 action,
                 &init_event,
@@ -1425,12 +1575,32 @@ impl RuntimeMachine {
                 &self.logger_fn,
                 &mut self.last_error,
             );
+            Self::emit_extra_inspected_actions(
+                &self.inspector_fn,
+                &mut self.pending_init_actions,
+                extra_inspected,
+            );
         }
 
         self.check_state_completions();
         if self.is_root_done() {
             self.refresh_status();
             self.handle_machine_completion(&init_event, actions, guards, None);
+            let pending_actions = self.pending_init_actions.take().unwrap_or_default();
+            if let Some(ref insp) = self.inspector_fn {
+                insp(&InspectEvent::Event {
+                    event: init_event.clone(),
+                });
+                for act_evt in pending_actions {
+                    insp(&act_evt);
+                }
+                insp(&InspectEvent::Snapshot {
+                    event: init_event.clone(),
+                    state: self.current_state.clone(),
+                    context: self.context.clone(),
+                    status: self.status(),
+                });
+            }
             self.is_processing = false;
             return;
         }
@@ -1441,11 +1611,27 @@ impl RuntimeMachine {
         // 2. Drain internal events raised during initial entry or initial `always` transitions
         let _ = self.drain_internal_queue(guards, actions);
 
+        self.refresh_status();
+        self.handle_machine_completion(&init_event, actions, guards, None);
+        let pending_actions = self.pending_init_actions.take().unwrap_or_default();
+        if let Some(ref insp) = self.inspector_fn {
+            insp(&InspectEvent::Event {
+                event: init_event.clone(),
+            });
+            for act_evt in pending_actions {
+                insp(&act_evt);
+            }
+            insp(&InspectEvent::Snapshot {
+                event: init_event.clone(),
+                state: self.current_state.clone(),
+                context: self.context.clone(),
+                status: self.status(),
+            });
+        }
+
         // 3. Complete initialization macrostep and drain any reentrant external events
         self.is_processing = false;
         let _ = self.drain_external_queue(guards, actions);
-        self.refresh_status();
-        self.handle_machine_completion(&init_event, actions, guards, None);
     }
 
     pub fn revive_timers(&mut self) {
@@ -2166,7 +2352,7 @@ impl RuntimeMachine {
         now: u64,
         logger_fn: &Option<LoggerFunction>,
         last_error: &mut Option<String>,
-    ) {
+    ) -> Vec<InspectEvent> {
         let mut effects = ActionEffects::new();
         match action {
             Action::Named(name) => {
@@ -2237,6 +2423,7 @@ impl RuntimeMachine {
         if let Some(err) = effects.error {
             *last_error = Some(err);
         }
+        effects.inspected_actions
     }
 
     
@@ -2294,6 +2481,11 @@ impl RuntimeMachine {
                         after_map.insert("type".to_string(), Value::String(evt_type));
                         let after_event = Value::Object(after_map);
 
+                        if let Some(ref insp) = self.inspector_fn {
+                            insp(&InspectEvent::Event {
+                                event: after_event.clone(),
+                            });
+                        }
                         let mut ret = self.transition_internal(
                             "",
                             &after_event,
@@ -2305,6 +2497,16 @@ impl RuntimeMachine {
                         );
                         if let Some(drained) = self.drain_internal_queue(guards, actions) {
                             ret = Some(drained);
+                        }
+                        self.refresh_status();
+                        self.handle_machine_completion(&after_event, actions, guards, None);
+                        if let Some(ref insp) = self.inspector_fn {
+                            insp(&InspectEvent::Snapshot {
+                                event: after_event,
+                                state: self.current_state.clone(),
+                                context: self.context.clone(),
+                                status: self.status(),
+                            });
                         }
                         if let Some(ext_drained) = self.drain_reentrant_external_queue(guards, actions) {
                             ret = Some(ext_drained);
@@ -2321,6 +2523,11 @@ impl RuntimeMachine {
                             .map(|s| s.as_str())
                             .unwrap_or("")
                             .to_string();
+                        if let Some(ref insp) = self.inspector_fn {
+                            insp(&InspectEvent::Event {
+                                event: d_evt.clone(),
+                            });
+                        }
                         let mut ret = self.transition_internal(
                             &e_type,
                             &d_evt,
@@ -2332,6 +2539,16 @@ impl RuntimeMachine {
                         );
                         if let Some(drained) = self.drain_internal_queue(guards, actions) {
                             ret = Some(drained);
+                        }
+                        self.refresh_status();
+                        self.handle_machine_completion(&d_evt, actions, guards, None);
+                        if let Some(ref insp) = self.inspector_fn {
+                            insp(&InspectEvent::Snapshot {
+                                event: d_evt,
+                                state: self.current_state.clone(),
+                                context: self.context.clone(),
+                                status: self.status(),
+                            });
                         }
                         if let Some(ext_drained) = self.drain_reentrant_external_queue(guards, actions) {
                             ret = Some(ext_drained);
@@ -2353,6 +2570,11 @@ impl RuntimeMachine {
                     after_map.insert("type".to_string(), Value::String(evt_type));
                     let after_event = Value::Object(after_map);
 
+                    if let Some(ref insp) = self.inspector_fn {
+                        insp(&InspectEvent::Event {
+                            event: after_event.clone(),
+                        });
+                    }
                     let mut ret = self.transition_internal(
                         "",
                         &after_event,
@@ -2364,6 +2586,16 @@ impl RuntimeMachine {
                     );
                     if let Some(drained) = self.drain_internal_queue(guards, actions) {
                         ret = Some(drained);
+                    }
+                    self.refresh_status();
+                    self.handle_machine_completion(&after_event, actions, guards, None);
+                    if let Some(ref insp) = self.inspector_fn {
+                        insp(&InspectEvent::Snapshot {
+                            event: after_event,
+                            state: self.current_state.clone(),
+                            context: self.context.clone(),
+                            status: self.status(),
+                        });
                     }
                     if let Some(ext_drained) = self.drain_reentrant_external_queue(guards, actions) {
                         ret = Some(ext_drained);
@@ -2382,6 +2614,11 @@ impl RuntimeMachine {
                         .map(|s| s.as_str())
                         .unwrap_or("")
                         .to_string();
+                    if let Some(ref insp) = self.inspector_fn {
+                        insp(&InspectEvent::Event {
+                            event: d_evt.clone(),
+                        });
+                    }
                     let mut ret = self.transition_internal(
                         &e_type,
                         &d_evt,
@@ -2393,6 +2630,16 @@ impl RuntimeMachine {
                     );
                     if let Some(drained) = self.drain_internal_queue(guards, actions) {
                         ret = Some(drained);
+                    }
+                    self.refresh_status();
+                    self.handle_machine_completion(&d_evt, actions, guards, None);
+                    if let Some(ref insp) = self.inspector_fn {
+                        insp(&InspectEvent::Snapshot {
+                            event: d_evt,
+                            state: self.current_state.clone(),
+                            context: self.context.clone(),
+                            status: self.status(),
+                        });
                     }
                     if let Some(ext_drained) = self.drain_reentrant_external_queue(guards, actions) {
                         ret = Some(ext_drained);
@@ -2458,9 +2705,24 @@ impl RuntimeMachine {
             loop_count += 1;
 
             let (e_type, e_payload) = self.external_queue.pop_front().unwrap();
+            if let Some(ref insp) = self.inspector_fn {
+                insp(&InspectEvent::Event {
+                    event: e_payload.clone(),
+                });
+            }
             let mut ret = self.transition_internal(&e_type, &e_payload, guards, actions, 0, None, None);
             if let Some(drained) = self.drain_internal_queue(guards, actions) {
                 ret = Some(drained);
+            }
+            self.refresh_status();
+            self.handle_machine_completion(&e_payload, actions, guards, None);
+            if let Some(ref insp) = self.inspector_fn {
+                insp(&InspectEvent::Snapshot {
+                    event: e_payload,
+                    state: self.current_state.clone(),
+                    context: self.context.clone(),
+                    status: self.status(),
+                });
             }
             if let Some(final_ret) = ret {
                 last_ret = Some(final_ret);
@@ -2547,6 +2809,8 @@ impl RuntimeMachine {
         current_state: &StateValue,
         now: u64,
         logger_fn: &Option<LoggerFunction>,
+        inspector_fn: &Option<InspectFunction>,
+        pending_init_actions: &mut Option<Vec<InspectEvent>>,
         last_error: &mut Option<String>,
         action_collector: &mut Option<&mut Vec<Action>>,
     ) {
@@ -2584,7 +2848,8 @@ impl RuntimeMachine {
                 }
             }
         } else {
-            Self::execute_action_with_effects(
+            Self::emit_action_inspection(inspector_fn, pending_init_actions, act);
+            let extra_inspected = Self::execute_action_with_effects(
                 ctx,
                 act,
                 event_payload,
@@ -2599,6 +2864,7 @@ impl RuntimeMachine {
                 logger_fn,
                 last_error,
             );
+            Self::emit_extra_inspected_actions(inspector_fn, pending_init_actions, extra_inspected);
         }
     }
 
@@ -2798,9 +3064,9 @@ impl RuntimeMachine {
         let mut pending_error: Option<String> = None;
 
         for current_path in all_search_paths {
-            let candidates: Vec<&TransitionDefinition> = if let Some((f_path, f_t)) = current_force {
+            let candidates: Vec<(&str, &TransitionDefinition)> = if let Some((f_path, f_t)) = current_force {
                 if *f_path == current_path {
-                    f_t.iter().collect()
+                    f_t.iter().map(|t| (current_event_type, t)).collect()
                 } else {
                     Vec::new()
                 }
@@ -2826,22 +3092,22 @@ impl RuntimeMachine {
                             if let Ok(delay_num) = delay_str.parse::<u64>() {
                                 if current_path.is_empty() {
                                     if let Some(t_defs) = self.definition.after.get(&Delay::Literal(delay_num)) {
-                                        cands.extend(t_defs.iter());
+                                        cands.extend(t_defs.iter().map(|t| (current_event_type, t)));
                                     }
                                 } else if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &current_path) {
                                     if let Some(t_defs) = def.after.get(&delay_num) {
-                                        cands.extend(t_defs.iter());
+                                        cands.extend(t_defs.iter().map(|t| (current_event_type, t)));
                                     }
                                 }
                             }
                             if cands.is_empty() {
                                 if current_path.is_empty() {
                                     if let Some(t_defs) = self.definition.after.get(&Delay::Named(delay_str.to_string())) {
-                                        cands.extend(t_defs.iter());
+                                        cands.extend(t_defs.iter().map(|t| (current_event_type, t)));
                                     }
                                 } else if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &current_path) {
                                     if let Some(t_defs) = def.named_after.get(delay_str) {
-                                        cands.extend(t_defs.iter());
+                                        cands.extend(t_defs.iter().map(|t| (current_event_type, t)));
                                     }
                                 }
                             }
@@ -2866,7 +3132,7 @@ impl RuntimeMachine {
             };
 
             if !candidates.is_empty() {
-                  for t in candidates {
+                  for (matched_event_type, t) in candidates {
                        if let Some(guard) = &t.guard {
                            match self.evaluate_guard_ast(guard, event_payload, guards) {
                                Ok(is_allowed) => {
@@ -2937,6 +3203,7 @@ impl RuntimeMachine {
                        conflict_regions.push(conflict_check_path.clone());
                        selected_transitions.push(SelectedTransition {
                            source_path: current_path.clone(),
+                           event_type: matched_event_type.to_string(),
                            t,
                            lowest_domain_depth,
                            is_targetless,
@@ -2952,6 +3219,17 @@ impl RuntimeMachine {
         }
 
         if selected_transitions.is_empty() {
+            if !current_event_type.is_empty() && action_collector.is_none() {
+                if let Some(ref insp) = self.inspector_fn {
+                    insp(&InspectEvent::Microstep {
+                        event: event_payload.clone(),
+                        transitions: Vec::new(),
+                        state: self.current_state.clone(),
+                        context: self.context.clone(),
+                        status: self.status(),
+                    });
+                }
+            }
             return None;
         }
 
@@ -3037,7 +3315,15 @@ impl RuntimeMachine {
         let finalized_state = accumulated_state;
         let next_leaves = finalized_state.get_active_paths();
         let final_exited_paths = Self::calculate_exit_paths(&active_leaves, &next_leaves, &selected_transitions);
-        
+        let reenters_root = selected_transitions.iter().any(|st| st.reenters_root);
+        let has_targets = selected_transitions.iter().any(|st| {
+            st.t.reenter || st.t.target.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        });
+        let prev_context = if !has_targets {
+            Some(self.context.clone())
+        } else {
+            None
+        };
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
         macro_rules! exec_action {
             ($act:expr) => {
@@ -3054,6 +3340,8 @@ impl RuntimeMachine {
                     &self.current_state,
                     now,
                     &self.logger_fn,
+                    &self.inspector_fn,
+                    &mut self.pending_init_actions,
                     &mut self.last_error,
                     &mut action_collector,
                 );
@@ -3080,11 +3368,48 @@ impl RuntimeMachine {
               self.completed_states.retain(|s| s != path && !s.starts_with(&format!("{}.", path)));
         }
 
-        let reenters_root = selected_transitions.iter().any(|st| st.reenters_root);
-        let has_targets = selected_transitions.iter().any(|st| {
-            st.t.reenter || st.t.target.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
-        });
         let entered_paths = Self::calculate_entered_paths(&active_leaves, &next_leaves, &selected_transitions);
+        let inspected_transitions: Vec<InspectedTransition> =
+            if action_collector.is_none() && self.inspector_fn.is_some() {
+                selected_transitions
+                    .iter()
+                    .map(|st| {
+                        let source_id = self.get_state_node_id(&st.source_path);
+                        let target_ids = st.t.target.as_ref().and_then(|targets| {
+                            if targets.is_empty() {
+                                None
+                            } else {
+                                let current_search_path = if st.source_path.is_empty() {
+                                    "".to_string()
+                                } else {
+                                    st.source_path.clone()
+                                };
+                                Some(
+                                    targets
+                                        .iter()
+                                        .map(|raw| {
+                                            let target_full = self
+                                                .resolve_target(&current_search_path, raw)
+                                                .unwrap_or_else(|| raw.clone());
+                                            self.get_state_node_id(&target_full)
+                                        })
+                                        .collect(),
+                                )
+                            }
+                        });
+                        InspectedTransition {
+                            source_id,
+                            target_ids,
+                            event_type: st.event_type.clone(),
+                            actions: st.t.actions.clone(),
+                            guard: st.t.guard.clone(),
+                            reenter: st.t.reenter,
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
         drop(selected_transitions);
 
         if reenters_root {
@@ -3193,6 +3518,17 @@ impl RuntimeMachine {
         }
         self.refresh_status();
         self.handle_machine_completion(event_payload, actions, guards, action_collector);
-        Some(changed)
+        if !inspected_transitions.is_empty() {
+            if let Some(ref insp) = self.inspector_fn {
+                insp(&InspectEvent::Microstep {
+                    event: event_payload.clone(),
+                    transitions: inspected_transitions,
+                    state: self.current_state.clone(),
+                    context: self.context.clone(),
+                    status: self.status(),
+                });
+            }
+        }
+        Some(changed || prev_context.as_ref().is_some_and(|prev| &self.context != prev))
     }
 }

@@ -49,6 +49,11 @@ typedef NativeClockWithDataCallback = Uint64 Function(
   Pointer<Void> userData,
 );
 
+typedef NativeInspectCallback = Void Function(
+  Pointer<Utf8> inspectJson,
+  Pointer<Void> userData,
+);
+
 class LaviBindings {
   final DynamicLibrary dylib;
 
@@ -197,6 +202,14 @@ class LaviBindings {
       int Function(Pointer<NativeMachineContext>,
           Pointer<NativeFunction<NativeClockWithDataCallback>>, Pointer<Void>)>(
     'fsm_register_clock_with_data',
+  );
+
+  late final fsmRegisterInspector = dylib.lookupFunction<
+      Int32 Function(Pointer<NativeMachineContext>,
+          Pointer<NativeFunction<NativeInspectCallback>>, Pointer<Void>),
+      int Function(Pointer<NativeMachineContext>,
+          Pointer<NativeFunction<NativeInspectCallback>>, Pointer<Void>)>(
+    'fsm_register_inspector',
   );
 
   late final fsmGetNextDeadline = dylib.lookupFunction<

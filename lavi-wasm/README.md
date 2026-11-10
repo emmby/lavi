@@ -10,7 +10,7 @@ npm install lavi-fsm
 
 ## Features
 
-- **XState v5 API Compatibility**: Exposes `createMachine`, `createActor`, `setup`, `assign`, `raise`, `assertEvent`, and `SimulatedClock`.
+- **XState v5 API Compatibility**: Exposes `createMachine`, `createActor`, `setup`, `assign`, `raise`, `cancel`, `enqueueActions`, `isMachineSnapshot`, `assertEvent`, `inspect` / `actor.system.inspect`, and `SimulatedClock`.
 - **Inline Callback Bridging**: Seamlessly bridges inline JavaScript actions, guards, and `assign` functions (`js_sys::Function`) to named runtime callbacks on the Rust core.
 - **React & React Native Hooks (`lavi-fsm/react`)**: Built-in `useMachine`, `useActor`, `useActorRef`, and `useSelector` hooks powered by React 18+'s `useSyncExternalStore`.
 - **Universal Module Exports**:

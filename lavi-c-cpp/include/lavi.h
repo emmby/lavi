@@ -90,6 +90,10 @@ typedef bool (*fsm_guard_with_params_callback_t)(
 
 typedef uint64_t (*fsm_clock_callback_t)(void);
 typedef uint64_t (*fsm_clock_with_data_callback_t)(void* user_data);
+typedef void (*fsm_inspect_callback_t)(
+    const char* inspect_json,
+    void* user_data
+);
 
 typedef struct SimulatedClock SimulatedClock;
 
@@ -138,6 +142,12 @@ int fsm_register_clock(
 int fsm_register_clock_with_data(
     MachineContext* ctx,
     fsm_clock_with_data_callback_t callback,
+    void* user_data
+);
+
+int fsm_register_inspector(
+    MachineContext* ctx,
+    fsm_inspect_callback_t callback,
     void* user_data
 );
 

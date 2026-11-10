@@ -21,6 +21,9 @@ fun Machine.onGuardWithParams(name: String, block: (context: Value, event: Value
 fun Machine.onClock(block: () -> Long): Machine =
     registerClock(ClockCallback { block() })
 
+fun Machine.onInspect(block: (event: Value) -> Unit): Machine =
+    registerInspector(InspectCallback { evt -> block(evt) })
+
 fun Machine.send(event: String, payload: Map<String, Any?>) {
     send(event, serializePayload(payload))
 }

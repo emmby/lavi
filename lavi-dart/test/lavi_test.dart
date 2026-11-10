@@ -229,5 +229,23 @@ void main() {
 
       machine.close();
     });
+
+    test('supports registerInspector callback', () {
+      final clock = SimulatedClock(initialMs: 0);
+      final machine = Machine(stoplightJson, clock: clock);
+      machine.registerDelay('customDelay', (ctx, evt) => 5000);
+      final inspected = <String>[];
+      machine.registerInspector((json) {
+        inspected.add(json);
+      });
+      machine.start();
+      clock.increment(1000);
+      machine.send('FINISH');
+      expect(machine.isDone, isTrue);
+      expect(inspected.any((e) => e.contains('@xstate.microstep')), isTrue);
+      expect(inspected.any((e) => e.contains('@xstate.snapshot')), isTrue);
+      machine.close();
+      clock.close();
+    });
   });
 }

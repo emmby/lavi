@@ -13,6 +13,7 @@ export const of = (...args: any[]) => args;
 export const toPromise = (actor?: any) => Promise.resolve(actor);
 export const createDoneActorEvent = (id: string, output?: any) => ({ type: `xstate.done.actor.${id}`, output });
 export const resolveReferencedActor = (actor?: any) => actor;
+export const waitFor = (actor?: any, predicate?: any) => Promise.resolve(actor?.getSnapshot?.());
 
 // Mocked types for TS:
 export type ActorRef = any;
@@ -23,3 +24,5 @@ export type Snapshot = any;
 export type EventFrom<T = any> = any;
 export type ExecutableActionsFrom<T = any> = any;
 export type ExecutableSpawnAction = any;
+export type InspectionEvent = any;
+export type InspectedActionEvent = any;

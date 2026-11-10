@@ -386,6 +386,18 @@
           "ref": "XSTATE_5_FEATURES.md"
         }
       ]
+    },
+    "inspect.test.ts": {
+      "status": "strict",
+      "allowed_skips": [
+        {
+          "title": "can inspect communications between actors",
+          "category": "actor-model-unsupported",
+          "feature": "invoke",
+          "reason": "Multi-actor communication via invoke, fromPromise, sendParent, and sendTo is not yet implemented in lavi",
+          "ref": "XSTATE_5_FEATURES.md"
+        }
+      ]
     }
   }
 }

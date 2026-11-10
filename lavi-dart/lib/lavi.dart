@@ -69,6 +69,7 @@ typedef GuardWithParamsCallback = bool Function(
     Value context, Value event, Value params);
 typedef DelayCallback = int Function(Value context, Value event);
 typedef ClockCallback = int Function();
+typedef InspectCallback = void Function(String inspectJson);
 
 /// Virtual clock modeled on XState 5's `SimulatedClock`.
 class SimulatedClock {
@@ -117,6 +118,7 @@ class Machine {
   final Map<String, GuardWithParamsCallback> _guardsWithParams = {};
   final Map<String, DelayCallback> _delays = {};
   ClockCallback? _clockFn;
+  InspectCallback? _inspectFn;
   SimulatedClock? _simClock;
 
   NativeCallable<NativeActionCallback>? _actionCallable;
@@ -125,6 +127,7 @@ class Machine {
   NativeCallable<NativeGuardWithParamsCallback>? _guardWithParamsCallable;
   NativeCallable<NativeDelayCallback>? _delayCallable;
   NativeCallable<NativeClockWithDataCallback>? _clockCallable;
+  NativeCallable<NativeInspectCallback>? _inspectCallable;
 
   Machine(this._jsonConfig, {String? inputJson, SimulatedClock? clock})
       : _inputJson = inputJson,
@@ -231,6 +234,16 @@ class Machine {
     );
   }
 
+  NativeCallable<NativeInspectCallback> _ensureInspectCallable() {
+    return _inspectCallable ??=
+        NativeCallable<NativeInspectCallback>.isolateLocal(
+      (Pointer<Utf8> jsonPtr, Pointer<Void> _) {
+        if (jsonPtr == nullptr) return;
+        _inspectFn?.call(jsonPtr.toDartString());
+      },
+    );
+  }
+
   Pointer<NativeMachineContext> _ensureCreated() {
     if (_closed) return nullptr;
     if (_machinePtr != nullptr) return _machinePtr;
@@ -310,6 +323,10 @@ class Machine {
       b.fsmRegisterClockWithData(
           ptr, _ensureClockCallable().nativeFunction, nullptr);
     }
+    if (_inspectFn != null) {
+      b.fsmRegisterInspector(
+          ptr, _ensureInspectCallable().nativeFunction, nullptr);
+    }
   }
 
   bool start() {
@@ -345,6 +362,8 @@ class Machine {
     _delayCallable = null;
     _clockCallable?.close();
     _clockCallable = null;
+    _inspectCallable?.close();
+    _inspectCallable = null;
 
     _actions.clear();
     _actionsWithParams.clear();
@@ -352,6 +371,7 @@ class Machine {
     _guardsWithParams.clear();
     _delays.clear();
     _clockFn = null;
+    _inspectFn = null;
     _simClock = null;
   }
 
@@ -448,6 +468,15 @@ class Machine {
     _clockFn = null;
     if (_machinePtr != nullptr && clock.rawPointer != nullptr) {
       getBindings().fsmRegisterSimulatedClock(_machinePtr, clock.rawPointer);
+    }
+  }
+
+  void registerInspector(InspectCallback callback) {
+    if (_closed) return;
+    _inspectFn = callback;
+    if (_machinePtr != nullptr) {
+      getBindings().fsmRegisterInspector(
+          _machinePtr, _ensureInspectCallable().nativeFunction, nullptr);
     }
   }
 
