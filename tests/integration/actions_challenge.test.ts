@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createMachine, createActor, assign, raise } from '../../lavi-wasm/pkg-npm/lavi';
+import {
+  createMachine,
+  createActor,
+  assign,
+  raise,
+  setup,
+  enqueueActions,
+  initialTransition,
+  transition
+} from '../../lavi-wasm/pkg-npm/lavi';
 
 describe('Milestone 4 Empirical Actions Challenger Suite', () => {
   // =========================================================================
@@ -995,6 +1004,121 @@ describe('Milestone 4 Empirical Actions Challenger Suite', () => {
       expect(ctx.num).toBe(42);
       expect(ctx.bool).toBe(true);
       expect(ctx.obj).toEqual({ key: 'val2', extra: 100 });
+    });
+
+    it('resolves setup({ actions }) parameterized assign and enqueueActions consistently across initialTransition, transition, pre-start getSnapshot, and live Actor with clean inspection', () => {
+      const inspectedActions: Array<{ type: string; params: unknown }> = [];
+      const customExecuted: Array<{ count: number; tag: string }> = [];
+
+      const machine = setup({
+        actions: {
+          incBy: assign(
+            ({ context }: any, params: { amount: number }) => ({
+              count: context.count + params.amount
+            })
+          ),
+          trackCustom: ({ context }: any, params: { tag: string }) => {
+            customExecuted.push({ count: context.count, tag: params.tag });
+          },
+          batchUpdate: enqueueActions(
+            ({ enqueue }: any, params: { base: number; tag: string }) => {
+              enqueue({ type: 'incBy', params: { amount: params.base } });
+              enqueue({
+                type: 'incBy',
+                params: ({ context }: any) => ({ amount: context.count * 2 })
+              });
+              enqueue({
+                type: 'trackCustom',
+                params: ({ context }: any) => ({
+                  tag: `${params.tag}:${context.count}`
+                })
+              });
+            }
+          )
+        }
+      }).createMachine({
+        initial: 'idle',
+        context: { count: 1 },
+        entry: [
+          { type: 'incBy', params: { amount: 2 } }, // count: 1 + 2 = 3
+          {
+            type: 'batchUpdate',
+            params: ({ context }: any) => ({
+              base: context.count + 1, // 4 -> count becomes 3 + 4 = 7, then 7 + 14 = 21
+              tag: 'init'
+            })
+          }
+        ],
+        states: {
+          idle: {
+            on: {
+              STEP: {
+                target: 'done',
+                actions: [
+                  {
+                    type: 'batchUpdate',
+                    params: ({ event }: any) => ({
+                      base: event.delta,
+                      tag: 'step'
+                    })
+                  }
+                ]
+              }
+            }
+          },
+          done: {}
+        }
+      });
+
+      // 1. Pure initialTransition()
+      const [initState, initActions] = initialTransition(machine) as any;
+      expect(initState.context).toEqual({ count: 21 });
+      expect(initActions.map((a: any) => ({ type: a.type, params: a.params }))).toEqual([
+        { type: 'trackCustom', params: { tag: 'init:21' } }
+      ]);
+
+      // 2. Pure transition()
+      const [nextState, nextActions] = transition(machine, initState, {
+        type: 'STEP',
+        delta: 4 // 21 + 4 = 25, then 25 + 50 = 75
+      }) as any;
+      expect(nextState.context).toEqual({ count: 75 });
+      expect(nextActions.map((a: any) => ({ type: a.type, params: a.params }))).toEqual([
+        { type: 'trackCustom', params: { tag: 'step:75' } }
+      ]);
+
+      // 3. Pre-start actor.getSnapshot() (evaluates initial assign actions without running side-effects)
+      const actor = createActor(machine, {
+        inspect: (inspEvent: any) => {
+          if (inspEvent.type === '@xstate.action') {
+            inspectedActions.push({
+              type: inspEvent.action.type,
+              params: inspEvent.action.params
+            });
+          }
+        }
+      });
+      expect(actor.getSnapshot().context).toEqual({ count: 21 });
+      expect(customExecuted).toEqual([]);
+      expect(inspectedActions).toEqual([]);
+
+      // 4. Live actor.start() and actor.send()
+      actor.start();
+      expect(actor.getSnapshot().context).toEqual({ count: 21 });
+      expect(customExecuted).toEqual([{ count: 21, tag: 'init:21' }]);
+
+      actor.send({ type: 'STEP', delta: 4 });
+      expect(actor.getSnapshot().context).toEqual({ count: 75 });
+      expect(customExecuted).toEqual([
+        { count: 21, tag: 'init:21' },
+        { count: 75, tag: 'step:75' }
+      ]);
+
+      // Only custom actions should be emitted to @xstate.action (never assign or enqueueActions, and never duplicated)
+      expect(inspectedActions).toEqual([
+        { type: 'trackCustom', params: { tag: 'init:21' } },
+        { type: 'trackCustom', params: { tag: 'step:75' } }
+      ]);
     });
   });
 });

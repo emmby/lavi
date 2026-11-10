@@ -298,7 +298,6 @@ impl ActorInner {
         if !config.is_object() || config.is_null() {
             return;
         }
-        let mut counter = 0u32;
         let mut stack: Vec<(JsValue, String)> = vec![(config.clone(), String::new())];
         while let Some((node_val, path)) = stack.pop() {
             if !node_val.is_object() || node_val.is_null() {
@@ -311,18 +310,18 @@ impl ActorInner {
                 "entry",
                 path_label,
                 &mut self.actions,
-                &mut counter,
             );
             let mut exit_actions = extract_unprocessed_fn_actions(
                 &node_obj,
                 "exit",
                 path_label,
                 &mut self.actions,
-                &mut counter,
             );
             if path.is_empty() {
                 if !entry_actions.is_empty() || !exit_actions.is_empty() {
                     let root_def = Rc::make_mut(&mut self.machine.definition);
+                    entry_actions.retain(|a| !root_def.entry.contains(a));
+                    exit_actions.retain(|a| !root_def.exit.contains(a));
                     if !entry_actions.is_empty() {
                         entry_actions.append(&mut root_def.entry);
                         root_def.entry = entry_actions;
@@ -335,6 +334,8 @@ impl ActorInner {
             } else if !entry_actions.is_empty() || !exit_actions.is_empty() {
                 let root_def = Rc::make_mut(&mut self.machine.definition);
                 if let Some(def) = get_state_def_mut(&mut root_def.states, &path) {
+                    entry_actions.retain(|a| !def.entry.contains(a));
+                    exit_actions.retain(|a| !def.exit.contains(a));
                     if !entry_actions.is_empty() {
                         entry_actions.append(&mut def.entry);
                         def.entry = entry_actions;
@@ -859,6 +860,9 @@ impl Actor {
                             } else {
                                 name.clone()
                             };
+                            if resolved_type == "xstate.assign" || resolved_type == "xstate.enqueueActions" {
+                                return;
+                            }
                             let resolved_params = if let Some(p) = params {
                                 value_to_js(p)
                             } else if let Some(desc) = desc_opt {
@@ -1220,24 +1224,7 @@ impl Actor {
 
         if !active_machine.is_started && !is_initialized {
             active_machine.inspector_fn = None;
-            let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
-            snapshot_actions.insert(
-                "__lavi_snapshot_mode__".to_string(),
-                Rc::new(|_, _, _| {}),
-            );
-            for (k, v) in &actions {
-                let is_assign = k.starts_with("generated_assign_")
-                    || k.starts_with("auto_action_assign_")
-                    || action_descriptors
-                        .get(k)
-                        .and_then(|d| js_sys::Reflect::get(d, &JsValue::from_str("actionType")).ok())
-                        .and_then(|t| t.as_string())
-                        .as_deref()
-                        == Some("xstate.assign");
-                if is_assign {
-                    snapshot_actions.insert(k.clone(), v.clone());
-                }
-            }
+            let snapshot_actions = Self::build_snapshot_actions(&actions, &action_descriptors);
             active_machine.start(&guards, &snapshot_actions);
         }
         let machine_ref = &active_machine;
@@ -1726,6 +1713,44 @@ impl Actor {
         guards_holder.borrow_mut().extend(guards.clone());
     }
 
+    fn build_snapshot_actions(
+        actions: &IndexMap<String, lavi::ActionFunction>,
+        action_descriptors: &IndexMap<String, JsValue>,
+    ) -> IndexMap<String, lavi::ActionFunction> {
+        let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
+        snapshot_actions.insert(
+            "__lavi_snapshot_mode__".to_string(),
+            Rc::new(|_, _, _| {}),
+        );
+        for (k, v) in actions {
+            let is_assign = k.starts_with("generated_assign_")
+                || k.starts_with("auto_action_assign_")
+                || action_descriptors
+                    .get(k)
+                    .and_then(|d| js_sys::Reflect::get(d, &JsValue::from_str("actionType")).ok())
+                    .and_then(|t| t.as_string())
+                    .as_deref()
+                    == Some("xstate.assign");
+            if is_assign {
+                snapshot_actions.insert(k.clone(), v.clone());
+            }
+        }
+        for (k, d) in action_descriptors {
+            let is_enqueue = js_sys::Reflect::get(d, &JsValue::from_str("actionType"))
+                .ok()
+                .and_then(|t| t.as_string())
+                .as_deref()
+                == Some("xstate.enqueueActions");
+            if is_enqueue {
+                snapshot_actions.insert(
+                    format!("__lavi_enqueue_{}", k),
+                    Rc::new(|_, _, _| {}),
+                );
+            }
+        }
+        snapshot_actions
+    }
+
     #[wasm_bindgen(js_name = getPersistedSnapshot)]
     pub fn get_persisted_snapshot(&self) -> Result<JsValue, JsValue> {
         let inner = self.inner.borrow();
@@ -1736,25 +1761,7 @@ impl Actor {
         let machine_ref = if !active_machine.is_started && !is_initialized {
             let mut m = active_machine.clone();
             m.inspector_fn = None;
-            let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
-            snapshot_actions.insert(
-                "__lavi_snapshot_mode__".to_string(),
-                Rc::new(|_, _, _| {}),
-            );
-            for (k, v) in &inner.actions {
-                let is_assign = k.starts_with("generated_assign_")
-                    || k.starts_with("auto_action_assign_")
-                    || inner
-                        .action_descriptors
-                        .get(k)
-                        .and_then(|d| js_sys::Reflect::get(d, &JsValue::from_str("actionType")).ok())
-                        .and_then(|t| t.as_string())
-                        .as_deref()
-                        == Some("xstate.assign");
-                if is_assign {
-                    snapshot_actions.insert(k.clone(), v.clone());
-                }
-            }
+            let snapshot_actions = Self::build_snapshot_actions(&inner.actions, &inner.action_descriptors);
             m.start(&inner.guards, &snapshot_actions);
             preview = m;
             &preview
