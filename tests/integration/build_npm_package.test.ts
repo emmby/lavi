@@ -7,19 +7,34 @@ import {
 } from '../../scripts/build-npm-package.mjs';
 
 describe('build-npm-package (lavi-fsm)', () => {
-  it('generates lavi-fsm package.json with node, bundler, and web conditional exports', () => {
+  it('generates lavi-fsm package.json with node, bundler, web, react-native, and react conditional exports', () => {
     const manifest: any = createNpmPackageManifest('0.1.0');
     expect(manifest.name).toBe('lavi-fsm');
     expect(manifest.version).toBe('0.1.0');
     expect(manifest.main).toBe('./node/lavi.js');
     expect(manifest.module).toBe('./bundler/lavi.js');
+    expect(manifest['react-native']).toBe('./react-native/lavi.js');
     expect(manifest.types).toBe('./node/lavi.d.ts');
     expect(manifest.exports['.']).toEqual({
       types: './node/lavi.d.ts',
+      'react-native': './react-native/lavi.js',
       node: './node/lavi.js',
       browser: './bundler/lavi.js',
       import: './bundler/lavi.js',
       default: './node/lavi.js',
+    });
+    expect(manifest.exports['./react']).toEqual({
+      types: './react/index.d.ts',
+      'react-native': './react/index.react-native.js',
+      node: './react/index.cjs',
+      browser: './react/index.js',
+      import: './react/index.js',
+      default: './react/index.cjs',
+    });
+    expect(manifest.exports['./react-native']).toEqual({
+      types: './react-native/lavi.d.ts',
+      import: './react-native/lavi.js',
+      default: './react-native/lavi.js',
     });
     expect(manifest.exports['./web']).toEqual({
       types: './web/lavi.d.ts',

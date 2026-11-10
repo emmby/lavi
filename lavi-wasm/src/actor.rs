@@ -729,6 +729,11 @@ impl Actor {
                 "__lavi_snapshot_mode__".to_string(),
                 Rc::new(|_, _, _| {}),
             );
+            for (k, v) in &self.actions {
+                if k.starts_with("generated_assign_") || k.starts_with("auto_action_assign_") {
+                    snapshot_actions.insert(k.clone(), v.clone());
+                }
+            }
             active_machine.start(&guards, &snapshot_actions);
         }
         let machine_ref = &active_machine;
@@ -1293,6 +1298,65 @@ impl Actor {
         self.clone()
     }
 
+    #[wasm_bindgen(js_name = __resumeAfterCleanup)]
+    pub fn resume_after_cleanup(&mut self) {
+        self.pull_shared();
+        if !self.is_initialized
+            || self.machine.is_done()
+            || self.machine.status == lavi::MachineStatus::Done
+        {
+            return;
+        }
+        self.is_stopped = false;
+        self.machine.is_started = true;
+        self.machine.status = lavi::MachineStatus::Active;
+        self.machine.revive_timers();
+        self.push_shared();
+        Actor::reschedule_host_timer(&self.shared_state);
+    }
+
+    #[wasm_bindgen(js_name = __syncImplementations)]
+    pub fn sync_implementations(&mut self, machine_or_logic: JsValue, options: JsValue) {
+        self.pull_shared();
+        if machine_or_logic.is_object() && !machine_or_logic.is_null() {
+            if let Ok(func_val) = js_sys::Reflect::get(
+                &machine_or_logic,
+                &JsValue::from_str("_get_internal_state"),
+            ) {
+                if let Ok(func) = func_val.dyn_into::<js_sys::Function>() {
+                    if let Ok(ptr_num_val) = func.call0(&machine_or_logic) {
+                        let ptr = js_sys::Number::from(ptr_num_val).value_of() as usize;
+                        if ptr != 0 {
+                            let internal = unsafe { Box::from_raw(ptr as *mut InternalState) };
+                            self.guards.extend(internal.guards);
+                            self.actions.extend(internal.actions);
+                            self.action_descriptors.extend(internal.action_descriptors);
+                            self.machine
+                                .actions_with_effects
+                                .extend(internal.machine.actions_with_effects);
+                            self.machine.delays.extend(internal.machine.delays);
+                        }
+                    }
+                }
+            }
+        }
+        if options.is_object() && !options.is_null() {
+            parse_implementations(
+                &options,
+                &mut self.guards,
+                &mut self.actions,
+                &mut self.machine.actions_with_effects,
+            );
+            parse_and_register_delays(&options, &mut self.machine);
+            let inspect_val = js_sys::Reflect::get(&options, &JsValue::from_str("inspect"))
+                .unwrap_or(JsValue::UNDEFINED);
+            if let Ok(func) = inspect_val.dyn_into::<js_sys::Function>() {
+                self.set_inspector(func);
+            }
+        }
+        self.push_shared();
+    }
+
     #[wasm_bindgen(js_name = getPersistedSnapshot)]
     pub fn get_persisted_snapshot(&self) -> Result<JsValue, JsValue> {
         let shared_borrow = self.shared_state.borrow();
@@ -1311,7 +1375,17 @@ impl Actor {
         let preview;
         let machine_ref = if !active_machine.is_started && !is_initialized {
             let mut m = active_machine.clone();
-            m.start(&self.guards, &IndexMap::new());
+            let mut snapshot_actions: IndexMap<String, lavi::ActionFunction> = IndexMap::new();
+            snapshot_actions.insert(
+                "__lavi_snapshot_mode__".to_string(),
+                Rc::new(|_, _, _| {}),
+            );
+            for (k, v) in &self.actions {
+                if k.starts_with("generated_assign_") || k.starts_with("auto_action_assign_") {
+                    snapshot_actions.insert(k.clone(), v.clone());
+                }
+            }
+            m.start(&self.guards, &snapshot_actions);
             preview = m;
             &preview
         } else if is_stopped
@@ -1673,7 +1747,7 @@ impl Snapshot {
     }
 }
 
-#[wasm_bindgen(js_name = createActor)]
+#[wasm_bindgen(js_name = createActor, unchecked_return_type = "Actor")]
 pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
     let options = options.unwrap_or(JsValue::UNDEFINED);
 

@@ -72,6 +72,9 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Install Dependencies
+        run: npm ci
+
       - name: Assemble Unified lavi-fsm npm Package
         run: |
           node scripts/build-npm-package.mjs

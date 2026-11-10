@@ -1,0 +1,9 @@
+{
+  "name": "lavi-fsm-react",
+  "private": true,
+  "main": "./index.cjs",
+  "module": "./index.js",
+  "react-native": "./index.react-native.js",
+  "browser": "./index.js",
+  "types": "./index.d.ts"
+}

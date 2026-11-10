@@ -5,7 +5,7 @@
   "scripts": {
     "build": "npm run build:npm && npm run build:web && npm run build:c-cpp && npm run build:py && npm run build:jvm && npm run build:swift && npm run build:dart && npm run build:examples",
     "build:web": "cd lavi-wasm && wasm-pack build --target web --out-name lavi",
-    "build:npm": "cd lavi-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name lavi && ln -sfn ../lavi-wasm/pkg-npm ../node_modules/lavi-fsm",
+    "build:npm": "cd lavi-wasm && wasm-pack build --target nodejs --out-dir pkg-npm --out-name lavi && node ../scripts/build-npm-package.mjs --stage-local && ln -sfn ../lavi-wasm/pkg-npm ../node_modules/lavi-fsm",
     "build:npm-dist": "node scripts/build-npm-package.mjs",
     "build:examples": "ln -sfn ../lavi-wasm/pkg-npm node_modules/lavi-fsm && cargo build --manifest-path examples/rust/Cargo.toml && make -C examples/c && make -C examples/cpp && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/java assemble || gradle -p examples/java assemble) && (test -x ./lavi-jvm/gradlew && ./lavi-jvm/gradlew -p examples/kotlin assemble || gradle -p examples/kotlin assemble) && swift build --package-path examples/swift && cd examples/dart && dart pub get",
     "test": "npm run test:conformance-check && npm run test:native && npm run test:wasm && npm run test:e2e && npm run test:c-cpp && npm run test:py && npm run test:jvm && npm run test:swift && npm run test:dart && npm run test:examples && npm run test:unit",
@@ -33,8 +33,11 @@
     "@playwright/test": "^1.40.0",
     "@vitest/ui": "^4.0.16",
     "ajv": "^8.20.0",
+    "binaryen": "^132.0.0",
     "happy-dom": "^20.0.11",
     "playwright": "^1.40.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "vitest": "^4.0.16",
     "xstate": "^5.25.0"
   }
