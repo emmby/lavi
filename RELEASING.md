@@ -7,10 +7,10 @@ Lavi publishes pre-built binary packages across four primary registries from a s
 | **JavaScript / TypeScript (WASM)** | **npm** | `lavi-fsm` | `npm install lavi-fsm` |
 | **Rust (`#![no_std]`)** | **crates.io** | `lavi` | `cargo add lavi` |
 | **Python (`abi3` wheels)** | **PyPI** | `lavi` | `pip install lavi` / `uv add lavi` |
-| **Java / Kotlin (Fat JNI JAR)** | **Maven Central** | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.2.0")` |
-| **Swift (iOS / macOS / Linux)** | **Swift Package Manager & GitHub Releases** | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.2.0")` |
+| **Java / Kotlin (Fat JNI JAR)** | **Maven Central** | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.3.0")` |
+| **Swift (iOS / macOS / Linux)** | **Swift Package Manager & GitHub Releases** | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.3.0")` |
 | **Dart / Flutter (`dart:ffi`)** | **Git / Workspace (`lavi-dart`)** | `lavi` | `dart pub add lavi --path lavi-dart` |
-| **C / C++ (PlatformIO)** | **PlatformIO Registry** | `emmby/lavi` | `lib_deps = emmby/lavi@^0.2.0` |
+| **C / C++ (PlatformIO)** | **PlatformIO Registry** | `emmby/lavi` | `lib_deps = emmby/lavi@^0.3.0` |
 | **C / C++ (Arduino IDE)** | **Arduino Library Manager & GitHub Releases** | `lavi` / `lavi-embedded.zip` | Arduino Library Manager (`lavi`) or *Add .ZIP Library...* |
 
 ---
@@ -76,8 +76,8 @@ The `build-apple-xcframework` job in `release.yml` runs on `macos-15` to cross-c
 
 1. **Synchronize all workspace manifests to the new version**:
    ```bash
-   node scripts/sync-version.mjs 0.2.0
-   node scripts/sync-version.mjs --check 0.2.0
+   node scripts/sync-version.mjs 0.3.0
+   node scripts/sync-version.mjs --check 0.3.0
    ```
 2. **Run the full test suite locally**:
    ```bash
@@ -87,7 +87,7 @@ The `build-apple-xcframework` job in `release.yml` runs on `macos-15` to cross-c
    Trigger the **Release** workflow manually in GitHub Actions with `dry_run: true` to verify all cross-compiled wheels, WASM bundles, and Maven Central bundles build cleanly before tagging.
 4. **Commit, tag, and push**:
    ```bash
-   git commit -am "chore(release): v0.2.0"
-   git tag v0.2.0
+   git commit -am "chore(release): v0.3.0"
+   git tag v0.3.0
    git push origin main --tags
    ```
