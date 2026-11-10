@@ -10,6 +10,7 @@ Lavi publishes pre-built binary packages across four primary registries from a s
 | **Java / Kotlin (Fat JNI JAR)** | **Maven Central** | `io.github.emmby:lavi` | `implementation("io.github.emmby:lavi:0.2.0")` |
 | **Swift (iOS / macOS / Linux)** | **Swift Package Manager & GitHub Releases** | `Lavi` / `LaviFFI.xcframework.zip` | `.package(url: "https://github.com/emmby/lavi.git", from: "0.2.0")` |
 | **Dart / Flutter (`dart:ffi`)** | **Git / Workspace (`lavi-dart`)** | `lavi` | `dart pub add lavi --path lavi-dart` |
+| **C# / .NET (`net8.0`)** | **Git / Workspace (`lavi-csharp`)** | `Lavi` | `dotnet add reference lavi-csharp/Lavi/Lavi.csproj` |
 | **C / C++ (PlatformIO)** | **PlatformIO Registry** | `emmby/lavi` | `lib_deps = emmby/lavi@^0.2.0` |
 | **C / C++ (Arduino IDE)** | **Arduino Library Manager & GitHub Releases** | `lavi` / `lavi-embedded.zip` | Arduino Library Manager (`lavi`) or *Add .ZIP Library...* |
 

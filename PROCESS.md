@@ -35,7 +35,7 @@ This document defines the autonomous workflow for implementing features and pass
 - **Working on Suites Currently Marked `"legacy-baseline"` (`TD-1`..`TD-3`)**:
   If your assigned feature lives inside a test file still marked `"status": "legacy-baseline"` in `tests/conformance-manifest.json` (such as `tests/after.test.ts` or `tests/actions.test.ts`), its `legacy_baseline_sha256` lock will reject any ad-hoc edits. You must either complete that file's graduation task (`TD-1`, `TD-2`, or `TD-3` in [`TECH_DEBT.md`](./TECH_DEBT.md)) first so it matches `tests/upstream/<filename>.test.ts` under `"status": "strict"`, or add your feature coverage in a new strict test / native Rust + C/C++ suite while keeping the frozen legacy file untouched.
 
-## 3. Cross-Target Implementation (Rust $\rightarrow$ WASM $\rightarrow$ C/C++ $\rightarrow$ Python $\rightarrow$ Java/Kotlin $\rightarrow$ Swift $\rightarrow$ Dart)
+## 3. Cross-Target Implementation (Rust $\rightarrow$ WASM $\rightarrow$ C/C++ $\rightarrow$ Python $\rightarrow$ Java/Kotlin $\rightarrow$ Swift $\rightarrow$ Dart $\rightarrow$ C#)
 Statechart features apply across the core engine and its target language bindings:
 
 1. **Core Portable Engine (`lavi`)**:
@@ -54,9 +54,9 @@ Statechart features apply across the core engine and its target language binding
 5. **Java & Kotlin Adapter (`lavi-jvm`)**:
    - Expose new runtime capabilities in JNI (`lavi-jvm/src/lib.rs`), Java (`lavi-jvm/src/main/java/io/lavi/Machine.java`), and Kotlin (`lavi-jvm/src/main/kotlin/io/lavi/MachineExtensions.kt`).
    - Run `npm run test:jvm` to verify both Java and Kotlin JUnit test suites.
-6. **Swift Adapter (`lavi-swift`) & Dart / Flutter Adapter (`lavi-dart`)**:
-   - When new C ABI capabilities are added in `lavi.h`, expose them in Swift (`lavi-swift/Sources/Lavi/Lavi.swift`) and Dart (`lavi-dart/lib/src/bindings.dart` & `lavi-dart/lib/lavi.dart`).
-   - Run `npm run test:swift` and `npm run test:dart` to verify both test suites.
+6. **Swift Adapter (`lavi-swift`), Dart / Flutter Adapter (`lavi-dart`) & C# / .NET Adapter (`lavi-csharp`)**:
+   - When new C ABI capabilities are added in `lavi.h`, expose them in Swift (`lavi-swift/Sources/Lavi/Lavi.swift`), Dart (`lavi-dart/lib/src/bindings.dart` & `lavi-dart/lib/lavi.dart`), and C# (`lavi-csharp/Lavi/NativeMethods.cs` & `lavi-csharp/Lavi/Machine.cs`).
+   - Run `npm run test:swift`, `npm run test:dart`, and `npm run test:csharp` to verify all three test suites.
 
 ## 4. Handling Legacy Anti-Patterns & Host-Language Boundaries
 - **Spotted Legacy Debt**: If you see existing code using recursion, XState 4 naming (`cond`, `type_`), manual `actorRef.tick()` in tests, or debug hacks in `tests/utils.ts`, **do not copy it** and **do not refactor unrelated files mid-feature**. Append a scoped entry to [`TECH_DEBT.md`](./TECH_DEBT.md).
@@ -74,7 +74,7 @@ Before committing or claiming completion, run the full verification checklist:
    npm run build
    npm test
    ```
-   Verify that all stages (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, `test:py`, `test:jvm`, `test:swift`, `test:dart`, `test:examples`, and `test:unit`) pass.
+   Verify that all stages (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, `test:py`, `test:jvm`, `test:swift`, `test:dart`, `test:csharp`, `test:examples`, and `test:unit`) pass.
 4. **Single-Host Release Packaging Verification (Optional / Pre-Release)**:
    ```bash
    node scripts/build-release-natives.mjs

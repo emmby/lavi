@@ -3,7 +3,7 @@
 This document tracks the feature set of `lavi` against the XState 5 (`statelyai/xstate@5.25.0`) specification across all three targets:
 - **`Rust`**: `#![no_std]` core engine (`lavi`)
 - **`WASM`**: WebAssembly / JavaScript bindings (`lavi-wasm`)
-- **`C/C++`**: Embedded C99 (`lavi.h`) and C++11 (`lavi.hpp`) bindings (`lavi-c-cpp`)
+- **`C/C++`**: Embedded C99 (`lavi.h`) and C++11 (`lavi.hpp`) bindings (`lavi-c-cpp`), also backing `lavi-swift`, `lavi-dart`, and `lavi-csharp`
 
 **Automated Sync Invariant (`npm run test:conformance-check`)**:
 - The **Conformance Test Suites** table below is verified automatically on every `npm test` run against [`tests/conformance-manifest.json`](./tests/conformance-manifest.json) and the actual `it.skip` / `describe.skip` counts in `tests/*.test.ts`.

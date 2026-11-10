@@ -32,7 +32,7 @@
 
 ### Task 1: Native Library Staging & P/Invoke Interop (`stage-csharp-native.mjs`, `NativeLoader.cs`, `NativeMethods.cs`, `Value.cs`, `SimulatedClock.cs`) [flowos: d08611f2-1c29-4955-8142-496acf1c3dd5]
 
-- [ ] **Task 1: Native Library Staging & P/Invoke Interop (stage-csharp-native.mjs, NativeLoader.cs, NativeMethods.cs, Value.cs, SimulatedClock.cs) (~0.5d) [flowos: d08611f2-1c29-4955-8142-496acf1c3dd5]**
+- [x] **Task 1: Native Library Staging & P/Invoke Interop (stage-csharp-native.mjs, NativeLoader.cs, NativeMethods.cs, Value.cs, SimulatedClock.cs) (~0.5d) [flowos: d08611f2-1c29-4955-8142-496acf1c3dd5]**
 
 **Files:**
 - Create: `scripts/stage-csharp-native.mjs`
@@ -142,7 +142,7 @@ git commit -m "feat(csharp): add native staging and P/Invoke Value and Simulated
 
 ### Task 2: Idiomatic `Machine`, `MachineSnapshot`, and xUnit Test Suite (`MachineSnapshot.cs`, `Machine.cs`, `LaviTests.cs`) [flowos: d4dc3f79-c594-4672-bba3-84d0db61e907]
 
-- [ ] **Task 2: Idiomatic Machine, MachineSnapshot, and xUnit Test Suite (MachineSnapshot.cs, Machine.cs, LaviTests.cs) (~0.5d) [flowos: d4dc3f79-c594-4672-bba3-84d0db61e907]**
+- [x] **Task 2: Idiomatic Machine, MachineSnapshot, and xUnit Test Suite (MachineSnapshot.cs, Machine.cs, LaviTests.cs) (~0.5d) [flowos: d4dc3f79-c594-4672-bba3-84d0db61e907]**
 
 **Files:**
 - Create: `lavi-csharp/Lavi/MachineSnapshot.cs`
@@ -222,7 +222,7 @@ git commit -m "feat(csharp): implement Machine, MachineSnapshot, and xUnit test 
 
 ### Task 3: C# Stoplight Example, Version Sync & CI Wiring (`examples/csharp`, `package.json`, `sync-version.mjs`, `ci.yml`) [flowos: 70f28757-52f8-4f30-85ee-b7d6a5300be3]
 
-- [ ] **Task 3: C# Stoplight Example, Version Sync & CI Wiring (examples/csharp, package.json, sync-version.mjs, ci.yml) (~0.25d) [flowos: 70f28757-52f8-4f30-85ee-b7d6a5300be3]**
+- [x] **Task 3: C# Stoplight Example, Version Sync & CI Wiring (examples/csharp, package.json, sync-version.mjs, ci.yml) (~0.25d) [flowos: 70f28757-52f8-4f30-85ee-b7d6a5300be3]**
 
 **Files:**
 - Create: `examples/csharp/StoplightExample.csproj`
@@ -269,7 +269,7 @@ git commit -m "feat(csharp): add stoplight example, version sync, and CI workflo
 
 ### Task 4: Documentation Updates & Full Cross-Target Verification (`README.md`, `RELEASING.md`, `AGENTS.md`, `XSTATE_5_FEATURES.md`) [flowos: fb2238a6-f2db-4a67-b2af-d3a300ed1bbd]
 
-- [ ] **Task 4: Documentation Updates & Full Cross-Target Verification (README.md, RELEASING.md, AGENTS.md, XSTATE_5_FEATURES.md) (~0.25d) [flowos: fb2238a6-f2db-4a67-b2af-d3a300ed1bbd]**
+- [x] **Task 4: Documentation Updates & Full Cross-Target Verification (README.md, RELEASING.md, AGENTS.md, XSTATE_5_FEATURES.md) (~0.25d) [flowos: fb2238a6-f2db-4a67-b2af-d3a300ed1bbd]**
 
 **Files:**
 - Modify: `README.md`
