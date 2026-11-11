@@ -48,7 +48,7 @@ describe('GitHub Actions release pipeline & documentation', () => {
 
     const ci = fs.readFileSync(ciPath, 'utf8');
     expect(ci).toContain('workflow_call:');
-    expect(ci).toContain('swift-actions/setup-swift@v2');
+    expect(ci).toContain('swift --version');
     expect(ci).toContain('dart-lang/setup-dart@v1');
 
     const pages = fs.readFileSync(pagesPath, 'utf8');
