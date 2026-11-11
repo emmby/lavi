@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <PackageId>Lavi</PackageId>
     <Description>Idiomatic C# / .NET bindings for the Lavi XState v5 statechart runtime.</Description>
     <Authors>Mike Burton</Authors>

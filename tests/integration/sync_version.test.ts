@@ -97,8 +97,8 @@ describe('sync-version script', () => {
     expect(updatedCargo).toContain('indexmap = { version = "2.7"');
   });
 
-  it('verifies all live repository manifests are synchronized at 0.3.0', () => {
-    const check = checkVersions({ expectedVersion: 'v0.3.0' });
+  it('verifies all live repository manifests are synchronized at 0.4.0', () => {
+    const check = checkVersions({ expectedVersion: 'v0.4.0' });
     expect(check.mismatches).toEqual([]);
     expect(check.ok).toBe(true);
     expect(Object.keys(readAllManifestVersions()).length).toBe(20);
