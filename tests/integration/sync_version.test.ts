@@ -101,6 +101,6 @@ describe('sync-version script', () => {
     const check = checkVersions({ expectedVersion: 'v0.4.0' });
     expect(check.mismatches).toEqual([]);
     expect(check.ok).toBe(true);
-    expect(Object.keys(readAllManifestVersions()).length).toBe(20);
+    expect(Object.keys(readAllManifestVersions()).length).toBe(21);
   });
 });
