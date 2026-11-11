@@ -198,7 +198,7 @@ private let swiftOutputResolverThunk: @convention(c) (
     UnsafeMutablePointer<CChar>?,
     Int,
     UnsafeMutableRawPointer?
-) -> Int = { statePathPtr, ctxPtr, evtPtr, outBuf, outBufLen, userData in
+) -> Int32 = { statePathPtr, ctxPtr, evtPtr, outBuf, outBufLen, userData in
     guard let userData = userData, let statePathPtr = statePathPtr else { return 0 }
     let machine = Unmanaged<Machine>.fromOpaque(userData).takeUnretainedValue()
     let path = String(cString: statePathPtr)
@@ -214,7 +214,7 @@ private let swiftOutputResolverThunk: @convention(c) (
         outBuf[i] = CChar(bitPattern: utf8[i])
     }
     outBuf[copyLen] = 0
-    return copyLen
+    return Int32(copyLen)
 }
 
 private let swiftInvokeStartThunk: @convention(c) (
