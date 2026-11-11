@@ -464,7 +464,7 @@ System.Diagnostics.Debug.Assert(machine.GetSnapshot().Matches("yellow"));
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **License** | MIT | MIT | MIT / Apache-2.0 | Commercial | GPLv3 / Comm. | MIT / Apache-2.0 | Boost |
 | **Execution Model** | Runtime Engine | Runtime Engine | Code Generator | Code Generator | Framework + Codegen | Rust Macro | C++ Template |
-| **Visual Editor** | Stately Studio | Stately Studio | draw.io / PlantUML | itemis IDE | QM Modeler | — | — |
+| **Visual Editor / Diagrams** | Stately Studio / [`xstate-diagram`](https://github.com/emmby/xstate-diagram) | Stately Studio / [`xstate-diagram`](https://github.com/emmby/xstate-diagram) | draw.io / PlantUML | itemis IDE | QM Modeler | — | — |
 | **Languages** | Rust, JS/TS, C, C++, Py, Java, Kotlin, Swift, Dart, C# | JS, TS | C, C++, C#, Py, JS/TS | C, C++, Java, Py, TS, C# | C, C++ | Rust | C++ |
 | **Embedded Support** | `#![no_std]` + `alloc` ($O(1)$ stack) | — | Zero-heap | Zero-heap | Zero-heap | Zero-heap | Zero-heap |
 | **Runtime / OTA Config** | ✅ | ✅ | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* |
@@ -475,6 +475,23 @@ System.Diagnostics.Debug.Assert(machine.GetSnapshot().Matches("yellow"));
 | **XState v5 Conformance** | [◐ Core HSM (16/19 suites, 0 feature skips)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
 
 *¹ Via QP's manual "Orthogonal Component" pattern. ² Via user-managed timer events rather than declarative `after` delays. ³ The 16/19 suites rating reflects all 16 onboarded XState 5 test suites running with 0 feature skips (`category: unimplemented-feature`); retained skips are strictly limited to non-JS host runtime constraints or upstream-preserved skips.*
+
+## Visualizing Statecharts with `xstate-diagram`
+
+Lavi works seamlessly with **[`xstate-diagram`](https://github.com/emmby/xstate-diagram)** to render your Lavi JSON machine definitions or `lavi-fsm` / XState v5 `createMachine(...)` configs into publication-quality SVG Harel statechart diagrams—via CLI, programmatic API, GitHub Actions, or in the browser:
+
+- **CLI (from JSON or `.ts`/`.js`):**
+  ```bash
+  npx xstate-diagram machine.json -o diagram.svg
+  ```
+- **GitHub Action (auto-update diagrams in CI):**
+  ```yaml
+  - uses: emmby/xstate-diagram@v0.2.0
+    with:
+      input: machine.json
+      output: docs/diagram.svg
+  ```
+- **Interactive Playground:** Paste any Lavi machine config into **[emmby.github.io/xstate-diagram](https://emmby.github.io/xstate-diagram/)** to inspect and export its SVG statechart live.
 
 ## For Contributors: Agentic Development & Parallel Swarming
 
