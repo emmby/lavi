@@ -173,7 +173,7 @@ describe('inspect', () => {
     `);
   });
 
-  it.skip('can inspect communications between actors', async () => {
+  it('can inspect communications between actors', async () => {
     const parentMachine = createMachine({
       initial: 'waiting',
       states: {

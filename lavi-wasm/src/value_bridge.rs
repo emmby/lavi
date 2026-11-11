@@ -1,7 +1,26 @@
+use core::cell::RefCell;
 use lavi::{IndexMap, IndexMapExt};
 use lavi::Value;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
+
+thread_local! {
+    pub(crate) static LIVE_ACTOR_REFS: RefCell<IndexMap<String, JsValue>> = RefCell::new(IndexMap::new());
+}
+
+pub fn register_live_actor_ref(session_id: &str, actor: &JsValue) {
+    if !session_id.is_empty() {
+        LIVE_ACTOR_REFS.with(|m| m.borrow_mut().insert(session_id.to_string(), actor.clone()));
+    }
+}
+
+pub fn unregister_live_actor_ref(id: &str) {
+    if !id.is_empty() {
+        LIVE_ACTOR_REFS.with(|m| {
+            m.borrow_mut().shift_remove(id);
+        });
+    }
+}
 
 pub fn js_to_value(val: &JsValue) -> Value {
     if val.is_null() || val.is_undefined() || val.is_function() {
@@ -22,6 +41,24 @@ pub fn js_to_value(val: &JsValue) -> Value {
         }
         Value::Array(vec)
     } else if val.is_object() {
+        let send_fn = js_sys::Reflect::get(val, &JsValue::from_str("send")).unwrap_or(JsValue::UNDEFINED);
+        if send_fn.is_function() {
+            let sid = js_sys::Reflect::get(val, &JsValue::from_str("sessionId"))
+                .ok()
+                .and_then(|v| v.as_string())
+                .or_else(|| {
+                    js_sys::Reflect::get(val, &JsValue::from_str("id"))
+                        .ok()
+                        .and_then(|v| v.as_string())
+                });
+            if let Some(id_str) = sid {
+                LIVE_ACTOR_REFS.with(|m| m.borrow_mut().insert(id_str.clone(), val.clone()));
+                let mut map = IndexMap::with_capacity(1);
+                map.insert("__xstate_actor_ref__".to_string(), Value::String(id_str));
+                return Value::Object(map);
+            }
+        }
+
         let obj = js_sys::Object::from(val.clone());
         let keys = js_sys::Object::keys(&obj);
         let len = keys.length();
@@ -56,6 +93,26 @@ pub fn value_to_js(val: &Value) -> JsValue {
             js_arr.into()
         }
         Value::Object(map) => {
+            if map.len() == 1 {
+                if let Some(Value::String(sid)) = map.get("__xstate_actor_ref__") {
+                    if let Some(act) = LIVE_ACTOR_REFS.with(|m| m.borrow().get(sid).cloned()) {
+                        return act;
+                    }
+                    if let Some(current_actor) = crate::actions::CURRENT_ACTOR.with(|c| c.borrow().clone()) {
+                        if let Ok(sys) = js_sys::Reflect::get(&current_actor, &JsValue::from_str("system")) {
+                            if let Ok(get_fn) = js_sys::Reflect::get(&sys, &JsValue::from_str("get")) {
+                                if let Ok(f) = get_fn.dyn_into::<js_sys::Function>() {
+                                    if let Ok(act) = f.call1(&sys, &JsValue::from_str(sid)) {
+                                        if !act.is_undefined() && !act.is_null() {
+                                            return act;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let js_obj = js_sys::Object::new();
             for (k, v) in map {
                 let _ = js_sys::Reflect::set(&js_obj, &JsValue::from_str(k), &value_to_js(v));

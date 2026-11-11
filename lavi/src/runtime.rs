@@ -40,6 +40,8 @@ pub struct RuntimeMachine {
     pub inspector_fn: Option<InspectFunction>,
     pub pending_init_actions: Option<Vec<InspectEvent>>,
     pub last_error: Option<String>,
+    pub last_exited_paths: Vec<String>,
+    pub last_entered_paths: Vec<String>,
 }
 
 enum MergeWorkFrame<'a> {
@@ -90,6 +92,45 @@ struct SelectedTransition<'a> {
     lowest_domain_depth: usize,
     is_targetless: bool,
     reenters_root: bool,
+}
+
+impl Default for RuntimeMachine {
+    fn default() -> Self {
+        Self {
+            definition: alloc::rc::Rc::new(MachineDefinition::default()),
+            current_state: StateValue::Parallel(IndexMap::new()),
+            context: Value::Object(IndexMap::new()),
+            input: None,
+            history_value: IndexMap::new(),
+            initial_actions: Vec::new(),
+            is_started: false,
+            is_initialized: false,
+            status: MachineStatus::Active,
+            guards: IndexMap::new(),
+            active_timers: Vec::new(),
+            clock_millis_fn: None,
+            warn_fn: None,
+            is_processing: false,
+            external_queue: alloc::collections::VecDeque::new(),
+            internal_queue: alloc::collections::VecDeque::new(),
+            state_outputs: IndexMap::new(),
+            machine_output: None,
+            output_resolvers: IndexMap::new(),
+            completed_states: alloc::vec::Vec::new(),
+            last_received_event: Value::Null,
+            is_machine_completed: false,
+            delayed_events: Vec::new(),
+            delays: IndexMap::new(),
+            actions: IndexMap::new(),
+            actions_with_effects: IndexMap::new(),
+            logger_fn: None,
+            inspector_fn: None,
+            pending_init_actions: None,
+            last_error: None,
+            last_exited_paths: Vec::new(),
+            last_entered_paths: Vec::new(),
+        }
+    }
 }
 
 impl RuntimeMachine {
@@ -151,6 +192,8 @@ impl RuntimeMachine {
             inspector_fn: None,
             pending_init_actions: None,
             last_error: None,
+            last_exited_paths: Vec::new(),
+            last_entered_paths: Vec::new(),
         };
         machine.refresh_status();
         Ok(machine)
@@ -515,6 +558,22 @@ impl RuntimeMachine {
             }
         }
 
+        // Root invoke -> Action::Generic(xstate.spawnChild)
+        for (inv_idx, inv) in m.definition.invoke.iter().enumerate() {
+            let root_id = if m.definition.id.is_empty() { "(machine)" } else { &m.definition.id };
+            let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, root_id));
+            let mut p_map = IndexMap::new();
+            p_map.insert("id".to_string(), Value::String(invoke_id));
+            p_map.insert("src".to_string(), inv.src.clone());
+            if let Some(ref inp) = inv.input {
+                p_map.insert("input".to_string(), inp.clone());
+            }
+            collected_actions.push(Action::Generic(GenericAction {
+                action_type: "xstate.spawnChild".to_string(),
+                params: Some(Value::Object(p_map)),
+            }));
+        }
+
         // 2. Active paths entry actions and after delays
         let mut seen_paths = Vec::new();
         for path in m.current_state.get_active_paths() {
@@ -551,6 +610,21 @@ impl RuntimeMachine {
                                     collected_actions.push(act.clone());
                                 }
                             }
+                        }
+
+                        // State invoke -> Action::Generic(xstate.spawnChild)
+                        for (inv_idx, inv) in def.invoke.iter().enumerate() {
+                            let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, curr_path));
+                            let mut p_map = IndexMap::new();
+                            p_map.insert("id".to_string(), Value::String(invoke_id));
+                            p_map.insert("src".to_string(), inv.src.clone());
+                            if let Some(ref inp) = inv.input {
+                                p_map.insert("input".to_string(), inp.clone());
+                            }
+                            collected_actions.push(Action::Generic(GenericAction {
+                                action_type: "xstate.spawnChild".to_string(),
+                                params: Some(Value::Object(p_map)),
+                            }));
                         }
 
                         // State after delays -> Action::DelayedRaise
@@ -1024,6 +1098,22 @@ impl RuntimeMachine {
         None
     }
 
+    pub fn get_final_leaf_output(&self) -> Option<Value> {
+        for leaf in self.current_state.get_active_paths() {
+            if let Some(def) = Self::get_state_def_recursive(&self.definition.states, &leaf) {
+                if matches!(def.state_type, StateType::Final) {
+                    if let Some(res) = self.output_resolvers.get(&leaf) {
+                        return Some(res(&self.context, &self.last_received_event));
+                    }
+                    if let Some(out) = self.state_outputs.get(&leaf).or(def.output.as_ref()) {
+                        return Some(out.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn handle_machine_completion(
         &mut self,
         event_payload: &Value,
@@ -1434,6 +1524,8 @@ impl RuntimeMachine {
         if self.is_initialized {
             self.revive_timers();
             self.is_processing = true;
+            self.last_exited_paths.clear();
+            self.last_entered_paths.clear();
             if self.inspector_fn.is_some() {
                 self.pending_init_actions = Some(Vec::new());
             }
@@ -1470,6 +1562,8 @@ impl RuntimeMachine {
 
         self.is_initialized = true;
         self.is_processing = true;
+        self.last_exited_paths.clear();
+        self.last_entered_paths.clear();
         if self.inspector_fn.is_some() {
             self.pending_init_actions = Some(Vec::new());
         }
@@ -1555,6 +1649,7 @@ impl RuntimeMachine {
                 }
             }
         }
+        self.last_entered_paths = seen_paths.clone();
 
         for action in &init_actions_to_run {
             Self::emit_action_inspection(
@@ -1582,6 +1677,12 @@ impl RuntimeMachine {
                 &mut self.pending_init_actions,
                 extra_inspected,
             );
+        }
+
+        if self.last_error.is_some() {
+            self.status = MachineStatus::Stopped;
+            self.is_processing = false;
+            return;
         }
 
         self.check_state_completions();
@@ -1682,11 +1783,31 @@ impl RuntimeMachine {
     }
 
     pub fn resolve_initial_state(definition: &MachineDefinition, initial: &str, collected_actions: &mut Vec<Action>) -> Option<StateValue> {
-        let id_key = initial.strip_prefix('#').unwrap_or(initial);
-        let resolved = if id_key.is_empty() || initial == "#" || id_key == definition.id {
+        let mut clean_init = initial.strip_prefix('#').unwrap_or(initial);
+        while let Some(stripped) = clean_init.strip_prefix("(machine).") {
+            clean_init = stripped;
+        }
+        if !definition.id.is_empty() && definition.id != "(machine)" {
+            let m_prefix = format!("{}.", definition.id);
+            while let Some(stripped) = clean_init.strip_prefix(&m_prefix) {
+                clean_init = stripped;
+            }
+            while let Some(stripped) = clean_init.strip_prefix("(machine).") {
+                clean_init = stripped;
+            }
+        }
+        let raw_clean = initial.strip_prefix('#').unwrap_or(initial);
+        let named_key = format!("{}.{}", definition.id, clean_init);
+        let resolved = if clean_init.is_empty() || initial == "#" || clean_init == definition.id {
             ""
+        } else if let Some(path) = definition.id_map.get(raw_clean) {
+            path.as_str()
+        } else if let Some(path) = definition.id_map.get(clean_init) {
+            path.as_str()
+        } else if let Some(path) = definition.id_map.get(&named_key) {
+            path.as_str()
         } else {
-            definition.id_map.get(id_key).map(|s| s.as_str()).unwrap_or(initial)
+            clean_init
         };
         if resolved.is_empty() {
             if matches!(definition.state_type, StateType::Parallel) {
@@ -1918,41 +2039,80 @@ impl RuntimeMachine {
         if target == "#" || target.is_empty() {
             return Some(String::new());
         }
-        // 1. Check ID map
-        let id_key = target.strip_prefix('#').unwrap_or(target);
-        if id_key == self.definition.id || id_key.is_empty() {
+        let raw_clean = target.strip_prefix('#').unwrap_or(target);
+        if raw_clean == self.definition.id || raw_clean.is_empty() {
             return Some(String::new());
         }
-        if !id_key.starts_with("__") {
-            if let Some(path) = self.definition.id_map.get(id_key) {
+
+        let mut clean_target = raw_clean;
+        while let Some(stripped) = clean_target.strip_prefix("(machine).") {
+            clean_target = stripped;
+        }
+        let machine_id = if self.definition.id.is_empty() {
+            "(machine)"
+        } else {
+            &self.definition.id
+        };
+        if machine_id != "(machine)" {
+            let prefix = format!("{}.", machine_id);
+            while let Some(stripped) = clean_target.strip_prefix(&prefix) {
+                clean_target = stripped;
+            }
+            while let Some(stripped) = clean_target.strip_prefix("(machine).") {
+                clean_target = stripped;
+            }
+        }
+
+        // 1. Check ID map with multiple candidates
+        if !raw_clean.starts_with("__") {
+            if let Some(path) = self.definition.id_map.get(raw_clean) {
+                return Some(path.clone());
+            }
+        }
+        if !clean_target.is_empty() && !clean_target.starts_with("__") {
+            if let Some(path) = self.definition.id_map.get(clean_target) {
+                return Some(path.clone());
+            }
+            let named_key = format!("{}.{}", machine_id, clean_target);
+            if let Some(path) = self.definition.id_map.get(&named_key) {
+                return Some(path.clone());
+            }
+            let anon_key = format!("(machine).{}", clean_target);
+            if let Some(path) = self.definition.id_map.get(&anon_key) {
                 return Some(path.clone());
             }
         }
 
         // 2. Resolve relative to source (ancestors)
-        let mut parts: Vec<&str> = source_path.split('.').collect();
+        let mut parts: Vec<&str> = source_path.split('.').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            parts.push("");
+        }
         while !parts.is_empty() {
-             // Try prefix + target
-             let prefix = parts.join(".");
-             let candidate = if target.starts_with('.') {
-                 format!("{}{}", prefix, target)
-             } else if prefix.is_empty() {
-                 target.to_string()
-             } else {
-                 format!("{}.{}", prefix, target)
-             };
-             if Self::get_state_def_recursive(&self.definition.states, &candidate).is_some() {
-                 return Some(candidate);
-             }
-             // Pop last part and try again
-             parts.pop();
+            let prefix = parts.join(".");
+            let candidate = if clean_target.starts_with('.') {
+                if prefix.is_empty() {
+                    clean_target.strip_prefix('.').unwrap_or(clean_target).to_string()
+                } else {
+                    format!("{}{}", prefix, clean_target)
+                }
+            } else if prefix.is_empty() {
+                clean_target.to_string()
+            } else {
+                format!("{}.{}", prefix, clean_target)
+            };
+            if Self::get_state_def_recursive(&self.definition.states, &candidate).is_some() {
+                return Some(candidate);
+            }
+            parts.pop();
         }
-        
+
         // 3. Try as absolute path from root
-        if Self::get_state_def_recursive(&self.definition.states, target).is_some() {
-            return Some(target.to_string());
+        let clean_root = clean_target.strip_prefix('.').unwrap_or(clean_target);
+        if Self::get_state_def_recursive(&self.definition.states, clean_root).is_some() {
+            return Some(clean_root.to_string());
         }
-        
+
         None
     }
 
@@ -2137,12 +2297,34 @@ impl RuntimeMachine {
                             let mut resolved_directly = false;
 
                             while let Some(init) = &curr_def.initial {
-                                if let Some(next_def) = curr_def.states.get(init) {
+                                let clean_init = init.strip_prefix('#').unwrap_or(init);
+                                let lookup_key = if curr_def.states.contains_key(clean_init) {
+                                    clean_init
+                                } else if curr_def.states.contains_key(init) {
+                                    init.as_str()
+                                } else if let Some(mapped_path) = definition.id_map.get(clean_init).or_else(|| definition.id_map.get(init)) {
+                                    if let Some(pos) = mapped_path.rfind('.') {
+                                        &mapped_path[pos + 1..]
+                                    } else {
+                                        mapped_path.as_str()
+                                    }
+                                } else if let Some(pos) = clean_init.rfind('.') {
+                                    let suffix = &clean_init[pos + 1..];
+                                    if curr_def.states.contains_key(suffix) {
+                                        suffix
+                                    } else {
+                                        clean_init
+                                    }
+                                } else {
+                                    clean_init
+                                };
+
+                                if let Some(next_def) = curr_def.states.get(lookup_key) {
                                     if matches!(next_def.state_type, StateType::Compound) {
-                                        compound_names.push(init.clone());
+                                        compound_names.push(lookup_key.to_string());
                                         curr_def = next_def;
                                     } else if matches!(next_def.state_type, StateType::Atomic | StateType::Final) {
-                                        let mut res = StateValue::Atomic(init.clone());
+                                        let mut res = StateValue::Atomic(lookup_key.to_string());
                                         for name in compound_names.into_iter().rev() {
                                             res = StateValue::Compound(name, Box::new(res));
                                         }
@@ -2151,9 +2333,9 @@ impl RuntimeMachine {
                                         break;
                                     } else {
                                         let full_child_path = if compound_names.len() == 1 {
-                                            format!("{}.{}", current_path, init)
+                                            format!("{}.{}", current_path, lookup_key)
                                         } else {
-                                            format!("{}.{}.{}", current_path, compound_names[1..].join("."), init)
+                                            format!("{}.{}.{}", current_path, compound_names[1..].join("."), lookup_key)
                                         };
                                         let child_parts: Vec<String> =
                                             full_child_path.split('.').map(|s| s.to_string()).collect();
@@ -2457,6 +2639,8 @@ impl RuntimeMachine {
             self.actions.insert(k.clone(), v.clone());
         }
         self.is_processing = true;
+        self.last_exited_paths.clear();
+        self.last_entered_paths.clear();
         let now = self.clock_millis_fn.as_ref().map(|c| c()).unwrap_or(0);
 
         let mut last_ret = None;
@@ -2756,6 +2940,8 @@ impl RuntimeMachine {
         }
 
         self.is_processing = true;
+        self.last_exited_paths.clear();
+        self.last_entered_paths.clear();
         let last_ret = self.drain_reentrant_external_queue(guards, actions);
         self.is_processing = false;
         self.refresh_status();
@@ -2997,6 +3183,11 @@ impl RuntimeMachine {
     ) -> Option<StateValue> {
         if self.status == MachineStatus::Stopped {
             return None;
+        }
+
+        if !self.is_processing {
+            self.last_exited_paths.clear();
+            self.last_entered_paths.clear();
         }
 
         let mut current_event_type = event_type;
@@ -3377,12 +3568,34 @@ impl RuntimeMachine {
                    for action in &def.exit { 
                          exec_action!(action); 
                    }
+                   if let Some(col) = action_collector.as_deref_mut() {
+                       for (inv_idx, inv) in def.invoke.iter().enumerate() {
+                           let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, path));
+                           let mut p_map = IndexMap::new();
+                           p_map.insert("id".to_string(), Value::String(invoke_id));
+                           col.push(Action::Generic(GenericAction {
+                               action_type: "xstate.stopChild".to_string(),
+                               params: Some(Value::Object(p_map)),
+                           }));
+                       }
+                   }
               }
               exited_paths.push(path.clone());
               self.completed_states.retain(|s| s != path && !s.starts_with(&format!("{}.", path)));
         }
 
         let entered_paths = Self::calculate_entered_paths(&active_leaves, &next_leaves, &selected_transitions);
+        for p in &final_exited_paths {
+            if !self.last_exited_paths.contains(p) {
+                self.last_exited_paths.push(p.clone());
+            }
+            self.last_entered_paths.retain(|entry| entry != p && !entry.starts_with(&format!("{}.", p)));
+        }
+        for p in &entered_paths {
+            if !self.last_entered_paths.contains(p) {
+                self.last_entered_paths.push(p.clone());
+            }
+        }
         let inspected_transitions: Vec<InspectedTransition> =
             if action_collector.is_none() && self.inspector_fn.is_some() {
                 selected_transitions
@@ -3430,6 +3643,18 @@ impl RuntimeMachine {
             for action in &self.definition.exit {
                 exec_action!(action);
             }
+            if let Some(col) = action_collector.as_deref_mut() {
+                let root_id = if self.definition.id.is_empty() { "(machine)" } else { &self.definition.id };
+                for (inv_idx, inv) in self.definition.invoke.iter().enumerate() {
+                    let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, root_id));
+                    let mut p_map = IndexMap::new();
+                    p_map.insert("id".to_string(), Value::String(invoke_id));
+                    col.push(Action::Generic(GenericAction {
+                        action_type: "xstate.stopChild".to_string(),
+                        params: Some(Value::Object(p_map)),
+                    }));
+                }
+            }
             self.completed_states.clear();
             self.is_machine_completed = false;
             self.status = MachineStatus::Active;
@@ -3466,6 +3691,22 @@ impl RuntimeMachine {
             for action in &self.definition.entry {
                 exec_action!(action);
             }
+            for (inv_idx, inv) in self.definition.invoke.iter().enumerate() {
+                if let Some(col) = action_collector.as_deref_mut() {
+                    let root_id = if self.definition.id.is_empty() { "(machine)" } else { &self.definition.id };
+                    let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, root_id));
+                    let mut p_map = IndexMap::new();
+                    p_map.insert("id".to_string(), Value::String(invoke_id));
+                    p_map.insert("src".to_string(), inv.src.clone());
+                    if let Some(ref inp) = inv.input {
+                        p_map.insert("input".to_string(), inp.clone());
+                    }
+                    col.push(Action::Generic(GenericAction {
+                        action_type: "xstate.spawnChild".to_string(),
+                        params: Some(Value::Object(p_map)),
+                    }));
+                }
+            }
             for action in &self.definition.initial_actions {
                 exec_action!(action);
             }
@@ -3474,10 +3715,19 @@ impl RuntimeMachine {
         for path in &entered_paths {
             if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
                 for action in &def.entry { exec_action!(action); }
-                for inv in &def.invoke {
-                    if let Some(src) = inv.src.as_string() {
-                        let act = Action::Named(src.to_string());
-                        exec_action!(&act);
+                for (inv_idx, inv) in def.invoke.iter().enumerate() {
+                    if let Some(col) = action_collector.as_deref_mut() {
+                        let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, path));
+                        let mut p_map = IndexMap::new();
+                        p_map.insert("id".to_string(), Value::String(invoke_id));
+                        p_map.insert("src".to_string(), inv.src.clone());
+                        if let Some(ref inp) = inv.input {
+                            p_map.insert("input".to_string(), inp.clone());
+                        }
+                        col.push(Action::Generic(GenericAction {
+                            action_type: "xstate.spawnChild".to_string(),
+                            params: Some(Value::Object(p_map)),
+                        }));
                     }
                 }
                 for (delay, t_defs) in &def.after {

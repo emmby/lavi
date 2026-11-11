@@ -11,7 +11,7 @@ use crate::actions::{
     parse_and_register_delays, parse_implementations, process_config,
 };
 use crate::state_node::{compute_history_value_obj, try_clone_state_node};
-use crate::value_bridge::{js_to_value, value_to_js};
+use crate::value_bridge::{js_to_value, unregister_live_actor_ref, value_to_js};
 
 pub(crate) fn check_initial_entry_guards(runner: &ActorInner) {
     if runner.guards.is_empty() {
@@ -197,6 +197,200 @@ pub(crate) fn next_session_id() -> String {
     format!("x:{}", n)
 }
 
+thread_local! {
+    pub(crate) static IN_SYSTEM_RELAY: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    pub(crate) static RELAYED_QUEUE: RefCell<IndexMap<String, std::collections::VecDeque<bool>>> = RefCell::new(IndexMap::new());
+}
+
+pub(crate) fn create_system_js(inspector: Option<JsValue>) -> JsValue {
+    let sys_obj = js_sys::Object::new();
+    let inspectors_list = Rc::new(RefCell::new(Vec::<JsValue>::new()));
+    if let Some(insp) = inspector {
+        inspectors_list.borrow_mut().push(insp);
+    }
+    let actors_map = Rc::new(RefCell::new(IndexMap::<String, JsValue>::new()));
+
+    let insp_for_reg = inspectors_list.clone();
+    let actors_for_reg = actors_map.clone();
+    let reg_fn = Closure::wrap(Box::new(move |arg0: JsValue, arg1: JsValue| -> JsValue {
+        let (actor_ref, explicit_sid) = if arg1.is_object() && !arg1.is_null() {
+            (arg1, arg0.as_string())
+        } else {
+            (arg0, None)
+        };
+
+        let sid = if let Some(s) = explicit_sid {
+            s
+        } else if actor_ref.is_object() && !actor_ref.is_null() {
+            js_sys::Reflect::get(&actor_ref, &JsValue::from_str("sessionId"))
+                .ok().and_then(|v| v.as_string()).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let custom_id = if actor_ref.is_object() && !actor_ref.is_null() {
+            js_sys::Reflect::get(&actor_ref, &JsValue::from_str("id"))
+                .ok().and_then(|v| v.as_string()).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let system_id = if actor_ref.is_object() && !actor_ref.is_null() {
+            js_sys::Reflect::get(&actor_ref, &JsValue::from_str("systemId"))
+                .ok().and_then(|v| v.as_string()).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        {
+            let mut map = actors_for_reg.borrow_mut();
+            if !sid.is_empty() {
+                map.insert(sid.clone(), actor_ref.clone());
+            }
+            if !custom_id.is_empty() {
+                map.insert(custom_id.clone(), actor_ref.clone());
+            }
+            if !system_id.is_empty() {
+                map.insert(system_id.clone(), actor_ref.clone());
+            }
+        }
+
+        let ev = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("type"), &JsValue::from_str("@xstate.actor"));
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("actorRef"), &actor_ref);
+        let root_id = if !sid.is_empty() { sid.clone() } else { custom_id.clone() };
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("rootId"), &JsValue::from_str(&root_id));
+        for insp in insp_for_reg.borrow().iter() {
+            emit_to_system_inspector(insp, &ev);
+        }
+        JsValue::from_str(&sid)
+    }) as Box<dyn Fn(JsValue, JsValue) -> JsValue>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("_register"), reg_fn.as_ref());
+    reg_fn.forget();
+
+    let actors_for_unreg = actors_map.clone();
+    let unreg_fn = Closure::wrap(Box::new(move |actor_ref: JsValue| {
+        if actor_ref.is_object() && !actor_ref.is_null() {
+            let mut map = actors_for_unreg.borrow_mut();
+            if let Ok(sid_val) = js_sys::Reflect::get(&actor_ref, &JsValue::from_str("sessionId")) {
+                if let Some(sid) = sid_val.as_string() {
+                    map.shift_remove(&sid);
+                }
+            }
+            if let Ok(id_val) = js_sys::Reflect::get(&actor_ref, &JsValue::from_str("id")) {
+                if let Some(id) = id_val.as_string() {
+                    map.shift_remove(&id);
+                }
+            }
+            if let Ok(sys_id_val) = js_sys::Reflect::get(&actor_ref, &JsValue::from_str("systemId")) {
+                if let Some(sys_id) = sys_id_val.as_string() {
+                    map.shift_remove(&sys_id);
+                }
+            }
+        }
+    }) as Box<dyn Fn(JsValue)>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("_unregister"), unreg_fn.as_ref());
+    unreg_fn.forget();
+
+    let actors_for_set = actors_map.clone();
+    let set_fn = Closure::wrap(Box::new(move |system_id: JsValue, actor_ref: JsValue| {
+        if let Some(s) = system_id.as_string() {
+            actors_for_set.borrow_mut().insert(s, actor_ref);
+        }
+    }) as Box<dyn Fn(JsValue, JsValue)>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("_set"), set_fn.as_ref());
+    set_fn.forget();
+
+    let insp_for_relay = inspectors_list.clone();
+    let relay_fn = Closure::wrap(Box::new(move |source_ref: JsValue, target_ref: JsValue, event: JsValue| {
+        let ev = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("type"), &JsValue::from_str("@xstate.event"));
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("actorRef"), &target_ref);
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("sourceRef"), &source_ref);
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("event"), &event);
+        for insp in insp_for_relay.borrow().iter() {
+            emit_to_system_inspector(insp, &ev);
+        }
+        if target_ref.is_object() && !target_ref.is_null() {
+            if let Ok(send) = js_sys::Reflect::get(&target_ref, &JsValue::from_str("send")) {
+                if let Ok(f) = send.dyn_into::<js_sys::Function>() {
+                    IN_SYSTEM_RELAY.with(|c| c.set(true));
+                    let _ = f.call1(&target_ref, &event);
+                    IN_SYSTEM_RELAY.with(|c| c.set(false));
+                }
+            }
+        }
+    }) as Box<dyn Fn(JsValue, JsValue, JsValue)>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("_relay"), relay_fn.as_ref());
+    relay_fn.forget();
+
+    let insp_for_snap = inspectors_list.clone();
+    let snap_fn = Closure::wrap(Box::new(move |actor_ref: JsValue, event: JsValue, snapshot: JsValue, status: JsValue| {
+        let ev = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("actorRef"), &actor_ref);
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("event"), &event);
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("snapshot"), &snapshot);
+        let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("status"), &status);
+        for insp in insp_for_snap.borrow().iter() {
+            emit_to_system_inspector(insp, &ev);
+        }
+    }) as Box<dyn Fn(JsValue, JsValue, JsValue, JsValue)>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("_snapshot"), snap_fn.as_ref());
+    snap_fn.forget();
+
+    let insp_for_emit = inspectors_list.clone();
+    let emit_fn = Closure::wrap(Box::new(move |event_obj: JsValue| {
+        for insp in insp_for_emit.borrow().iter() {
+            emit_to_system_inspector(insp, &event_obj);
+        }
+    }) as Box<dyn Fn(JsValue)>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("_emit"), emit_fn.as_ref());
+    emit_fn.forget();
+
+    let actors_for_get = actors_map.clone();
+    let get_fn = Closure::wrap(Box::new(move |id: JsValue| -> JsValue {
+        if let Some(s) = id.as_string() {
+            if let Some(act) = actors_for_get.borrow().get(&s) {
+                return act.clone();
+            }
+        }
+        JsValue::UNDEFINED
+    }) as Box<dyn Fn(JsValue) -> JsValue>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("get"), get_fn.as_ref());
+    get_fn.forget();
+
+    let insp_for_inspect = inspectors_list.clone();
+    let inspect_fn = Closure::wrap(Box::new(move |observer_or_fn: JsValue| -> JsValue {
+        insp_for_inspect.borrow_mut().push(observer_or_fn.clone());
+        let insp_list_unsub = insp_for_inspect.clone();
+        let target_insp = observer_or_fn.clone();
+        let unsub = Closure::wrap(Box::new(move || {
+            insp_list_unsub.borrow_mut().retain(|x| x != &target_insp);
+        }) as Box<dyn FnMut()>);
+        let unsub_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&unsub_obj, &JsValue::from_str("unsubscribe"), &unsub.into_js_value());
+        unsub_obj.into()
+    }) as Box<dyn Fn(JsValue) -> JsValue>);
+    let _ = js_sys::Reflect::set(&sys_obj, &JsValue::from_str("inspect"), inspect_fn.as_ref());
+    inspect_fn.forget();
+
+    sys_obj.into()
+}
+
+fn emit_to_system_inspector(insp: &JsValue, ev: &JsValue) {
+    if insp.is_function() {
+        let f: &js_sys::Function = insp.unchecked_ref();
+        let _ = f.call1(&JsValue::NULL, ev);
+    } else if insp.is_object() && !insp.is_null() {
+        if let Ok(next) = js_sys::Reflect::get(insp, &JsValue::from_str("next")) {
+            if let Ok(f) = next.dyn_into::<js_sys::Function>() {
+                let _ = f.call1(insp, ev);
+            }
+        }
+    }
+}
+
 #[wasm_bindgen(js_name = isMachineSnapshot)]
 pub fn is_machine_snapshot(val: JsValue) -> bool {
     if !val.is_object() || val.is_null() {
@@ -241,12 +435,245 @@ pub(crate) struct ActorInner {
     pub active_timeout: Option<ActiveTimeout>,
     pub cached_output: Option<JsValue>,
     pub is_completed_emitted: bool,
+    pub is_done_event_sent: bool,
     pub logger: Option<js_sys::Function>,
     pub logger_holder: Rc<RefCell<Option<js_sys::Function>>>,
     pub input_js: Option<JsValue>,
     pub initialization_error: Option<JsValue>,
     pub session_id: String,
     pub custom_id: Option<String>,
+    pub children: IndexMap<String, JsValue>,
+    pub child_sources: IndexMap<String, Vec<String>>,
+    pub parent: Option<JsValue>,
+    pub system: Option<JsValue>,
+    pub self_js: Option<JsValue>,
+    pub implementations: JsValue,
+    pub pending_start_actors: Vec<JsValue>,
+    pub send_timer_handles: IndexMap<String, JsValue>,
+}
+
+pub(crate) struct PendingInvoke {
+    pub invoke_id: String,
+    pub path: String,
+    pub resolved_src: JsValue,
+    pub raw_input: JsValue,
+}
+
+impl ActorInner {
+    pub(crate) fn prepare_invokes_for_path(&self, path: &str) -> Vec<PendingInvoke> {
+        let invokes: Vec<(usize, lavi::InvokeDefinition)> = if path.is_empty() {
+            self.machine.definition.invoke.iter().enumerate().map(|(i, inv)| (i, inv.clone())).collect()
+        } else if let Some(def) = RuntimeMachine::get_state_def_recursive(&self.machine.definition.states, path) {
+            def.invoke.iter().enumerate().map(|(i, inv)| (i, inv.clone())).collect()
+        } else {
+            Vec::new()
+        };
+
+        let mut pending = Vec::new();
+        for (inv_idx, inv) in invokes {
+            let state_id = if path.is_empty() {
+                "(machine)".to_string()
+            } else {
+                format!("(machine).{}", path)
+            };
+            let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, state_id));
+
+            if self.children.contains_key(&invoke_id) {
+                continue;
+            }
+
+            let raw_desc_opt = self.action_descriptors.get(&format!("__xstate_invoke_desc_{}", invoke_id))
+                .or_else(|| self.action_descriptors.get(&format!("__xstate_invoke_desc_{}.{}", inv_idx, path)))
+                .or_else(|| if !path.is_empty() { self.action_descriptors.get(&format!("__xstate_invoke_desc_{}", path)) } else { None })
+                .or_else(|| if let Some(ref eid) = inv.id { self.action_descriptors.get(&format!("__xstate_invoke_desc_{}", eid)) } else { None });
+
+            let (raw_src, raw_input) = if let Some(raw_desc) = raw_desc_opt {
+                let s = js_sys::Reflect::get(raw_desc, &JsValue::from_str("src")).unwrap_or(JsValue::UNDEFINED);
+                let i = js_sys::Reflect::get(raw_desc, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED);
+                (s, i)
+            } else {
+                (value_to_js(&inv.src), inv.input.as_ref().map(value_to_js).unwrap_or(JsValue::UNDEFINED))
+            };
+
+            let resolved_src = if let Some(src_str) = raw_src.as_string() {
+                let mut found = JsValue::UNDEFINED;
+                if self.implementations.is_object() && !self.implementations.is_null() {
+                    if let Ok(actors) = js_sys::Reflect::get(&self.implementations, &JsValue::from_str("actors")) {
+                        if actors.is_object() && !actors.is_null() {
+                            if let Ok(act) = js_sys::Reflect::get(&actors, &JsValue::from_str(&src_str)) {
+                                if !act.is_undefined() {
+                                    found = act;
+                                }
+                            }
+                        }
+                    }
+                }
+                if found.is_undefined() && self.config.is_object() && !self.config.is_null() {
+                    if let Ok(actors) = js_sys::Reflect::get(&self.config, &JsValue::from_str("actors")) {
+                        if actors.is_object() && !actors.is_null() {
+                            if let Ok(act) = js_sys::Reflect::get(&actors, &JsValue::from_str(&src_str)) {
+                                if !act.is_undefined() {
+                                    found = act;
+                                }
+                            }
+                        }
+                    }
+                }
+                if found.is_undefined() {
+                    raw_src
+                } else {
+                    found
+                }
+            } else {
+                raw_src
+            };
+
+            if resolved_src.is_undefined() {
+                continue;
+            }
+
+            pending.push(PendingInvoke {
+                invoke_id,
+                path: path.to_string(),
+                resolved_src,
+                raw_input,
+            });
+        }
+        pending
+    }
+}
+
+pub(crate) fn execute_pending_invokes(
+    inner_rc: &Rc<RefCell<ActorInner>>,
+    pending: Vec<PendingInvoke>,
+    current_event: &Value,
+    current_context: &Value,
+    defer_start: bool,
+) {
+    if pending.is_empty() {
+        return;
+    }
+
+    let (self_js, system) = {
+        let Ok(inner) = inner_rc.try_borrow() else {
+            return;
+        };
+        let Some(s) = inner.self_js.clone() else {
+            return;
+        };
+        (s, inner.system.clone())
+    };
+
+    let mut created_actors = Vec::new();
+    for p in pending {
+        let resolved_input = if let Ok(f) = p.raw_input.clone().dyn_into::<js_sys::Function>() {
+            let arg = js_sys::Object::new();
+            let ctx_js = value_to_js(current_context);
+            let evt_js = Actor::event_to_js(current_event);
+            let _ = js_sys::Reflect::set(&arg, &JsValue::from_str("context"), &ctx_js);
+            let _ = js_sys::Reflect::set(&arg, &JsValue::from_str("event"), &evt_js);
+            let _ = js_sys::Reflect::set(&arg, &JsValue::from_str("self"), &self_js);
+            f.call1(&JsValue::NULL, &arg).unwrap_or(JsValue::UNDEFINED)
+        } else {
+            p.raw_input
+        };
+
+        let child_opts = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&child_opts, &JsValue::from_str("id"), &JsValue::from_str(&p.invoke_id));
+        let _ = js_sys::Reflect::set(&child_opts, &JsValue::from_str("input"), &resolved_input);
+        let _ = js_sys::Reflect::set(&child_opts, &JsValue::from_str("parent"), &self_js);
+        if let Some(ref sys) = system {
+            let _ = js_sys::Reflect::set(&child_opts, &JsValue::from_str("system"), sys);
+        }
+
+        let child_actor = match create_actor(p.resolved_src, Some(child_opts.into())) {
+            Ok(act) => act,
+            Err(e) => {
+                web_sys::console::warn_2(&JsValue::from_str("Failed to invoke child:"), &e);
+                continue;
+            }
+        };
+
+        created_actors.push((p.invoke_id, p.path, child_actor));
+    }
+
+    let mut actors_to_start = Vec::new();
+    if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+        for (invoke_id, path, child_actor) in created_actors {
+            if inner.children.contains_key(&invoke_id) {
+                continue;
+            }
+            inner.children.insert(invoke_id.clone(), child_actor.clone());
+            inner.child_sources.entry(path).or_default().push(invoke_id);
+
+            if defer_start {
+                inner.pending_start_actors.push(child_actor);
+            } else {
+                actors_to_start.push(child_actor);
+            }
+        }
+    }
+
+    for act in actors_to_start {
+        if let Ok(start_fn) = js_sys::Reflect::get(&act, &JsValue::from_str("start")) {
+            if let Ok(f) = start_fn.dyn_into::<js_sys::Function>() {
+                let _ = f.call0(&act);
+            }
+        }
+    }
+}
+
+pub(crate) fn spawn_invokes_for_path_detached(
+    inner_rc: &Rc<RefCell<ActorInner>>,
+    path: &str,
+    current_event: &Value,
+    current_context: &Value,
+    defer_start: bool,
+) {
+    let pending = {
+        let Ok(inner) = inner_rc.try_borrow() else {
+            return;
+        };
+        inner.prepare_invokes_for_path(path)
+    };
+    execute_pending_invokes(inner_rc, pending, current_event, current_context, defer_start);
+}
+
+pub(crate) fn collect_and_stop_invokes(inner_rc: &Rc<RefCell<ActorInner>>, paths: &[String]) {
+    let mut actors_to_stop = Vec::new();
+    if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+        for path in paths {
+            if let Some(child_ids) = inner.child_sources.shift_remove(path) {
+                for child_id in child_ids {
+                    if let Some(child_actor) = inner.children.shift_remove(&child_id) {
+                        actors_to_stop.push(child_actor);
+                    }
+                }
+            }
+        }
+    }
+    for act in actors_to_stop {
+        if let Ok(stop_fn) = js_sys::Reflect::get(&act, &JsValue::from_str("stop")) {
+            if let Ok(f) = stop_fn.dyn_into::<js_sys::Function>() {
+                let _ = f.call0(&act);
+            }
+        }
+    }
+}
+
+pub(crate) fn flush_pending_starts_detached(inner_rc: &Rc<RefCell<ActorInner>>) {
+    let pending = if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+        core::mem::take(&mut inner.pending_start_actors)
+    } else {
+        Vec::new()
+    };
+    for act in pending {
+        if let Ok(start_fn) = js_sys::Reflect::get(&act, &JsValue::from_str("start")) {
+            if let Ok(f) = start_fn.dyn_into::<js_sys::Function>() {
+                let _ = f.call0(&act);
+            }
+        }
+    }
 }
 
 impl ActorInner {
@@ -446,6 +873,10 @@ impl Actor {
                     let arg_obj = js_sys::Object::new();
                     let _ =
                         js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &JsValue::UNDEFINED);
+                    let dummy_spawn = js_sys::Function::new_no_args("return { send: function() {}, getSnapshot: function() { return { status: 'active' }; }, sessionId: 'x:dummy' };");
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("spawn"), &dummy_spawn);
+                    let dummy_self = js_sys::Function::new_no_args("return { send: function() {}, getSnapshot: function() { return {}; } };");
+                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &dummy_self);
                     if let Ok(res) = func.call1(&JsValue::NULL, &arg_obj) {
                         let _ = js_sys::Reflect::set(&normalized_val, &context_key, &res);
                     }
@@ -524,12 +955,21 @@ impl Actor {
             active_timeout: None,
             cached_output: None,
             is_completed_emitted: false,
+            is_done_event_sent: false,
             logger: None,
             logger_holder,
             input_js: None,
             initialization_error: None,
             session_id: String::new(),
             custom_id: None,
+            children: IndexMap::new(),
+            child_sources: IndexMap::new(),
+            parent: None,
+            system: None,
+            self_js: None,
+            implementations: js_sys::Object::new().into(),
+            pending_start_actors: Vec::new(),
+            send_timer_handles: IndexMap::new(),
         };
         configure_logger(&options, &mut inner);
         inner.restore_snapshot_option(&options)?;
@@ -558,12 +998,16 @@ impl Actor {
     ) -> bool {
         let mut transitioned = false;
         loop {
-            let is_now_stopped = self.inner.borrow().is_stopped;
+            let (is_now_stopped, sid) = {
+                let inner = self.inner.borrow();
+                (inner.is_stopped, inner.session_id.clone())
+            };
             if is_now_stopped
                 || machine.status == lavi::MachineStatus::Stopped
                 || machine.status == lavi::MachineStatus::Done
                 || machine.is_done()
             {
+                RELAYED_QUEUE.with(|q| { q.borrow_mut().shift_remove(&sid); });
                 machine.external_queue.clear();
                 self.inner.borrow_mut().machine.external_queue.clear();
                 if is_now_stopped || machine.status == lavi::MachineStatus::Stopped {
@@ -579,11 +1023,25 @@ impl Actor {
             let Some((ev_name, ev_payload)) = next_evt else {
                 break;
             };
-            if machine
+            let is_relayed = RELAYED_QUEUE.with(|q| q.borrow_mut().get_mut(&sid).and_then(|q| q.pop_front())).unwrap_or(false);
+            let prev_relay = IN_SYSTEM_RELAY.with(|c| {
+                let old = c.get();
+                if is_relayed {
+                    c.set(true);
+                }
+                old
+            });
+            let transitioned_now = machine
                 .transition(&ev_name, &ev_payload, guards, actions)
-                .is_some()
-            {
+                .is_some();
+            IN_SYSTEM_RELAY.with(|c| c.set(prev_relay));
+            if transitioned_now {
                 transitioned = true;
+                if let Ok(mut inner) = self.inner.try_borrow_mut() {
+                    inner.machine.context = machine.context.clone();
+                    inner.machine.current_state = machine.current_state.clone();
+                    inner.machine.status = machine.status;
+                }
             }
         }
         transitioned
@@ -672,6 +1130,12 @@ impl Actor {
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("xstate.init"));
                     return obj.into();
                 }
+                if t.starts_with("xstate.done.actor.") {
+                    let js_evt = Self::event_to_js(evt);
+                    let out_val = js_sys::Reflect::get(&js_evt, &JsValue::from_str("output")).unwrap_or(JsValue::UNDEFINED);
+                    let _ = js_sys::Reflect::set(&js_evt, &JsValue::from_str("output"), &out_val);
+                    return js_evt;
+                }
             }
         }
         Self::event_to_js(evt)
@@ -688,6 +1152,7 @@ impl Actor {
         actions: &IndexMap<String, Rc<dyn Fn(&mut Value, &Value, &Option<Value>) -> ()>>,
         action_descriptors: &IndexMap<String, JsValue>,
         logger_holder: &Rc<RefCell<Option<js_sys::Function>>>,
+        cached_output: Option<&JsValue>,
     ) -> JsValue {
         let mut temp_machine = machine_template.clone();
         temp_machine.current_state = state.clone();
@@ -714,7 +1179,11 @@ impl Actor {
             lavi::MachineStatus::Active => "active",
         };
         let output_val = if status == lavi::MachineStatus::Done {
-            Self::compute_output_js(config, &temp_machine, &ctx_val)
+            if let Some(c) = cached_output {
+                (*c).clone()
+            } else {
+                Self::compute_output_js(config, &temp_machine, &ctx_val)
+            }
         } else {
             JsValue::UNDEFINED
         };
@@ -739,6 +1208,9 @@ impl Actor {
         let inner_weak = Rc::downgrade(&self.inner);
         let config_clone = self.inner.borrow().config.clone();
         Rc::new(move |ev: &lavi::InspectEvent| {
+            if matches!(ev, lavi::InspectEvent::Event { .. }) && IN_SYSTEM_RELAY.with(|c| c.get()) {
+                return;
+            }
             let Some(inner_rc) = inner_weak.upgrade() else {
                 return;
             };
@@ -752,11 +1224,14 @@ impl Actor {
                 guards,
                 actions,
                 logger_holder,
+                self_js_opt,
+                parent_opt,
+                system_opt,
             ) = {
                 let Ok(shared) = inner_rc.try_borrow() else {
                     return;
                 };
-                if shared.inspectors.is_empty() && shared.inspector.is_none() {
+                if shared.inspectors.is_empty() && shared.inspector.is_none() && shared.system.is_none() {
                     return;
                 }
                 let mut list = shared.inspectors.clone();
@@ -773,11 +1248,18 @@ impl Actor {
                     shared.guards.clone(),
                     shared.actions.clone(),
                     shared.logger_holder.clone(),
+                    shared.self_js.clone(),
+                    shared.parent.clone(),
+                    shared.system.clone(),
                 )
             };
 
             let actor_id = custom_id.unwrap_or_else(|| session_id.clone());
-            let actor_ref_js = Self::make_actor_ref_js_parts(&actor_id, &session_id);
+            let actor_ref_js = if let Some(ref s) = self_js_opt {
+                s.clone()
+            } else {
+                Self::make_actor_ref_js_parts(&actor_id, &session_id)
+            };
 
             let ev_js: JsValue = match ev {
                 lavi::InspectEvent::Actor => {
@@ -789,11 +1271,22 @@ impl Actor {
                 }
                 lavi::InspectEvent::Event { event } => {
                     let evt_js = Self::inspect_event_payload_to_js(event, &input_js);
+                    let is_init = match event {
+                        Value::Object(map) => map.get("type").and_then(|v| match v { Value::String(s) => Some(s.as_str()), _ => None }) == Some("xstate.init"),
+                        Value::String(s) => s == "xstate.init",
+                        _ => false,
+                    };
+                    let default_src = JsValue::UNDEFINED;
+                    let source_ref = if is_init {
+                        parent_opt.as_ref().unwrap_or(&default_src)
+                    } else {
+                        &default_src
+                    };
                     let obj = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_js);
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sourceRef"), &JsValue::UNDEFINED);
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sourceRef"), source_ref);
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.event"));
                     obj.into()
                 }
@@ -986,6 +1479,26 @@ impl Actor {
                         let _ = js_sys::Reflect::set(&t_obj, &JsValue::from_str("toJSON"), &to_json_fn);
                         transitions_arr.push(&t_obj);
                     }
+                    let mut cached_out = None;
+                    if *status == lavi::MachineStatus::Done {
+                        if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                            if let Some(ref c) = inner.cached_output {
+                                cached_out = Some(c.clone());
+                            } else {
+                                let ctx_val = match context {
+                                    Value::Null => js_sys::Object::new().into(),
+                                    other => value_to_js(other),
+                                };
+                                let mut temp_m = machine_template.clone();
+                                temp_m.current_state = state.clone();
+                                temp_m.context = context.clone();
+                                temp_m.status = *status;
+                                let evaluated = Self::compute_output_js(&config_clone, &temp_m, &ctx_val);
+                                inner.cached_output = Some(evaluated.clone());
+                                cached_out = Some(evaluated);
+                            }
+                        }
+                    }
                     let evt_js = Self::inspect_event_payload_to_js(event, &input_js);
                     let snap_js = Self::build_inspect_snapshot_js(
                         &machine_template,
@@ -997,6 +1510,7 @@ impl Actor {
                         &actions,
                         &action_descriptors,
                         &logger_holder,
+                        cached_out.as_ref(),
                     );
                     let obj = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("_transitions"), &transitions_arr);
@@ -1013,6 +1527,71 @@ impl Actor {
                     context,
                     status,
                 } => {
+                    let children_obj = js_sys::Object::new();
+
+                    let mut paths_to_stop = Vec::new();
+                    let mut paths_to_spawn = Vec::new();
+                    if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                        inner.machine.context = context.clone();
+                        inner.machine.current_state = state.clone();
+                        inner.machine.status = *status;
+                        inner.machine.is_started = true;
+
+                        let active = state.get_active_paths();
+                        let current_source_paths: Vec<String> = inner.child_sources.keys().cloned().collect();
+                        for sp in current_source_paths {
+                            if !sp.is_empty() && !active.iter().any(|a| a == &sp || a.starts_with(&format!("{}.", sp))) {
+                                paths_to_stop.push(sp);
+                            }
+                        }
+                        if *status != lavi::MachineStatus::Stopped && inner.machine.last_error.is_none() {
+                            if !inner.child_sources.contains_key("") {
+                                paths_to_spawn.push("".to_string());
+                            }
+                            for p in &active {
+                                let parts: Vec<&str> = p.split('.').collect();
+                                for i in 1..=parts.len() {
+                                    let ancestor = parts[0..i].join(".");
+                                    if !inner.child_sources.contains_key(&ancestor) && !paths_to_spawn.contains(&ancestor) {
+                                        paths_to_spawn.push(ancestor);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    collect_and_stop_invokes(&inner_rc, &paths_to_stop);
+                    flush_pending_starts_detached(&inner_rc);
+
+                    for sp in paths_to_spawn {
+                        spawn_invokes_for_path_detached(&inner_rc, &sp, event, context, false);
+                    }
+
+                    if let Ok(inner) = inner_rc.try_borrow() {
+                        for (k, v) in &inner.children {
+                            let _ = js_sys::Reflect::set(&children_obj, &JsValue::from_str(k), v);
+                        }
+                    }
+                    let mut cached_out = None;
+                    if *status == lavi::MachineStatus::Done {
+                        if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                            if let Some(ref c) = inner.cached_output {
+                                cached_out = Some(c.clone());
+                            } else {
+                                let ctx_val = match context {
+                                    Value::Null => js_sys::Object::new().into(),
+                                    other => value_to_js(other),
+                                };
+                                let mut temp_m = machine_template.clone();
+                                temp_m.current_state = state.clone();
+                                temp_m.context = context.clone();
+                                temp_m.status = *status;
+                                let evaluated = Self::compute_output_js(&config_clone, &temp_m, &ctx_val);
+                                inner.cached_output = Some(evaluated.clone());
+                                cached_out = Some(evaluated);
+                            }
+                        }
+                    }
                     let evt_js = Self::inspect_event_payload_to_js(event, &input_js);
                     let snap_js = Self::build_inspect_snapshot_js(
                         &machine_template,
@@ -1024,13 +1603,43 @@ impl Actor {
                         &actions,
                         &action_descriptors,
                         &logger_holder,
+                        cached_out.as_ref(),
                     );
+                    let _ = js_sys::Reflect::set(&snap_js, &JsValue::from_str("children"), &children_obj);
                     let obj = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("actorRef"), &actor_ref_js);
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("event"), &evt_js);
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("rootId"), &JsValue::from_str(&actor_id));
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("snapshot"), &snap_js);
                     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("@xstate.snapshot"));
+
+                    if *status == lavi::MachineStatus::Done {
+                        if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                            if !inner.is_done_event_sent {
+                                inner.is_done_event_sent = true;
+                                if let Some(ref parent) = inner.parent.clone() {
+                                    let child_id = inner.custom_id.clone().unwrap_or_else(|| inner.session_id.clone());
+                                    let done_evt = js_sys::Object::new();
+                                    let _ = js_sys::Reflect::set(&done_evt, &JsValue::from_str("type"), &JsValue::from_str(&format!("xstate.done.actor.{}", child_id)));
+                                    let _ = js_sys::Reflect::set(&done_evt, &JsValue::from_str("actorId"), &JsValue::from_str(&child_id));
+                                    let out_val = inner.cached_output.clone().unwrap_or(JsValue::UNDEFINED);
+                                    let _ = js_sys::Reflect::set(&done_evt, &JsValue::from_str("output"), &out_val);
+                                    if let Some(ref sys) = inner.system.clone() {
+                                        if let Ok(relay) = js_sys::Reflect::get(sys, &JsValue::from_str("_relay")) {
+                                            if let Ok(rf) = relay.dyn_into::<js_sys::Function>() {
+                                                let _ = rf.call3(sys, &actor_ref_js, parent, &done_evt);
+                                            }
+                                        }
+                                    } else if let Ok(send) = js_sys::Reflect::get(parent, &JsValue::from_str("send")) {
+                                        if let Ok(sf) = send.dyn_into::<js_sys::Function>() {
+                                            let _ = sf.call1(parent, &done_evt);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     obj.into()
                 }
             };
@@ -1044,6 +1653,14 @@ impl Actor {
                         let _ = next_fn.call1(&JsValue::NULL, &ev_js);
                     }
                     _ => {}
+                }
+            }
+
+            if let Some(ref sys) = system_opt {
+                if let Ok(emit) = js_sys::Reflect::get(sys, &JsValue::from_str("_emit")) {
+                    if let Ok(ef) = emit.dyn_into::<js_sys::Function>() {
+                        let _ = ef.call1(sys, &ev_js);
+                    }
                 }
             }
         })
@@ -1127,13 +1744,20 @@ impl Actor {
 
     #[wasm_bindgen(getter, js_name = sessionId)]
     pub fn session_id(&self) -> String {
-        self.inner.borrow().session_id.clone()
+        if let Ok(inner) = self.inner.try_borrow() {
+            inner.session_id.clone()
+        } else {
+            String::new()
+        }
     }
 
     #[wasm_bindgen(getter)]
     pub fn id(&self) -> String {
-        let inner = self.inner.borrow();
-        inner.custom_id.clone().unwrap_or_else(|| inner.session_id.clone())
+        if let Ok(inner) = self.inner.try_borrow() {
+            inner.custom_id.clone().unwrap_or_else(|| inner.session_id.clone())
+        } else {
+            String::new()
+        }
     }
 
     #[wasm_bindgen(js_name = toJSON)]
@@ -1146,6 +1770,11 @@ impl Actor {
 
     #[wasm_bindgen(getter)]
     pub fn system(&self) -> JsValue {
+        if let Ok(inner) = self.inner.try_borrow() {
+            if let Some(ref sys) = inner.system {
+                return sys.clone();
+            }
+        }
         let actor_clone = self.clone();
         let inspect_closure = Closure::wrap(Box::new(move |observer_or_fn: JsValue| -> JsValue {
             actor_clone
@@ -1161,16 +1790,195 @@ impl Actor {
         sys_obj.into()
     }
 
+    #[wasm_bindgen(getter)]
+    pub fn children(&self) -> JsValue {
+        let obj = js_sys::Object::new();
+        if let Ok(inner) = self.inner.try_borrow() {
+            for (k, v) in &inner.children {
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
+            }
+        }
+        obj.into()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn config(&self) -> JsValue {
+        if let Ok(inner) = self.inner.try_borrow() {
+            inner.config.clone()
+        } else {
+            JsValue::UNDEFINED
+        }
+    }
+
+    #[wasm_bindgen(getter, js_name = _parent)]
+    pub fn parent(&self) -> JsValue {
+        if let Ok(inner) = self.inner.try_borrow() {
+            inner.parent.clone().unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        }
+    }
+
+    #[wasm_bindgen(getter, js_name = parent)]
+    pub fn public_parent(&self) -> JsValue {
+        if let Ok(inner) = self.inner.try_borrow() {
+            inner.parent.clone().unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        }
+    }
+
+    #[wasm_bindgen(js_name = _ensureInvokeChild)]
+    pub fn ensure_invoke_child(&self, id: String) -> JsValue {
+        {
+            let Ok(inner) = self.inner.try_borrow() else {
+                return JsValue::UNDEFINED;
+            };
+            if let Some(child) = inner.children.get(&id) {
+                return child.clone();
+            }
+        }
+
+        let (init_evt, current_ctx, pending) = {
+            let Ok(inner) = self.inner.try_borrow() else {
+                return JsValue::UNDEFINED;
+            };
+            let init_evt = Value::Object(lavi::indexmap! { "type".to_string() => Value::String("xstate.init".to_string()) });
+            let current_ctx = inner.machine.context.clone();
+
+            let mut matched = Vec::new();
+            for p in inner.prepare_invokes_for_path("") {
+                if p.invoke_id == id {
+                    matched.push(p);
+                }
+            }
+            let mut all_paths = Vec::new();
+            let mut stack: Vec<(&IndexMap<String, lavi::StateDefinition>, String)> =
+                vec![(&inner.machine.definition.states, String::new())];
+            while let Some((states, prefix)) = stack.pop() {
+                for (name, def) in states.iter().rev() {
+                    let path = if prefix.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}.{}", prefix, name)
+                    };
+                    all_paths.push(path.clone());
+                    if !def.states.is_empty() {
+                        stack.push((&def.states, path));
+                    }
+                }
+            }
+            for p_str in all_paths {
+                for p in inner.prepare_invokes_for_path(&p_str) {
+                    if p.invoke_id == id {
+                        matched.push(p);
+                    }
+                }
+            }
+            (init_evt, current_ctx, matched)
+        };
+
+        if !pending.is_empty() {
+            execute_pending_invokes(&self.inner, pending, &init_evt, &current_ctx, false);
+            if let Ok(inner) = self.inner.try_borrow() {
+                if let Some(child) = inner.children.get(&id) {
+                    return child.clone();
+                }
+            }
+        }
+        JsValue::UNDEFINED
+    }
+
+    #[wasm_bindgen(js_name = _registerSendTimer)]
+    pub fn register_send_timer(&self, send_id: String, handle: JsValue) {
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            inner.send_timer_handles.insert(send_id, handle);
+        }
+    }
+
+    #[wasm_bindgen(js_name = _cancelSendTimer)]
+    pub fn cancel_send_timer(&self, send_id: String) {
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            if let Some(handle) = inner.send_timer_handles.shift_remove(&send_id) {
+                if let Some((_, clear_timeout)) = resolve_host_clock(inner.host_clock.as_ref()) {
+                    let _ = clear_timeout.call1(&JsValue::NULL, &handle);
+                }
+            }
+        }
+    }
+
+    #[wasm_bindgen(js_name = _removeChild)]
+    pub fn remove_child(&self, child_ref: JsValue) {
+        let mut removed_actor = None;
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            if let Some(id_str) = child_ref.as_string() {
+                removed_actor = inner.children.shift_remove(&id_str);
+            } else if child_ref.is_object() && !child_ref.is_null() {
+                let mut key_to_remove = None;
+                for (k, v) in &inner.children {
+                    if v == &child_ref {
+                        key_to_remove = Some(k.clone());
+                        break;
+                    }
+                }
+                if let Some(k) = key_to_remove {
+                    removed_actor = inner.children.shift_remove(&k);
+                }
+            }
+        }
+        if let Some(act) = removed_actor {
+            if let Ok(inner) = self.inner.try_borrow() {
+                if let Some(ref sys) = inner.system {
+                    if let Ok(unreg) = js_sys::Reflect::get(sys, &JsValue::from_str("_unregister")) {
+                        if let Ok(uf) = unreg.dyn_into::<js_sys::Function>() {
+                            let _ = uf.call1(sys, &act);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[wasm_bindgen(js_name = _emitError)]
+    pub fn emit_error_js(&self, error: JsValue) {
+        self.emit_error(&error);
+    }
+
+    #[wasm_bindgen(getter, js_name = _implementations)]
+    pub fn implementations(&self) -> JsValue {
+        if let Ok(inner) = self.inner.try_borrow() {
+            inner.implementations.clone()
+        } else {
+            JsValue::UNDEFINED
+        }
+    }
+
+    #[wasm_bindgen(js_name = _registerChild)]
+    pub fn register_child(&self, id: String, child_actor: JsValue) {
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            inner.children.insert(id, child_actor);
+        }
+    }
+
     fn get_history_value_obj(&self, machine: &RuntimeMachine) -> JsValue {
         let (guards, actions, action_descriptors, config, logger_holder) = {
-            let inner = self.inner.borrow();
-            (
-                inner.guards.clone(),
-                inner.actions.clone(),
-                inner.action_descriptors.clone(),
-                inner.config.clone(),
-                inner.logger_holder.clone(),
-            )
+            if let Ok(inner) = self.inner.try_borrow() {
+                (
+                    inner.guards.clone(),
+                    inner.actions.clone(),
+                    inner.action_descriptors.clone(),
+                    inner.config.clone(),
+                    inner.logger_holder.clone(),
+                )
+            } else {
+                (
+                    IndexMap::new(),
+                    IndexMap::new(),
+                    IndexMap::new(),
+                    JsValue::UNDEFINED,
+                    Rc::new(RefCell::new(None)),
+                )
+            }
         };
         compute_history_value_obj(
             machine,
@@ -1194,19 +2002,39 @@ impl Actor {
             actions,
             action_descriptors,
             config,
+            children_val,
         ) = {
-            let inner = self.inner.borrow();
-            (
-                inner.initialization_error.clone(),
-                inner.machine.clone(),
-                inner.is_stopped,
-                inner.is_initialized,
-                inner.cached_output.clone(),
-                inner.guards.clone(),
-                inner.actions.clone(),
-                inner.action_descriptors.clone(),
-                inner.config.clone(),
-            )
+            if let Ok(inner) = self.inner.try_borrow() {
+                let obj = js_sys::Object::new();
+                for (k, v) in &inner.children {
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
+                }
+                (
+                    inner.initialization_error.clone(),
+                    inner.machine.clone(),
+                    inner.is_stopped,
+                    inner.is_initialized,
+                    inner.cached_output.clone(),
+                    inner.guards.clone(),
+                    inner.actions.clone(),
+                    inner.action_descriptors.clone(),
+                    inner.config.clone(),
+                    obj.into(),
+                )
+            } else {
+                return Snapshot {
+                    value: JsValue::UNDEFINED,
+                    context: JsValue::UNDEFINED,
+                    status: "active".to_string(),
+                    machine_ref: RuntimeMachine::default(),
+                    guards: IndexMap::new(),
+                    history_value: js_sys::Object::new().into(),
+                    config: JsValue::UNDEFINED,
+                    output: JsValue::UNDEFINED,
+                    error: JsValue::UNDEFINED,
+                    children: js_sys::Object::new().into(),
+                };
+            }
         };
         if let Some(err) = init_err {
             return Snapshot {
@@ -1219,6 +2047,7 @@ impl Actor {
                 config,
                 output: JsValue::UNDEFINED,
                 error: err,
+                children: children_val,
             };
         }
 
@@ -1258,7 +2087,9 @@ impl Actor {
                 c
             } else {
                 let evaluated = Self::compute_output_js(&config, machine_ref, &ctx_val);
-                self.inner.borrow_mut().cached_output = Some(evaluated.clone());
+                if let Ok(mut inner) = self.inner.try_borrow_mut() {
+                    inner.cached_output = Some(evaluated.clone());
+                }
                 evaluated
             }
         } else {
@@ -1275,6 +2106,7 @@ impl Actor {
             config,
             output: output_val,
             error: JsValue::UNDEFINED,
+            children: children_val,
         }
     }
 
@@ -1292,7 +2124,7 @@ impl Actor {
                         &JsValue::from_str("type"),
                         &JsValue::from_str(&format!("xstate.done.state.{}", machine_ref.definition.id)),
                     );
-                    let leaf_out = machine_ref.get_output();
+                    let leaf_out = machine_ref.get_final_leaf_output();
                     let out_js = match leaf_out {
                         Some(val) => value_to_js(&val),
                         None => JsValue::UNDEFINED,
@@ -1318,6 +2150,85 @@ impl Actor {
             value_to_js(&out)
         } else {
             JsValue::UNDEFINED
+        }
+    }
+
+    pub(crate) fn check_and_emit_done(&self, self_js: &Option<JsValue>) {
+        let (is_done, cached_out, child_id) = {
+            if let Ok(inner) = self.inner.try_borrow() {
+                (
+                    inner.machine.is_done() || inner.machine.status == lavi::MachineStatus::Done,
+                    inner.cached_output.clone(),
+                    inner.custom_id.clone().unwrap_or_else(|| inner.session_id.clone()),
+                )
+            } else {
+                return;
+            }
+        };
+        if is_done {
+            let (parent_opt, sys_opt, is_done_sent) = {
+                if let Ok(inner) = self.inner.try_borrow() {
+                    (inner.parent.clone(), inner.system.clone(), inner.is_done_event_sent)
+                } else {
+                    return;
+                }
+            };
+            if !is_done_sent {
+                if let Some(ref parent) = parent_opt {
+                    if let Ok(mut inner) = self.inner.try_borrow_mut() {
+                        inner.is_done_event_sent = true;
+                    }
+                    let done_evt = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(
+                        &done_evt,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str(&format!("xstate.done.actor.{}", child_id)),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &done_evt,
+                        &JsValue::from_str("actorId"),
+                        &JsValue::from_str(&child_id),
+                    );
+                    let out_val = if let Some(ref c) = cached_out {
+                        c.clone()
+                    } else {
+                        let (config, machine_ref, ctx_val) = if let Ok(inner) = self.inner.try_borrow() {
+                            let ctx_val = match &inner.machine.context {
+                                Value::Null => js_sys::Object::new().into(),
+                                other => value_to_js(other),
+                            };
+                            (inner.config.clone(), inner.machine.clone(), ctx_val)
+                        } else {
+                            (JsValue::UNDEFINED, RuntimeMachine::default(), JsValue::UNDEFINED)
+                        };
+                        let evaluated = Self::compute_output_js(&config, &machine_ref, &ctx_val);
+                        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+                            inner.cached_output = Some(evaluated.clone());
+                        }
+                        evaluated
+                    };
+                    let _ = js_sys::Reflect::set(&done_evt, &JsValue::from_str("output"), &out_val);
+
+                    let mut relayed = false;
+                    if let Some(ref sys) = sys_opt {
+                        if let Ok(relay) = js_sys::Reflect::get(sys, &JsValue::from_str("_relay")) {
+                            if let Ok(rf) = relay.dyn_into::<js_sys::Function>() {
+                                if let Some(ref s) = self_js {
+                                    let _ = rf.call3(sys, s, parent, &done_evt);
+                                    relayed = true;
+                                }
+                            }
+                        }
+                    }
+                    if !relayed {
+                        if let Ok(send) = js_sys::Reflect::get(parent, &JsValue::from_str("send")) {
+                            if let Ok(f) = send.dyn_into::<js_sys::Function>() {
+                                let _ = f.call1(parent, &done_evt);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1411,26 +2322,41 @@ impl Actor {
         }
     }
 
-    #[wasm_bindgen]
-    pub fn start(&self) -> Actor {
+    pub fn start_internal(&self) {
+        let self_js = {
+            let inner = self.inner.borrow();
+            inner.self_js.clone()
+        };
+
+        let _actor_guard = crate::actions::CurrentActorGuard::enter(self_js.as_ref());
+
         let (mut machine, guards, actions, is_started, is_initialized, has_init_err) = {
             let mut inner = self.inner.borrow_mut();
             if inner.initialization_error.is_some() || inner.machine.is_started {
-                return self.clone();
+                return;
             }
+            let cloned_machine = inner.machine.clone();
             inner.is_in_tick = true;
+            inner.machine.is_started = true;
             (
-                inner.machine.clone(),
+                cloned_machine,
                 inner.guards.clone(),
                 inner.actions.clone(),
-                inner.machine.is_started,
+                false,
                 inner.is_initialized,
                 inner.initialization_error.is_some(),
             )
         };
 
         if has_init_err || is_started {
-            return self.clone();
+            return;
+        }
+
+        let has_invalid_init_action = machine.definition.entry.iter().any(|a| matches!(a, lavi::Action::RaiseInvalid(_)));
+        if !has_invalid_init_action {
+            let init_evt_for_inv = Value::Object(lavi::indexmap! { "type".to_string() => Value::String("xstate.init".to_string()) });
+            let current_ctx = machine.context.clone();
+            spawn_invokes_for_path_detached(&self.inner, "", &init_evt_for_inv, &current_ctx, true);
         }
 
         if !is_initialized {
@@ -1448,6 +2374,12 @@ impl Actor {
             }
         }
 
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            inner.machine.context = machine.context.clone();
+            inner.machine.current_state = machine.current_state.clone();
+            inner.machine.status = machine.status;
+        }
+
         self.drain_reentrant(&mut machine, &guards, &actions);
 
         let last_err = {
@@ -1463,6 +2395,7 @@ impl Actor {
             inner.machine = machine;
             inner.is_initialized = true;
             inner.is_in_tick = false;
+
             err
         };
 
@@ -1471,12 +2404,28 @@ impl Actor {
             self.emit_error(&js_err.into());
         }
 
+        flush_pending_starts_detached(&self.inner);
+        self.check_and_emit_done(&self_js);
+
         // Emit initial snapshot
         self.emit_snapshot();
 
         // Schedule host timer for any active deadline
         Actor::reschedule_host_timer(&self.inner);
+    }
 
+    #[wasm_bindgen(unchecked_return_type = "Actor")]
+    pub fn start(&self) -> JsValue {
+        self.start_internal();
+        if let Some(ref s) = self.inner.borrow().self_js {
+            s.clone()
+        } else {
+            self.clone().into()
+        }
+    }
+
+    pub fn start_native(&self) -> Actor {
+        self.start_internal();
         self.clone()
     }
 
@@ -1498,7 +2447,10 @@ impl Actor {
         let obj: JsValue = snapshot.into();
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("status"), &JsValue::from_str(&status_str));
 
-        let subscribers = self.inner.borrow().subscribers.clone();
+        let subscribers = {
+            let inner = self.inner.borrow();
+            inner.subscribers.clone()
+        };
 
         for (_, sub) in &subscribers {
             match sub {
@@ -1520,6 +2472,13 @@ impl Actor {
     }
 
     pub fn send(&self, event: JsValue) -> Result<JsValue, JsValue> {
+        let self_js = {
+            let inner = self.inner.borrow();
+            inner.self_js.clone()
+        };
+
+        let _actor_guard = crate::actions::CurrentActorGuard::enter(self_js.as_ref());
+
         let (event_name, event_payload) = if event.is_string() {
             let s = event.as_string().unwrap();
             let payload = Value::Object(lavi::indexmap! { "type".to_string() => Value::String(s.clone()) });
@@ -1533,14 +2492,27 @@ impl Actor {
 
         let step_state = {
             let mut inner = self.inner.borrow_mut();
-            let is_started = inner.machine.is_started;
             let is_stopped = inner.is_stopped || inner.machine.status == lavi::MachineStatus::Stopped;
             let is_done = inner.machine.is_done();
-            if !is_started || is_stopped || is_done {
+            if is_stopped || is_done {
                 return Ok(JsValue::UNDEFINED);
             }
             if inner.is_in_tick {
+                let is_relayed = IN_SYSTEM_RELAY.with(|c| c.get());
+                let is_child_done = event_name.starts_with("xstate.done.actor.");
+                let is_child_error = event_name.starts_with("xstate.error.actor.");
+                // If not yet initialized (during start_internal), only internal relayed/child-lifecycle
+                // events are accepted as reentrant. Direct external actor.send() during initial entry
+                // is strictly dropped per Level 1 zero pre-start buffering invariant.
+                if !inner.is_initialized && !is_relayed && !is_child_done && !is_child_error {
+                    return Ok(JsValue::UNDEFINED);
+                }
+                let sid = inner.session_id.clone();
+                RELAYED_QUEUE.with(|q| q.borrow_mut().entry(sid).or_default().push_back(is_relayed));
                 inner.machine.external_queue.push_back((event_name, event_payload));
+                return Ok(JsValue::UNDEFINED);
+            }
+            if !inner.machine.is_started {
                 return Ok(JsValue::UNDEFINED);
             }
             inner.is_in_tick = true;
@@ -1551,9 +2523,15 @@ impl Actor {
 
         let _ = machine.transition(&event_name, &event_payload, &guards, &actions);
 
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            inner.machine.context = machine.context.clone();
+            inner.machine.current_state = machine.current_state.clone();
+            inner.machine.status = machine.status;
+        }
+
         self.drain_reentrant(&mut machine, &guards, &actions);
 
-        let last_err = {
+        let (last_err, exited, entered, current_ctx) = {
             let mut inner = self.inner.borrow_mut();
             if machine.inspector_fn.is_none() {
                 machine.inspector_fn = inner.machine.inspector_fn.clone();
@@ -1565,8 +2543,20 @@ impl Actor {
             }
             inner.machine = machine;
             inner.is_in_tick = false;
-            err
+
+            let exited = inner.machine.last_exited_paths.clone();
+            let entered = inner.machine.last_entered_paths.clone();
+            let current_ctx = inner.machine.context.clone();
+
+            (err, exited, entered, current_ctx)
         };
+
+        collect_and_stop_invokes(&self.inner, &exited);
+        for p in entered {
+            spawn_invokes_for_path_detached(&self.inner, &p, &event_payload, &current_ctx, false);
+        }
+
+        self.check_and_emit_done(&self_js);
 
         if let Some(err_msg) = last_err {
             let js_err = js_sys::Error::new(&err_msg);
@@ -1578,6 +2568,7 @@ impl Actor {
 
         // Host timer scheduling
         Actor::reschedule_host_timer(&self.inner);
+
         Ok(JsValue::UNDEFINED)
     }
 
@@ -1644,20 +2635,51 @@ impl Actor {
         Ok(unsub_obj.into())
     }
 
-    #[wasm_bindgen]
-    pub fn stop(&self) -> Actor {
-        let mut inner = self.inner.borrow_mut();
-        if inner.machine.status == lavi::MachineStatus::Done || inner.machine.is_done() {
-            return self.clone();
+    #[wasm_bindgen(unchecked_return_type = "Actor")]
+    pub fn stop(&self) -> JsValue {
+        let children_to_stop: Vec<JsValue> = {
+            let mut inner = self.inner.borrow_mut();
+            let kids: Vec<JsValue> = inner.children.values().cloned().collect();
+            inner.children.clear();
+            inner.child_sources.clear();
+            kids
+        };
+        for child_actor in children_to_stop {
+            if let Ok(stop_fn) = js_sys::Reflect::get(&child_actor, &JsValue::from_str("stop")) {
+                if let Ok(f) = stop_fn.dyn_into::<js_sys::Function>() {
+                    let _ = f.call0(&child_actor);
+                }
+            }
         }
-        inner.is_stopped = true;
-        inner.machine.stop();
+
+        let mut inner = self.inner.borrow_mut();
         if let Some((_, clear_timeout)) = resolve_host_clock(inner.host_clock.as_ref()) {
             if let Some(active) = inner.active_timeout.take() {
                 let _ = clear_timeout.call1(&JsValue::NULL, &active.handle);
             }
+            for (_, handle) in inner.send_timer_handles.drain(..) {
+                let _ = clear_timeout.call1(&JsValue::NULL, &handle);
+            }
+        } else {
+            inner.send_timer_handles.clear();
         }
-        self.clone()
+        unregister_live_actor_ref(&inner.session_id);
+        if let Some(ref cid) = inner.custom_id {
+            unregister_live_actor_ref(cid);
+        }
+        if inner.machine.status == lavi::MachineStatus::Done || inner.machine.is_done() {
+            if let Some(ref s) = inner.self_js {
+                return s.clone();
+            }
+            return self.clone().into();
+        }
+        inner.is_stopped = true;
+        inner.machine.stop();
+        if let Some(ref s) = inner.self_js {
+            s.clone()
+        } else {
+            self.clone().into()
+        }
     }
 
     #[wasm_bindgen(js_name = __resumeAfterCleanup)]
@@ -2001,6 +3023,7 @@ pub struct Snapshot {
     pub(crate) config: JsValue,
     pub(crate) output: JsValue,
     pub(crate) error: JsValue,
+    pub(crate) children: JsValue,
 }
 
 #[wasm_bindgen]
@@ -2012,6 +3035,15 @@ impl Snapshot {
     #[wasm_bindgen(getter)]
     pub fn context(&self) -> JsValue {
         self.context.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn children(&self) -> JsValue {
+        if self.children.is_undefined() {
+            js_sys::Object::new().into()
+        } else {
+            self.children.clone()
+        }
     }
 
     #[wasm_bindgen(getter)]
@@ -2112,6 +3144,81 @@ impl Snapshot {
     }
 }
 
+pub(crate) fn evaluate_functional_input(
+    raw_input: &JsValue,
+    runner_js: &JsValue,
+    inner_rc: &Rc<RefCell<ActorInner>>,
+) -> JsValue {
+    if raw_input.is_function() {
+        if let Ok(func) = raw_input.clone().dyn_into::<js_sys::Function>() {
+            let arg_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), runner_js);
+            match func.call1(&JsValue::NULL, &arg_obj) {
+                Ok(res) => res,
+                Err(err) => {
+                    if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                        inner.initialization_error = Some(err);
+                    }
+                    JsValue::UNDEFINED
+                }
+            }
+        } else {
+            raw_input.clone()
+        }
+    } else {
+        raw_input.clone()
+    }
+}
+
+pub(crate) fn evaluate_functional_context(
+    config: &JsValue,
+    resolved_input: &JsValue,
+    runner_js: &JsValue,
+    inner_rc: &Rc<RefCell<ActorInner>>,
+) {
+    if !config.is_object() || config.is_null() {
+        return;
+    }
+    let context_key = JsValue::from_str("context");
+    let context_val = js_sys::Reflect::get(config, &context_key).unwrap_or(JsValue::UNDEFINED);
+    if context_val.is_function() {
+        if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
+            let arg_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), resolved_input);
+            let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), runner_js);
+            if let Ok(sys) = js_sys::Reflect::get(runner_js, &JsValue::from_str("system")) {
+                let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("system"), &sys);
+            }
+            let runner_for_spawn = runner_js.clone();
+            let spawn_fn = Closure::wrap(Box::new(move |src: JsValue, options: JsValue| -> JsValue {
+                let opts = if options.is_undefined() {
+                    js_sys::Object::new().into()
+                } else {
+                    options
+                };
+                crate::actions::spawn_child_from_actor(&runner_for_spawn, &src, &opts)
+            }) as Box<dyn Fn(JsValue, JsValue) -> JsValue>);
+            let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("spawn"), spawn_fn.as_ref());
+
+            let call_res = func.call1(&JsValue::NULL, &arg_obj);
+            drop(spawn_fn);
+
+            match call_res {
+                Ok(res) => {
+                    if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                        inner.machine.context = js_to_value(&res);
+                    }
+                }
+                Err(err) => {
+                    if let Ok(mut inner) = inner_rc.try_borrow_mut() {
+                        inner.initialization_error = Some(err);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[wasm_bindgen(js_name = createActor, unchecked_return_type = "Actor")]
 pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
     let options = options.unwrap_or(JsValue::UNDEFINED);
@@ -2129,67 +3236,119 @@ pub fn create_actor(machine_def: JsValue, options: Option<JsValue>) -> Result<Js
     // 2. Treat as Machine Config Object (POJO)
     let config = machine_def.clone();
     let runner = Actor::new(config.clone(), options.clone())?;
-    let mut initial_inspect_val = JsValue::UNDEFINED;
+    let runner_js: JsValue = runner.clone().into();
+    let parent_opt = if options.is_object() && !options.is_null() {
+        let p = js_sys::Reflect::get(&options, &JsValue::from_str("parent")).unwrap_or(JsValue::UNDEFINED);
+        if !p.is_undefined() && !p.is_null() {
+            Some(p)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let system_js = if options.is_object() && !options.is_null() {
+        let sys = js_sys::Reflect::get(&options, &JsValue::from_str("system")).unwrap_or(JsValue::UNDEFINED);
+        if sys.is_object() && !sys.is_null() {
+            sys
+        } else {
+            let inspect_val = js_sys::Reflect::get(&options, &JsValue::from_str("inspect")).unwrap_or(JsValue::UNDEFINED);
+            if !inspect_val.is_undefined() && !inspect_val.is_null() {
+                create_system_js(Some(inspect_val))
+            } else {
+                create_system_js(None)
+            }
+        }
+    } else {
+        create_system_js(None)
+    };
+
+    let impl_obj = js_sys::Object::new();
+    if options.is_object() && !options.is_null() {
+        let opts_obj = js_sys::Object::from(options.clone());
+        let keys = js_sys::Object::keys(&opts_obj);
+        for i in 0..keys.length() {
+            let k = keys.get(i);
+            if let Ok(v) = js_sys::Reflect::get(&opts_obj, &k) {
+                let _ = js_sys::Reflect::set(&impl_obj, &k, &v);
+            }
+        }
+    }
+
+    let session_id = next_session_id();
+    let custom_id = if options.is_object() && !options.is_null() {
+        js_sys::Reflect::get(&options, &JsValue::from_str("id"))
+            .ok()
+            .and_then(|v| v.as_string())
+    } else {
+        None
+    };
+
+    // 1. Populate identity and references on inner before invoking any user closures
     {
         let mut inner = runner.inner.borrow_mut();
-        inner.session_id = next_session_id();
-        if options.is_object() && !options.is_null() {
-            inner.custom_id = js_sys::Reflect::get(&options, &JsValue::from_str("id"))
-                .ok()
-                .and_then(|v| v.as_string());
-        }
-
-        let input_val = if options.is_object() {
-            js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
-        } else {
-            JsValue::UNDEFINED
-        };
-        if !input_val.is_undefined() {
-            inner.input_js = Some(input_val.clone());
-            inner.machine.input = Some(js_to_value(&input_val));
-        }
-
-        if config.is_object() {
-            let context_key = JsValue::from_str("context");
-            let context_val = js_sys::Reflect::get(&config, &context_key).unwrap_or(JsValue::UNDEFINED);
-            if context_val.is_function() {
-                if let Ok(func) = context_val.dyn_into::<js_sys::Function>() {
-                    let arg_obj = js_sys::Object::new();
-                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("input"), &input_val);
-                    let self_obj = js_sys::Object::new();
-                    let _ = js_sys::Reflect::set(&arg_obj, &JsValue::from_str("self"), &self_obj);
-                    match func.call1(&JsValue::NULL, &arg_obj) {
-                        Ok(res) => {
-                            inner.machine.context = js_to_value(&res);
-                        }
-                        Err(err) => {
-                            inner.initialization_error = Some(err);
-                        }
-                    }
-                }
-            }
-        }
-
-        if options.is_object() {
-            let inspect_key = JsValue::from_str("inspect");
-            let inspect_val = js_sys::Reflect::get(&options, &inspect_key).unwrap_or(JsValue::UNDEFINED);
-            if !inspect_val.is_undefined() && !inspect_val.is_null() {
-                 initial_inspect_val = inspect_val;
-            }
-
-            let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
-            if !context_opt.is_undefined() {
-                inner.machine.context = js_to_value(&context_opt);
-            }
-        }
-
-        check_initial_entry_guards(&inner);
-    }
-    if !initial_inspect_val.is_undefined() {
-        let _ = runner.add_inspector(initial_inspect_val, true);
+        inner.self_js = Some(runner_js.clone());
+        inner.parent = parent_opt.clone();
+        inner.system = Some(system_js.clone());
+        inner.implementations = impl_obj.into();
+        inner.session_id = session_id;
+        inner.custom_id = custom_id;
     }
 
-    Ok(runner.into())
+    let raw_input = if options.is_object() && !options.is_null() {
+        js_sys::Reflect::get(&options, &JsValue::from_str("input")).unwrap_or(JsValue::UNDEFINED)
+    } else {
+        JsValue::UNDEFINED
+    };
+
+    // 2. Evaluate functional input with { self: runner_js }
+    let resolved_input = evaluate_functional_input(&raw_input, &runner_js, &runner.inner);
+    if !resolved_input.is_undefined() {
+        let mut inner = runner.inner.borrow_mut();
+        inner.input_js = Some(resolved_input.clone());
+        inner.machine.input = Some(js_to_value(&resolved_input));
+    }
+
+    let _ = js_sys::Reflect::set(&runner_js, &JsValue::from_str("system"), &system_js);
+    let _ = js_sys::Reflect::set(&runner_js, &JsValue::from_str("parent"), &parent_opt.clone().unwrap_or(JsValue::UNDEFINED));
+    let _ = js_sys::Reflect::set(&runner_js, &JsValue::from_str("_parent"), &parent_opt.unwrap_or(JsValue::UNDEFINED));
+    let _ = js_sys::Reflect::set(&runner_js, &JsValue::from_str("_implementations"), &runner.inner.borrow().implementations);
+    let _ = js_sys::Reflect::set(&runner_js, &JsValue::from_str("config"), &config);
+
+    let inner_rc = runner.inner.clone();
+    let reg_child_fn = Closure::wrap(Box::new(move |id: JsValue, child_actor: JsValue| {
+        if let Some(id_str) = id.as_string() {
+            inner_rc.borrow_mut().children.insert(id_str, child_actor);
+        }
+    }) as Box<dyn Fn(JsValue, JsValue)>);
+    let _ = js_sys::Reflect::set(&runner_js, &JsValue::from_str("_registerChild"), reg_child_fn.as_ref());
+    reg_child_fn.forget();
+
+    if let Ok(reg) = js_sys::Reflect::get(&system_js, &JsValue::from_str("_register")) {
+        if let Ok(f) = reg.dyn_into::<js_sys::Function>() {
+            let _ = f.call1(&system_js, &runner_js);
+        }
+    }
+
+    // 3. Evaluate functional context with { input: resolved_input, self: runner_js, spawn }
+    if runner.inner.borrow().initialization_error.is_none() {
+        evaluate_functional_context(&config, &resolved_input, &runner_js, &runner.inner);
+    }
+
+    // 4. Apply options.context override if specified
+    if options.is_object() {
+        let context_opt = js_sys::Reflect::get(&options, &JsValue::from_str("context")).unwrap_or(JsValue::UNDEFINED);
+        if !context_opt.is_undefined() {
+            runner.inner.borrow_mut().machine.context = js_to_value(&context_opt);
+        }
+    }
+
+    check_initial_entry_guards(&runner.inner.borrow());
+
+    let insp_fn = runner.build_machine_inspector();
+    runner.inner.borrow_mut().machine.register_inspector(insp_fn);
+
+    Ok(runner_js)
 }
 
 pub(crate) fn get_state_def_mut<'a>(

@@ -18,22 +18,22 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 
 | Suite | Provenance Status | Skipped Blocks (`it.skip` / `describe.skip`) | Upstream Reference |
 | :--- | :--- | :---: | :--- |
-| `actions.test.ts` | `strict` | 24 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
+| `actions.test.ts` | `strict` | 2 | [`tests/upstream/actions.test.ts`](./tests/upstream/actions.test.ts) |
 | `after.test.ts` | `strict` | 3 | [`tests/upstream/after.test.ts`](./tests/upstream/after.test.ts) |
 | `assign.test.ts` | `strict` | 0 | [`tests/upstream/assign.test.ts`](./tests/upstream/assign.test.ts) |
 | `eventDescriptors.test.ts` | `strict` | 0 | [`tests/upstream/eventDescriptors.test.ts`](./tests/upstream/eventDescriptors.test.ts) |
-| `final.test.ts` | `strict` | 3 | [`tests/upstream/final.test.ts`](./tests/upstream/final.test.ts) |
+| `final.test.ts` | `strict` | 0 | [`tests/upstream/final.test.ts`](./tests/upstream/final.test.ts) |
 | `guards.test.ts` | `strict` | 0 | [`tests/upstream/guards.test.ts`](./tests/upstream/guards.test.ts) |
 | `history.test.ts` | `strict` | 0 | [`tests/upstream/history.test.ts`](./tests/upstream/history.test.ts) |
-| `input.test.ts` | `strict` | 10 | [`tests/upstream/input.test.ts`](./tests/upstream/input.test.ts) |
-| `inspect.test.ts` | `strict` | 1 | [`tests/upstream/inspect.test.ts`](./tests/upstream/inspect.test.ts) |
-| `json.test.ts` | `strict` | 1 | [`tests/upstream/json.test.ts`](./tests/upstream/json.test.ts) |
+| `input.test.ts` | `strict` | 0 | [`tests/upstream/input.test.ts`](./tests/upstream/input.test.ts) |
+| `inspect.test.ts` | `strict` | 0 | [`tests/upstream/inspect.test.ts`](./tests/upstream/inspect.test.ts) |
+| `json.test.ts` | `strict` | 0 | [`tests/upstream/json.test.ts`](./tests/upstream/json.test.ts) |
 | `machine.test.ts` | `strict` | 1 | [`tests/upstream/machine.test.ts`](./tests/upstream/machine.test.ts) |
 | `meta.test.ts` | `strict` | 0 | [`tests/upstream/meta.test.ts`](./tests/upstream/meta.test.ts) |
 | `parallel.test.ts` | `strict` | 0 | [`tests/upstream/parallel.test.ts`](./tests/upstream/parallel.test.ts) |
-| `state.test.ts` | `strict` | 1 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
+| `state.test.ts` | `strict` | 0 | [`tests/upstream/state.test.ts`](./tests/upstream/state.test.ts) |
 | `tags.test.ts` | `strict` | 0 | [`tests/upstream/tags.test.ts`](./tests/upstream/tags.test.ts) |
-| `transition.test.ts` | `strict` | 3 | [`tests/upstream/transition.test.ts`](./tests/upstream/transition.test.ts) |
+| `transition.test.ts` | `strict` | 0 | [`tests/upstream/transition.test.ts`](./tests/upstream/transition.test.ts) |
 
 ### Upstream Suites Not Yet Onboarded
 `invoke.test.ts`, `spawn.test.ts`, `actor.test.ts`.
@@ -49,11 +49,11 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
   - [x] `states` (Iterative state node hierarchy parsing) `[Rust | WASM | C/C++]`
   - [x] `version` (Machine versioning on `StateNode`) `[WASM]`
   - [x] `types` / `schemas` (TypeScript type schemas pass-through) `[Rust | WASM]`
-- [ ] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts) — 20/21 passing in `tests/state.test.ts`, 1 `spawn` test skipped)
+- [x] **State Nodes** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/state.test.ts) — 21/21 passing in `tests/state.test.ts`)
   - [x] Atomic States (Leaf nodes) `[Rust | WASM | C/C++]`
   - [x] Compound States (Nested states with `initial`) `[Rust | WASM | C/C++]`
   - [x] Parallel States (Orthogonal regions) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/parallel.test.ts) — 28/28 passing in `tests/parallel.test.ts`)
-  - [ ] Final States (`type: 'final'`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts) — 30/33 passing in `tests/final.test.ts`, 3 actor-model skips)
+  - [x] Final States (`type: 'final'`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/final.test.ts) — 33/33 passing in `tests/final.test.ts`, 0 skips)
   - [x] **History States** (`type: 'history'`, `history: 'shallow' | 'deep'`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/history.test.ts) — 33/33 passing in `tests/history.test.ts`)
     - [x] Shallow history (default) `[Rust | WASM | C/C++]`
     - [x] Deep history (`history: 'deep'`) `[Rust | WASM | C/C++]`
@@ -61,7 +61,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
     - [x] History in parallel states `[Rust | WASM | C/C++]`
     - [x] Multistage history `[Rust | WASM | C/C++]`
     - [x] History state persistence/revival (`historyValue`) `[Rust | WASM | C/C++]`
-- [ ] **Transitions** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/transition.test.ts) — 12/15 passing in `tests/transition.test.ts`, 3 actor-model skips)
+- [x] **Transitions** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/transition.test.ts) — 15/15 passing in `tests/transition.test.ts`, 0 skips)
   - [x] Event Transitions (`on: { EVENT: ... }`) `[Rust | WASM | C/C++]`
     - **Documented Memory Constraint (Pre-Start Event Dropping)**: Unlike XState 5 in JS (which buffers `actor.send()` calls before `actor.start()` in an unbounded heap array), `lavi` intentionally drops events sent before `start()` to prevent hardware interrupts or sensor polling before initialization from exhausting microcontroller RAM.
   - [x] Eventless Transitions (`always: [...]`) `[Rust | WASM | C/C++]`
@@ -91,7 +91,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
   - [x] Guard override via `machine.provide()` `[WASM]`
   - [x] Parameterized Guards (`params` passed to guard callbacks) `[Rust | WASM | C/C++]` (`fsm_register_guard_with_params` in C, `registerGuardWithParams` in C++)
   - [x] Higher-Order Guards (`and`, `or`, `not`, `stateIn`) `[Rust | WASM | C/C++]`
-- [ ] **Actions** (`entry`, `exit`, `actions`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts) — 111/136 passing in `tests/actions.test.ts`, strict conformance, resolved in `TD-2`, `M3`, and `TD-17`)
+- [ ] **Actions** (`entry`, `exit`, `actions`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actions.test.ts) — 133/136 passing in `tests/actions.test.ts`, strict conformance, 0 feature skips, 2 skips [1 upstream skip + 1 non-js-constraint], 1 todo [upstream todo])
   - [x] Named Actions (`fsm_register_action` in C, `registerAction` in C++, `actions` map in Rust, `setup`/`provide` in WASM) `[Rust | WASM | C/C++]`
   - [x] Inline Actions (`js_sys::Function` in WASM/JS bridged to synthetic named actions) `[WASM]`
   - [x] Action override via `machine.provide()` `[WASM]`
@@ -100,7 +100,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
   - [x] Exit actions (state exit in reverse document order) `[Rust | WASM | C/C++]`
   - [x] Transition actions `[Rust | WASM | C/C++]`
   - [x] Initial transition actions (`initial: { target, actions }`) `[Rust | WASM | C/C++]`
-  - [ ] **Built-in Actions:**
+  - [x] **Built-in Actions:**
     - [x] `assign` (Update context) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/assign.test.ts) — 14/14 passing in `tests/assign.test.ts`)
       - [x] Declarative object-based static assignment (`{ type: 'xstate.assign', assignment: { ... } }`) `[Rust | WASM | C/C++]`
       - [x] Function-based, inline property, and parameterized (`params`) assignment functions (`assign(({ context, event }, params) => ...)` bridged via callbacks) `[Rust | WASM]` (C/C++ `fsm_action_callback_t` currently receives `const fsm_value_t* context` read-only)
@@ -109,10 +109,13 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
     - [x] `log` (Logging action) `[Rust | WASM]`
     - [x] `cancel` (Delayed event cancellation) `[Rust | WASM]`
     - [x] `enqueueActions` (Batch action enqueueing with context assignment, guard `check`, `setup`/`provide` registration, static & dynamic `params`, and nested action delegation) `[Rust | WASM]`
-    - [ ] `sendTo` / `sendParent` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actor.test.ts))
-    - [ ] `stopChild`
+    - [x] `sendParent` (Event relay from child actor to parent) `[WASM]`
+    - [ ] `sendTo` (Event dispatch to named actor or ActorRef; verified in `tests/actions.test.ts`) `[WASM]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/actor.test.ts))
+    - [x] `stopChild` (Child actor termination action creator and dynamic stop in actions/enqueueActions) `[WASM]`
     - [x] `emit` (Event emitter action capture in pure transitions) `[Rust | WASM]`
-- [ ] **Context & Input** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/input.test.ts) — 4/14 passing in `tests/input.test.ts`, 10 actor-model skips)
+    - **Documented Target-Language Constraints (Actions)**:
+      - Dev-mode warning snapshot assertions (`should warn if called in custom action`) are skipped by design because capturing and snapshotting development console warnings for illegal imperative action calls in custom action functions is host-specific JavaScript runtime behavior with no compiled or microcontroller equivalent.
+- [x] **Context & Input** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/input.test.ts) — 14/14 passing in `tests/input.test.ts`, 0 skips)
   - [x] Context initialization from JSON object `[Rust | WASM | C/C++]`
   - [x] Function-based lazy context initialization (`context: () => ({ ... })`) `[WASM]`
   - [x] Context property inspection in C/C++ callbacks (`fsm_value_is_object`, `fsm_value_is_string`, `fsm_value_is_number`, `fsm_value_is_bool`, `fsm_value_get_string`, `fsm_value_get_number`, `fsm_value_get_bool`, `fsm_value_get_property`) `[C/C++]`
@@ -130,8 +133,9 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
   - [x] `state.status` (`'active' | 'done' | 'stopped'` in WASM, `RuntimeMachine::status()` / `is_done()` / `stop()` in Rust, `fsm_is_done` / `fsm_stop` in C, and `lavi::Machine::isDone()` / `stop()` in C++) `[Rust | WASM | C/C++]`
   - [x] `state.can(event)` (Pure transition check with guards across `RuntimeMachine::can` / `can_event`, `Snapshot::can`, `fsm_can`, and `lavi::Machine::can`) `[Rust | WASM | C/C++]`
   - [x] `state.hasTag(tag)` (Active state hierarchy tag check across `RuntimeMachine::has_tag`, `Snapshot::hasTag`, `fsm_has_tag`, and `lavi::Machine::hasTag`) `[Rust | WASM | C/C++]`
-- [ ] **Machine / StateNode API**
+- [x] **Machine / StateNode API**
   - [x] `machine.states` (StateNode tree registry) `[WASM]`
+  - [x] `machine.getStateNodeById()` (Resolve child StateNode by string ID) `[WASM]`
   - [x] `machine.events` (Accepted events list in definition order) `[WASM]`
   - [x] `machine.config` (Original machine config reference) `[WASM]`
   - [x] `machine.provide()` (Override guards/actions/context) `[WASM]`
@@ -141,24 +145,24 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 
 ## 4. Actor Model (Medium Priority)
 
-- [ ] **Invoking Actors** (`invoke`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/invoke.test.ts) — not yet implemented; see `TD-7` in [`TECH_DEBT.md`](./TECH_DEBT.md))
-  - [ ] Invoke Promise (`fromPromise`)
-  - [ ] Invoke Callback (`fromCallback`)
-  - [ ] Invoke Observable (`fromObservable`)
-  - [ ] Invoke Machine (`fromTransition` / child machine)
-  - [ ] `onDone` / `onError` (Transition on actor completion/failure)
-- [ ] **Spawning Actors** (`spawn`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/spawn.test.ts) — not yet implemented)
-  - [ ] Dynamic child actor creation via `assign` / `spawnChild`
+- [x] **Invoking Actors** (`invoke`) (Lifecycle in `lavi-wasm`; TD-7 resolved)
+  - [x] Invoke Promise (`fromPromise`) `[WASM]`
+  - [x] Invoke Callback (`fromCallback`) `[WASM]`
+  - [x] Invoke Observable (`fromObservable`) `[WASM]`
+  - [x] Invoke Machine (`fromTransition` / child machine) `[WASM]`
+  - [x] `onDone` / `onError` (Transition on actor completion/failure) `[WASM]`
+- [x] **Spawning Actors** (`spawn`)
+  - [x] Dynamic child actor creation via `assign` / `spawnChild` `[WASM]`
 
 ---
 
 ## 5. Advanced & Niche (Low Priority)
 
-- [ ] **Deep Persistence** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/json.test.ts) — 2/3 passing in `tests/json.test.ts`, 1 actor-model skip)
+- [x] **Deep Persistence** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/json.test.ts) — 3/3 passing in `tests/json.test.ts`)
   - [x] Persisting/Restoring state snapshots (`getPersistedSnapshot()`, `createActor(machine, { snapshot })`, `RuntimeMachine::get_snapshot_json`/`restore_from_snapshot_json`, `fsm_get_snapshot_json`/`fsm_restore_snapshot_json`, `lavi::Machine::getSnapshot`/`restoreSnapshot`) `[Rust | WASM | C/C++]`
   - [x] History value persistence and `StateNode` reference revival `[Rust | WASM | C/C++]`
   - [x] Machine definition schema conformity and serialization (`machine.definition`, `JSON.stringify(machine.definition)`) `[Rust | WASM]`
-- [ ] **Inspection & Telemetry** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/inspect.test.ts) — 11/12 passing in `tests/inspect.test.ts`, strict conformance, 1 multi-actor skip)
+- [x] **Inspection & Telemetry** ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/inspect.test.ts) — 12/12 passing in `tests/inspect.test.ts`, strict conformance, 0 skips)
   - [x] `inspect` callback & observer (`createActor(machine, { inspect })`, `actor.system.inspect(fnOrObserver)`, `RuntimeMachine::register_inspector`, `fsm_register_inspector` in `lavi.h`, `registerInspector` in `lavi.hpp`, `register_inspector` / `@machine.inspector()` in Python, `registerInspector` / `onInspect` in Java/Kotlin, `registerInspector` in Swift, and `registerInspector` in Dart) `[Rust | WASM | C/C++]`
   - [x] Full `@xstate.actor`, `@xstate.event`, `@xstate.action`, `@xstate.microstep`, and `@xstate.snapshot` inspection protocol (including `isMachineSnapshot` type guard) `[Rust | WASM | C/C++]`
 - [x] **Tags** (`tags: [...]`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/tags.test.ts) — 6/6 passing in `tests/tags.test.ts`, 0 skips)

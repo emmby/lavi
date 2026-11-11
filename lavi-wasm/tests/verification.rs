@@ -47,11 +47,11 @@ fn verify_scenario(scenario: JsValue) {
     let inspect_opts = js_sys::Object::new();
     js_sys::Reflect::set(&inspect_opts, &"inspect".into(), inspector.as_ref().unchecked_ref()).unwrap();
 
-    let runner = wasm_machine.create_actor_method(inspect_opts.into()).expect("Failed to spawn runner");
+    let runner = wasm_machine.create_actor(inspect_opts.into()).expect("Failed to spawn runner");
     
     // 3. Start WASM
     console::log_1(&"Starting WASM runner...".into());
-    let _ = runner.start();
+    let _ = runner.start_native();
 
     // 4. Run Events
     let events_arr = js_sys::Array::from(&events);
@@ -177,7 +177,7 @@ fn test_js_to_value_ignores_undefined_and_functions() {
     }"#;
     let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
     let provided = machine.provide(JsValue::NULL, Some(obj.into())).unwrap();
-    let runner = provided.create_actor_method(JsValue::NULL).unwrap();
+    let runner = provided.create_actor(JsValue::NULL).unwrap();
     let snapshot = runner.get_snapshot();
     let ctx_js = snapshot.context();
     let a_val = js_sys::Reflect::get(&ctx_js, &"a".into()).unwrap();
@@ -215,7 +215,7 @@ fn test_wasm_simulated_clock_and_get_next_deadline() {
     js_sys::Reflect::set(&opts, &"clock".into(), &clock_js).unwrap();
 
     let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
-    let actor = machine.create_actor_method(opts.into()).unwrap().start();
+    let actor = machine.create_actor(opts.into()).unwrap().start_native();
 
     let sub_count = std::rc::Rc::new(std::cell::Cell::new(0u32));
     let sub_count_clone = sub_count.clone();
@@ -281,7 +281,7 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     js_sys::Reflect::set(&opts, &"guards".into(), &guards_obj).unwrap();
 
     let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), None).unwrap();
-    let actor = machine.create_actor_method(opts.into()).unwrap().start();
+    let actor = machine.create_actor(opts.into()).unwrap().start_native();
 
     assert_eq!(actor.get_next_deadline(), Some(100.0));
 
@@ -298,7 +298,7 @@ fn test_wasm_actor_tick_multi_step_and_stopped_actor() {
     let sim_js: JsValue = sim_clock.clone().into();
     js_sys::Reflect::set(&sim_opts, &"clock".into(), &sim_js).unwrap();
     js_sys::Reflect::set(&sim_opts, &"guards".into(), &guards_obj).unwrap();
-    let stopped_actor = machine.create_actor_method(sim_opts.into()).unwrap().start();
+    let stopped_actor = machine.create_actor(sim_opts.into()).unwrap().start_native();
     let _ = stopped_actor.stop();
     assert_eq!(stopped_actor.get_next_deadline(), None);
     sim_clock.increment(100_000.0);
@@ -363,7 +363,7 @@ fn test_wasm_initial_state_deferral_and_compound_order() {
     }"#;
 
     let machine = lavi_wasm::create_machine(JsValue::from_str(machine_def), Some(opts.into())).unwrap();
-    let actor = machine.create_actor_method(JsValue::NULL).unwrap();
+    let actor = machine.create_actor(JsValue::NULL).unwrap();
 
     // Pre-start createActor and getSnapshot() must not fire side-effect actions
     assert!(order.borrow().is_empty());
@@ -371,7 +371,7 @@ fn test_wasm_initial_state_deferral_and_compound_order() {
     assert!(order.borrow().is_empty());
 
     // start() executes once with xstate.init in root-to-leaf order; second start() is a no-op
-    let actor = actor.start().start();
+    let actor = actor.start_native().start_native();
     assert_eq!(actor.get_snapshot().status(), "active");
 
     assert_eq!(

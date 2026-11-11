@@ -11,15 +11,6 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
 
 ## Open Cleanup Items
 
-### `TD-7`: Remove `def.invoke` Execution Hack from State Exit Loop in `lavi`
-- **Files**: [`lavi/src/lib.rs`](./lavi/src/lib.rs) (lines 2213–2217), [`lavi-wasm/src/lib.rs`](./lavi-wasm/src/lib.rs)
-- **Problem**: `RuntimeMachine::transition_internal` executes `def.invoke` entries as synchronous named actions during **state exit**, which was an early prototype workaround rather than proper XState 5 actor invocation lifecycle on state entry/exit.
-- **Evaluation & Current Status (Milestone 5)**:
-  - Empirically evaluated in Milestone 5: removing lines 2213–2217 was tested against the full test suite.
-  - Test dependency identified: `tests/history.test.ts` test `"should invoke an actor when reentering the stored configuration through the history state"` relies on this exit behavior (`expect(spy).toHaveBeenCalledTimes(1)` fails with 0 calls if lines 2213–2217 are removed).
-  - Root cause: Root-level history resolution in `RuntimeMachine` currently falls back to `refresh` (the history state node itself) without re-entering `running`. The exit loop executed `def.invoke` when `running` exited, which masked the lack of full re-entry and child actor lifecycle management.
-  - Action taken: Retained lines 2213–2217 until the Actor Model (`invoke.test.ts`) is onboarded. Resolving `TD-7` cleanly requires implementing proper child actor lifecycle (`ActorRef` creation on state entry, termination on state exit) rather than simply deleting the exit loop.
-
 ### `TD-11`: Zero-Allocation Pass-1 Size Query in `fsm_get_snapshot_json`
 - **Files**: [`lavi-c-cpp/src/lib.rs`](./lavi-c-cpp/src/lib.rs) (lines 601–632), [`lavi/src/json.rs`](./lavi/src/json.rs)
 - **Problem**: In C FFI, `fsm_get_snapshot_json` allocates the full serialized JSON `String` on the heap during the pass-1 size query (`buffer == NULL` or `buffer_len == 0`) and serializes/allocates it a second time on pass 2 when copying into the caller's buffer (such as in `lavi::Machine::getSnapshot()`).
@@ -50,18 +41,38 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
     - Expose `const fsm_value_t* fsm_get_context(const MachineContext* ctx)`, `const fsm_value_t* fsm_get_output(const MachineContext* ctx)`, and `const fsm_value_t* fsm_get_state_meta(const MachineContext* ctx, const char* state_path)` in C (`lavi.h`) and `lavi::Value` wrappers (`getContext()`, `getOutputValue()`, `getStateMetaValue()`) in C++ (`lavi.hpp`).
     - Update `RuntimeMachine::get_output(&self)` to return `Option<Cow<'_, Value>>` (or cache dynamic output on `self.machine_output` when entering the final state) so static/cached outputs can be borrowed with zero heap allocation. Retain `fsm_get_meta_json` for aggregated multi-state metadata serialization.
 
-### `TD-18`: Iterative Work-Stack for Nested `parse_guard` / `parse_action` & Richer TypeScript Generics in `lavi-wasm`
-- **Files**: [`lavi/src/parser.rs`](./lavi/src/parser.rs), [`lavi-wasm/pkg-npm/lavi.d.ts`](./lavi-wasm/pkg-npm/lavi.d.ts)
+### `TD-20`: Iterative Work-Stacks for Remaining `lavi-wasm` Helpers & Richer TypeScript Generics in `lavi-wasm`
+- **Files**: [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs), [`lavi-wasm/src/state_node.rs`](./lavi-wasm/src/state_node.rs), [`lavi-wasm/src/value_bridge.rs`](./lavi-wasm/src/value_bridge.rs), [`lavi-wasm/pkg-npm/lavi.d.ts`](./lavi-wasm/pkg-npm/lavi.d.ts)
 - **Problem**:
-  1. While `parse_states_iterative`, `Value`, and `StateValue` use explicit heap `Vec` work-stacks, `parse_guard` (for nested `and`/`or`/`not` combinators) and `parse_action` (for action arrays) in `lavi/src/parser.rs` still use recursion.
+  1. While `lavi` core (`parser.rs`, `json.rs`, `types.rs`, `runtime.rs`) and `lavi-wasm`'s `process_config` and `ensure_invoke_child` use iterative heap `Vec` work-stacks, several JS object/action/state-node serialization helpers in `lavi-wasm` (`evaluate_guard_entry`, `evaluate_guard_in_check`, `process_guard_value`, `resolve_pure_actions`, `build_state_value_for_node`, `is_valid_state_value_js`, `normalize_undefined`, `collect_output_resolvers`, `resolve_state_from_key`, `map_state_map`, `serialize_state_node_definition`, `js_to_value`, and `value_to_js`) still use call-stack recursion.
   2. `lavi-wasm` TypeScript declarations use `any` for machine/actor generics, requiring `: any` annotations on untyped callback parameters under `strict: true`.
 - **Required Fix**:
-  - Convert `parse_guard` and `parse_action` in `lavi/src/parser.rs` to iterative `Vec` work-stacks and add an adversarial deep-combinator stack test in `lavi/tests/adversarial_stack_tests.rs`.
+  - Convert the remaining `lavi-wasm` recursive helpers to iterative `Vec` work-stacks.
   - Enhance the TypeScript declaration wrapper in `lavi-wasm` to propagate `TContext` and `TEvent` generics across `setup()`, `createMachine()`, `createActor()`, `assign()`, and `enqueueActions()`.
+
+### `TD-21`: Cross-Language Binding Parity for Pure Transitions, Final Substate Output, & Invoke Lifecycle
+- **Files**: [`lavi-c-cpp/`](./lavi-c-cpp), [`lavi-py/`](./lavi-py), [`lavi-jvm/`](./lavi-jvm), [`lavi-swift/`](./lavi-swift), [`lavi-dart/`](./lavi-dart), [`lavi-csharp/`](./lavi-csharp)
+- **Problem**: The new portable core capabilities added to `lavi::RuntimeMachine` during the conformance skip-elimination waves—specifically `initial_transition_pure`, `transition_pure` / `transition_pure_with_context_and_history`, `get_final_leaf_output`, `register_output_resolver`, and `invoke` child lifecycle hooks—are currently exposed in Rust (`lavi`) and JS/WASM (`lavi-wasm`), but do not yet have corresponding idiomatic wrappers in C/C++, Python, JVM, Swift, Dart, and C#.
+- **Required Fix**: Expose idiomatic pure transition (`initialTransition` / `transition`), output resolver registration, and invoke/actor hooks across `lavi-c-cpp` and the 5 high-level language bindings.
+
+### `TD-22`: Deduplicate `lavi-wasm/src/logic.rs` & Modularize `actions.rs` / `actor.rs`
+- **Files**: [`lavi-wasm/src/logic.rs`](./lavi-wasm/src/logic.rs), [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs)
+- **Problem**:
+  1. `lavi-wasm/src/logic.rs` (`fromPromise`, `fromTransition`, `fromObservable`, `fromEventObservable`, `fromCallback`) duplicates the pure JS implementations in `tests/stubs.ts` using verbose `js_sys::Reflect` and `Function::new_with_args` boilerplate in Rust/WASM, inflating the WASM binary size.
+  2. `lavi-wasm/src/actions.rs` (~3,600 lines) and `lavi-wasm/src/actor.rs` (~3,400 lines) have grown large and mix config normalization, guard evaluation, built-in action creators, pure action resolution, system bus routing, and `invoke` child management.
+- **Required Fix**: Move pure JS actor logic creators (`fromPromise`, `fromCallback`, etc.) to a lightweight JS shim layer in `lavi-wasm/pkg-npm/` (or consolidate with `tests/stubs.ts`), and split `lavi-wasm/src/actions.rs` and `lavi-wasm/src/actor.rs` into focused submodules (`guards.rs`, `invoke.rs`, `system.rs`, `inspect.rs`).
 
 ---
 
 ## Resolved Cleanup Items
+
+### `TD-18`: Eviction/Cleanup for `LIVE_ACTOR_REFS` in `lavi-wasm` upon Actor Stop
+- **Files Modified**: [`lavi-wasm/src/value_bridge.rs`](./lavi-wasm/src/value_bridge.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs)
+- **Resolution**: Added `unregister_live_actor_ref` in `lavi-wasm/src/value_bridge.rs` and evicted both `session_id` and `custom_id` from `LIVE_ACTOR_REFS` in `Actor::stop()`.
+
+### `TD-19`: `_cancelSendTimer` Clock Resolution via `inner.host_clock` Instead of Global `clearTimeout`
+- **Files Modified**: [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs)
+- **Resolution**: Updated `_cancelSendTimer` and `Actor::stop()` to clear `send_timer_handles` using `resolve_host_clock(inner.host_clock.as_ref())`.
 
 ### `TD-9`: Consolidate Split-Brain WASM `Actor` State, Dual Reentrant Queues, and `Rc<MachineDefinition>` [flowos: d78f08dc-4708-4c2b-b2a9-fa1e745eea12]
 - **Files Modified**: [`lavi/src/runtime.rs`](./lavi/src/runtime.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs), [`lavi-wasm/src/actions.rs`](./lavi-wasm/src/actions.rs), [`lavi-wasm/src/state_node.rs`](./lavi-wasm/src/state_node.rs)
@@ -151,3 +162,11 @@ This file tracks pre-existing conformance discrepancies and legacy codebase anti
   - Split `lavi/src/lib.rs` into focused `#![no_std]` submodules: `types.rs` (`StateValue`, `StateType`, `Value`, `Action`, `TransitionGuard`, `MachineDefinition`, `FnvHasher`, `IndexMap`, callback type aliases), `runtime.rs` (`RuntimeMachine`, microstep/macrostep engine, LCCA resolution, state completion, pure transition helpers), `snapshot.rs` (snapshot serialization and hydration on `RuntimeMachine`), and `clock.rs` (`SimulatedClock`, `IntoClockFn`), while keeping `lavi/src/lib.rs` as a clean backwards-compatible facade re-exporting all public APIs.
   - Split `lavi-wasm/src/lib.rs` into focused submodules: `state_node.rs` (`StateNode`, `SetupObject`, `createMachine`, `setup`, `initialTransition`, `transition`, `getNextSnapshot`), `actor.rs` (`Actor`, `Snapshot`, `SimulatedClock`, `createActor`, subscriptions, host timer bridging), `actions.rs` (`assign`, `raise`, `log`, `cancel`, `enqueueActions`, `emit`, `assertEvent`, guard combinators, and JS action/guard/config extraction), and `value_bridge.rs` (`js_to_value`, `value_to_js`, re-exported from `utils.rs` and `lib.rs`).
 - **Verification**: Verified via `cargo clippy --workspace --all-targets -- -D warnings` (0 warnings), `cargo test --workspace` (all passed), `npm run test:conformance-check` (0 errors), and `npm test` (`test:conformance-check`, `test:native`, `test:wasm`, `test:e2e`, `test:c-cpp`, `test:unit` all passed).
+
+### `TD-7`: Remove `def.invoke` Execution Hack from State Exit Loop in `lavi` (Resolved in Milestone 3)
+- **Files Modified**: [`lavi/src/runtime.rs`](./lavi/src/runtime.rs), [`lavi-wasm/src/actor.rs`](./lavi-wasm/src/actor.rs), [`lavi-wasm/src/logic.rs`](./lavi-wasm/src/logic.rs)
+- **Problem**: `RuntimeMachine::transition_internal` previously executed `def.invoke` entries as synchronous named actions during state exit in an early workaround.
+- **Resolution**:
+  - Removed the legacy invoke execution loops from `lavi/src/runtime.rs`.
+  - Implemented proper full child actor lifecycle management in `lavi-wasm/src/actor.rs`: spawning on state entry, stopping on state exit, forwarding events via `sendParent`, exposing active children via `snapshot.children`, and supporting logic creators (`fromPromise`, `fromObservable`, `fromCallback`, `fromTransition`).
+- **Verification**: Verified via `tests/final.test.ts` (33/33 passed), `tests/input.test.ts` (14/14 passed), `tests/inspect.test.ts` (12/12 passed), `tests/history.test.ts` (33/33 passed), `cargo clippy` (0 warnings), `cargo test --workspace` (all passed), and `npm test` (all passed).

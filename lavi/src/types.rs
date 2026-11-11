@@ -973,6 +973,7 @@ pub struct StateDefinition {
 pub struct InvokeDefinition {
     pub src: Value,
     pub id: Option<String>,
+    pub input: Option<Value>,
 }
 
 impl StateDefinition {

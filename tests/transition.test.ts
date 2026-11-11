@@ -212,7 +212,7 @@ describe('transition function', () => {
     );
   });
 
-  it.skip('sendTo action should be returned', async () => {
+  it('sendTo action should be returned', async () => {
     const machine = createMachine({
       initial: 'a',
       invoke: {
@@ -320,7 +320,7 @@ describe('transition function', () => {
     );
   });
 
-  it.skip('should calculate the next snapshot for transition logic', () => {
+  it('should calculate the next snapshot for transition logic', () => {
     const logic = fromTransition(
       (state, event) => {
         if (event.type === 'next') {
@@ -479,7 +479,7 @@ describe('transition function', () => {
     expect(JSON.parse(db.state).status).toBe('done');
   });
 
-  it.skip('serverless workflow example (experimental)', async () => {
+  it('serverless workflow example (experimental)', async () => {
     const db = {
       state: undefined as any
     };

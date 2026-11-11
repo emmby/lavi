@@ -155,14 +155,21 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
         }
     };
 
-    let id = root
+    let mut id = root
         .swap_remove("id")
         .and_then(|v| v.into_string())
         .unwrap_or_else(|| "(machine)".to_string());
 
+    if id != "(machine)" {
+        while let Some(stripped) = id.strip_prefix("(machine).") {
+            id = stripped.to_string();
+        }
+    }
+
     let raw_type = root.swap_remove("type").and_then(|v| v.into_string());
 
     let (initial_str, initial_actions) = resolve_initial_info(root.swap_remove("initial"));
+    let initial_str = initial_str.map(|s| normalize_initial_str(s, &id, "", None, None));
     let states_val = root.swap_remove("states");
 
     let mut on = parse_on(root.swap_remove("on"));
@@ -181,7 +188,8 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
     }
     let entry = parse_action_list(root.swap_remove("entry"));
     let exit = parse_action_list(root.swap_remove("exit"));
-    let invoke = parse_invoke_list(root.swap_remove("invoke"));
+    let root_state_id = if id.is_empty() { "(machine)" } else { &id };
+    let invoke = parse_invoke_list(root.swap_remove("invoke"), root_state_id, &mut on);
     let context = root.swap_remove("context");
     let types = root.swap_remove("types");
     let tags = parse_string_list(root.swap_remove("tags"));
@@ -190,7 +198,6 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
     let output = root.swap_remove("output");
 
     let mut id_map = IndexMap::new();
-    id_map.insert(String::new(), String::new());
     if !id.is_empty() {
         id_map.insert(id.clone(), String::new());
     }
@@ -237,6 +244,7 @@ pub fn parse_machine_definition(val: Value) -> Result<MachineDefinition, JsonErr
 struct StateWorkFrame {
     key: String,
     current_path: String,
+    effective_id: String,
     state_def: StateDefinition,
     remaining_children: indexmap::map::IntoIter<String, Value>,
 }
@@ -251,9 +259,16 @@ fn parse_states_iterative(
         None => return IndexMap::new(),
     };
 
+    let root_effective_id = if machine_id.is_empty() {
+        "(machine)".to_string()
+    } else {
+        machine_id.to_string()
+    };
+
     let root_frame = StateWorkFrame {
         key: String::new(),
         current_path: String::new(),
+        effective_id: root_effective_id,
         state_def: StateDefinition::default_atomic(),
         remaining_children: root_children,
     };
@@ -271,12 +286,23 @@ fn parse_states_iterative(
             let mut child_map = child_val.into_object().unwrap_or_default();
             let child_id = child_map.swap_remove("id").and_then(|v| v.into_string());
 
+            let child_effective_id = if let Some(ref cid) = child_id {
+                cid.clone()
+            } else if top.effective_id.is_empty() || top.effective_id == "(machine)" {
+                child_path.clone()
+            } else {
+                format!("{}.{}", top.effective_id, child_key)
+            };
+
             let default_id = format!("{}.{}", machine_id, child_path);
             if let Some(id) = &child_id {
                 id_map.insert(id.clone(), child_path.clone());
                 id_map.insert(default_id.clone(), child_path.clone());
             } else {
                 id_map.insert(default_id.clone(), child_path.clone());
+            }
+            if child_effective_id != default_id && child_id.as_deref() != Some(&child_effective_id) {
+                id_map.insert(child_effective_id.clone(), child_path.clone());
             }
 
             let output_opt = child_map.swap_remove("output");
@@ -285,6 +311,15 @@ fn parse_states_iterative(
 
             let (initial_str, initial_actions) =
                 resolve_initial_info(child_map.swap_remove("initial"));
+            let initial_str = initial_str.map(|s| {
+                normalize_initial_str(
+                    s,
+                    machine_id,
+                    &child_path,
+                    Some(&child_effective_id),
+                    child_id.as_deref(),
+                )
+            });
 
             let history_val = child_map.swap_remove("history");
             let history_present = !matches!(
@@ -300,7 +335,7 @@ fn parse_states_iterative(
             };
 
             let target = parse_string_list(child_map.swap_remove("target"));
-            let history_target = target.into_iter().next();
+            let history_target = target.into_iter().next().map(normalize_transition_target);
             let history_actions = parse_action_list(child_map.swap_remove("actions"));
 
             let on_done = parse_transition_list(child_map.swap_remove("onDone"));
@@ -323,7 +358,8 @@ fn parse_states_iterative(
             let entry = parse_action_list(child_map.swap_remove("entry"));
             let exit = parse_action_list(child_map.swap_remove("exit"));
             let tags = parse_string_list(child_map.swap_remove("tags"));
-            let invoke = parse_invoke_list(child_map.swap_remove("invoke"));
+            let inv_state_id = child_id.as_deref().unwrap_or(&default_id);
+            let invoke = parse_invoke_list(child_map.swap_remove("invoke"), inv_state_id, &mut on_map);
             let meta = child_map.swap_remove("meta");
             let description = child_map.swap_remove("description").and_then(|v| v.into_string());
 
@@ -364,10 +400,34 @@ fn parse_states_iterative(
                 None
             };
 
+            let initial_val = if matches!(state_type, StateType::Parallel) {
+                None
+            } else if let Some(init) = initial_str {
+                if grandchild_map.contains_key(&init) {
+                    Some(init)
+                } else {
+                    let matched_key = grandchild_map.iter().find_map(|(k, v)| {
+                        if let Value::Object(o) = v {
+                            if let Some(Value::String(cid)) = o.get("id") {
+                                if cid == &init {
+                                    return Some(k.clone());
+                                }
+                            }
+                        }
+                        None
+                    });
+                    Some(matched_key.unwrap_or(init))
+                }
+            } else if grandchild_map.len() == 1 {
+                grandchild_map.keys().next().cloned()
+            } else {
+                None
+            };
+
             let child_state_def = StateDefinition {
                 id: child_id,
                 state_type,
-                initial: initial_str,
+                initial: initial_val,
                 initial_actions,
                 states: IndexMap::new(),
                 on: on_map,
@@ -388,6 +448,7 @@ fn parse_states_iterative(
             stack.push(StateWorkFrame {
                 key: child_key,
                 current_path: child_path,
+                effective_id: child_effective_id,
                 state_def: child_state_def,
                 remaining_children: grandchild_map.into_iter(),
             });
@@ -405,6 +466,63 @@ fn parse_states_iterative(
     }
 
     IndexMap::new()
+}
+
+fn normalize_initial_str(
+    s: String,
+    machine_id: &str,
+    parent_path: &str,
+    effective_id: Option<&str>,
+    custom_id: Option<&str>,
+) -> String {
+    let mut clean = s.as_str();
+    if let Some(stripped) = clean.strip_prefix('#') {
+        clean = stripped;
+    }
+    while let Some(stripped) = clean.strip_prefix("(machine).") {
+        clean = stripped;
+    }
+    if !machine_id.is_empty() && machine_id != "(machine)" {
+        let prefix = format!("{}.", machine_id);
+        while let Some(stripped) = clean.strip_prefix(&prefix) {
+            clean = stripped;
+        }
+        while let Some(stripped) = clean.strip_prefix("(machine).") {
+            clean = stripped;
+        }
+    }
+    if let Some(cid) = custom_id {
+        if !cid.is_empty() && cid != "(machine)" {
+            let prefix = format!("{}.", cid);
+            while let Some(stripped) = clean.strip_prefix(&prefix) {
+                clean = stripped;
+            }
+            while let Some(stripped) = clean.strip_prefix("(machine).") {
+                clean = stripped;
+            }
+        }
+    }
+    if let Some(eid) = effective_id {
+        if !eid.is_empty() && eid != "(machine)" {
+            let prefix = format!("{}.", eid);
+            while let Some(stripped) = clean.strip_prefix(&prefix) {
+                clean = stripped;
+            }
+            while let Some(stripped) = clean.strip_prefix("(machine).") {
+                clean = stripped;
+            }
+        }
+    }
+    if !parent_path.is_empty() {
+        let prefix = format!("{}.", parent_path);
+        while let Some(stripped) = clean.strip_prefix(&prefix) {
+            clean = stripped;
+        }
+        while let Some(stripped) = clean.strip_prefix("(machine).") {
+            clean = stripped;
+        }
+    }
+    clean.to_string()
 }
 
 fn resolve_initial_info(v: Option<Value>) -> (Option<String>, Vec<Action>) {
@@ -526,7 +644,7 @@ fn parse_action(mut val: Value) -> Action {
                     .unwrap_or_default();
                 return Action::Cancel(CancelAction { send_id });
             }
-            if action_type == "xstate.raise.invalid" {
+            if action_type == "xstate.raise.invalid" || action_type == "xstate.sendTo.invalid" {
                 let error_msg = obj
                     .swap_remove("error")
                     .and_then(|v| v.into_string())
@@ -720,14 +838,30 @@ fn parse_guard(val: Value) -> Option<TransitionGuard> {
     last_guard
 }
 
+fn normalize_transition_target(s: String) -> String {
+    let mut clean = s.as_str();
+    let had_hash = clean.starts_with('#');
+    if let Some(stripped) = clean.strip_prefix('#') {
+        clean = stripped;
+    }
+    while clean.starts_with("(machine).(machine).") {
+        clean = &clean["(machine).".len()..];
+    }
+    if had_hash {
+        format!("#{}", clean)
+    } else {
+        clean.to_string()
+    }
+}
+
 fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefinition {
     let target = match obj.swap_remove("target") {
         Some(mut val) => match &mut val {
-            Value::String(s) => Some(vec![core::mem::take(s)]),
+            Value::String(s) => Some(vec![normalize_transition_target(core::mem::take(s))]),
             Value::Array(arr) => {
                 let v: Vec<String> = core::mem::take(arr)
                     .into_iter()
-                    .filter_map(|item| item.into_string())
+                    .filter_map(|item| item.into_string().map(normalize_transition_target))
                     .collect();
                 if v.is_empty() {
                     None
@@ -762,7 +896,7 @@ fn parse_transition_object(mut obj: IndexMap<String, Value>) -> TransitionDefini
 fn parse_single_transition(mut val: Value) -> TransitionDefinition {
     match &mut val {
         Value::String(target) => TransitionDefinition {
-            target: Some(vec![core::mem::take(target)]),
+            target: Some(vec![normalize_transition_target(core::mem::take(target))]),
             guard: None,
             actions: Vec::new(),
             reenter: false,
@@ -787,7 +921,7 @@ fn parse_transition_list(v: Option<Value>) -> Vec<TransitionDefinition> {
                 .map(parse_single_transition)
                 .collect(),
             Value::String(s) => vec![TransitionDefinition {
-                target: Some(vec![core::mem::take(s)]),
+                target: Some(vec![normalize_transition_target(core::mem::take(s))]),
                 guard: None,
                 actions: Vec::new(),
                 reenter: false,
@@ -855,7 +989,11 @@ fn parse_after(v: Option<Value>) -> (IndexMap<u64, Vec<TransitionDefinition>>, I
     (num_after, named_after)
 }
 
-fn parse_invoke_list(v: Option<Value>) -> Vec<InvokeDefinition> {
+fn parse_invoke_list(
+    v: Option<Value>,
+    state_id: &str,
+    on_map: &mut IndexMap<String, Vec<TransitionDefinition>>,
+) -> Vec<InvokeDefinition> {
     let items = match v {
         Some(mut v) => {
             if let Value::Array(arr) = &mut v {
@@ -868,17 +1006,45 @@ fn parse_invoke_list(v: Option<Value>) -> Vec<InvokeDefinition> {
     };
     items
         .into_iter()
-        .filter_map(|mut item| match &mut item {
+        .enumerate()
+        .filter_map(|(index, mut item)| match &mut item {
             Value::Object(o) => {
                 let mut o = core::mem::take(o);
                 let src = o.swap_remove("src").unwrap_or(Value::Null);
                 let id = o.swap_remove("id").and_then(|v| v.into_string());
-                Some(InvokeDefinition { src, id })
+                let input = o.swap_remove("input");
+                let invoke_id = id.clone().unwrap_or_else(|| format!("{}.{}", index, state_id));
+
+                if let Some(on_done) = o.swap_remove("onDone") {
+                    let event_name = format!("xstate.done.actor.{}", invoke_id);
+                    if !on_map.contains_key(&event_name) {
+                        let transitions = parse_transition_list(Some(on_done));
+                        on_map.insert(event_name, transitions);
+                    }
+                }
+
+                if let Some(on_error) = o.swap_remove("onError") {
+                    let event_name = format!("xstate.error.actor.{}", invoke_id);
+                    if !on_map.contains_key(&event_name) {
+                        let transitions = parse_transition_list(Some(on_error));
+                        on_map.insert(event_name, transitions);
+                    }
+                }
+
+                Some(InvokeDefinition {
+                    src,
+                    id: Some(invoke_id),
+                    input,
+                })
             }
-            Value::String(s) => Some(InvokeDefinition {
-                src: Value::String(core::mem::take(s)),
-                id: None,
-            }),
+            Value::String(s) => {
+                let invoke_id = format!("{}.{}", index, state_id);
+                Some(InvokeDefinition {
+                    src: Value::String(core::mem::take(s)),
+                    id: Some(invoke_id),
+                    input: None,
+                })
+            }
             _ => None,
         })
         .collect()

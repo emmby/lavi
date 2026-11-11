@@ -341,7 +341,7 @@ describe('State', () => {
       ).toBe(false);
     });
 
-    it.skip('should not spawn actors when determining if an event is accepted', () => {
+    it('should not spawn actors when determining if an event is accepted', () => {
       let spawned = false;
       const machine = createMachine({
         context: {},

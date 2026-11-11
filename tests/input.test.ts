@@ -65,7 +65,7 @@ describe('input', () => {
     }).not.toThrowError();
   });
 
-  it.skip('should provide input data to invoked machines', () => {
+  it('should provide input data to invoked machines', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const invokedMachine = createMachine({
       types: {} as {
@@ -92,7 +92,7 @@ describe('input', () => {
     return promise;
   });
 
-  it.skip('should provide input data to spawned machines', () => {
+  it('should provide input data to spawned machines', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const spawnedMachine = createMachine({
       types: {} as {
@@ -122,7 +122,7 @@ describe('input', () => {
     return promise;
   });
 
-  it.skip('should create a promise with input', async () => {
+  it('should create a promise with input', async () => {
     const promiseLogic = fromPromise<{ count: number }, { count: number }>(
       ({ input }) => Promise.resolve(input)
     );
@@ -136,7 +136,7 @@ describe('input', () => {
     expect(promiseActor.getSnapshot().output).toEqual({ count: 42 });
   });
 
-  it.skip('should create a transition function actor with input', () => {
+  it('should create a transition function actor with input', () => {
     const transitionLogic = fromTransition(
       (state) => state,
       ({ input }) => input
@@ -149,7 +149,7 @@ describe('input', () => {
     expect(transitionActor.getSnapshot().context).toEqual({ count: 42 });
   });
 
-  it.skip('should create an observable actor with input', () => {
+  it('should create an observable actor with input', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const observableLogic = fromObservable<
       { count: number },
@@ -172,7 +172,7 @@ describe('input', () => {
     return promise;
   });
 
-  it.skip('should create a callback actor with input', () => {
+  it('should create a callback actor with input', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const callbackLogic = fromCallback(({ input }) => {
       expect(input).toEqual({ count: 42 });
@@ -186,7 +186,7 @@ describe('input', () => {
     return promise;
   });
 
-  it.skip('should provide a static inline input to the referenced actor', () => {
+  it('should provide a static inline input to the referenced actor', () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -218,7 +218,7 @@ describe('input', () => {
     expect(spy).toHaveBeenCalledWith(42);
   });
 
-  it.skip('should provide a dynamic inline input to the referenced actor', () => {
+  it('should provide a dynamic inline input to the referenced actor', () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -262,7 +262,7 @@ describe('input', () => {
     expect(spy).toHaveBeenCalledWith(142);
   });
 
-  it.skip('should call the input factory with self when invoking', () => {
+  it('should call the input factory with self when invoking', () => {
     const spy = vi.fn();
 
     const machine = createMachine({
@@ -277,7 +277,7 @@ describe('input', () => {
     expect(spy).toHaveBeenCalledWith(actor);
   });
 
-  it.skip('should call the input factory with self when spawning', () => {
+  it('should call the input factory with self when spawning', () => {
     const spy = vi.fn();
 
     const machine = createMachine(

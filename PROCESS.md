@@ -39,11 +39,11 @@ This document defines the autonomous workflow for implementing features and pass
 Statechart features apply across the core engine and its target language bindings:
 
 1. **Core Portable Engine (`lavi`)**:
-   - Implement the statechart semantics in `lavi/src/lib.rs` and deserialization in `src/json.rs` / `src/parser.rs`.
+   - Implement the statechart semantics in `lavi/src/runtime.rs` (alongside `src/types.rs`, `src/snapshot.rs`, `src/clock.rs`, and re-exports in `src/lib.rs`) and deserialization in `lavi/src/json.rs` / `lavi/src/parser.rs`.
    - Enforce embedded invariants: `#![no_std]` + `alloc` only, microcontroller dependency policy (`indexmap` by default; ask for user approval before adding any new `#![no_std]` crate rather than reinventing non-trivial data structures), iterative heap `Vec` work-stacks (zero CPU call-stack recursion), and move semantics.
    - Add native Rust unit tests (`cargo test`).
 2. **WASM / JS Adapter (`lavi-wasm`)**:
-   - Bridge JS APIs and inline JS functions (`js_sys::Function` $\rightarrow$ synthetic named callbacks) in `lavi-wasm/src/lib.rs`.
+   - Bridge JS APIs and inline JS functions (`js_sys::Function` $\rightarrow$ synthetic named callbacks) in `lavi-wasm/src/` (`actor.rs`, `actions.rs`, `state_node.rs`, `value_bridge.rs`, `lib.rs`).
    - Rebuild WASM (`npm run build:npm`) and run `npx vitest run tests/<filename>.test.ts` until the target conformance tests pass unmodified.
 3. **C & C++ Embedded Adapter (`lavi-c-cpp`)**:
    - Expose any new runtime capabilities idiomatically in C (`lavi-c-cpp/include/lavi.h` and `src/lib.rs`) using opaque handles and function pointers with `void* user_data`, and in C++11 (`lavi-c-cpp/include/lavi.hpp`) using RAII and move-safe methods.

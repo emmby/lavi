@@ -2,11 +2,13 @@
 
 pub mod actions;
 pub mod actor;
+pub mod logic;
 pub mod state_node;
 pub mod utils;
 pub mod value_bridge;
 
 pub use actions::*;
 pub use actor::*;
+pub use logic::*;
 pub use state_node::*;
 pub use value_bridge::*;

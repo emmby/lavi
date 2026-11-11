@@ -1115,7 +1115,7 @@ describe('final states', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it.skip('should only call exit actions once when a child machine reaches its final state and sends an event to its parent that ends up stopping that child', () => {
+  it('should only call exit actions once when a child machine reaches its final state and sends an event to its parent that ends up stopping that child', () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -1160,7 +1160,7 @@ describe('final states', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should deliver final outgoing events (from final entry action) to the parent before delivering the `xstate.done.actor.*` event', () => {
+  it('should deliver final outgoing events (from final entry action) to the parent before delivering the `xstate.done.actor.*` event', () => {
     const child = createMachine({
       initial: 'start',
       states: {
@@ -1203,7 +1203,7 @@ describe('final states', () => {
     expect(actorRef.getSnapshot().value).toBe('canceled');
   });
 
-  it.skip('should deliver final outgoing events (from root exit action) to the parent before delivering the `xstate.done.actor.*` event', () => {
+  it('should deliver final outgoing events (from root exit action) to the parent before delivering the `xstate.done.actor.*` event', () => {
     const child = createMachine({
       initial: 'start',
       states: {

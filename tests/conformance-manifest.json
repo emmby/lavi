@@ -7,15 +7,7 @@
     },
     "state.test.ts": {
       "status": "strict",
-      "allowed_skips": [
-        {
-          "title": "should not spawn actors when determining if an event is accepted",
-          "category": "unimplemented-feature",
-          "feature": "spawn",
-          "reason": "Actor spawning (spawn / fromCallback) is not yet implemented",
-          "ref": "XSTATE_5_FEATURES.md"
-        }
-      ]
+      "allowed_skips": []
     },
     "history.test.ts": {
       "status": "strict",
@@ -28,160 +20,6 @@
     "actions.test.ts": {
       "status": "strict",
       "allowed_skips": [
-        {
-          "title": "exit actions should be called when invoked machine reaches its final state",
-          "category": "unimplemented-feature",
-          "feature": "invoke",
-          "reason": "Invoked actor lifecycle (invoke: { src }) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "sent events from exit handlers of a done child should be received by the parent ",
-          "category": "unimplemented-feature",
-          "feature": "actor-model",
-          "reason": "Child actor event communication (sendParent / spawnChild) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "sent events from exit handlers of a done child should be received by its children",
-          "category": "unimplemented-feature",
-          "feature": "actor-model",
-          "reason": "Child actor event communication (sendParent / spawnChild) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should provide self",
-          "category": "unimplemented-feature",
-          "feature": "action-self",
-          "reason": "self ActorRef parameter in action callback parameters is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should forward an event to a service",
-          "category": "unimplemented-feature",
-          "feature": "forwardTo",
-          "reason": "forwardTo actor communication action creator is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should forward an event to a service (dynamic)",
-          "category": "unimplemented-feature",
-          "feature": "forwardTo",
-          "reason": "forwardTo actor communication action creator is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should not cause an infinite loop when forwarding to undefined",
-          "category": "unimplemented-feature",
-          "feature": "forwardTo",
-          "reason": "forwardTo actor communication action creator is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to communicate with the parent using params",
-          "category": "unimplemented-feature",
-          "feature": "enqueueActions",
-          "reason": "enqueueActions action creator is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should enqueue.sendParent",
-          "category": "unimplemented-feature",
-          "feature": "enqueueActions",
-          "reason": "enqueueActions action creator is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to send an event to an actor",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to send an event from expression to an actor",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to send an event to a named actor",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to send an event directly to an ActorRef",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to read from event",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should error if given a string",
-          "category": "unimplemented-feature",
-          "feature": "raise-sendTo-validation",
-          "reason": "Runtime input validation and observer error channel delivery for action creators (raise, sendTo) are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "a self-event \"handler\" of an event sent using sendTo should be able to read updated snapshot of self",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should not attempt to deliver a delayed event to the spawned actor's ID that was stopped since the event was scheduled",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should not attempt to deliver a delayed event to the invoked actor's ID that was stopped since the event was scheduled",
-          "category": "unimplemented-feature",
-          "feature": "sendTo",
-          "reason": "sendTo actor communication action creator and dynamic ActorRef targeting are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it first",
-          "category": "unimplemented-feature",
-          "feature": "cancel-child",
-          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it second",
-          "category": "unimplemented-feature",
-          "feature": "cancel-child",
-          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should not be able to cancel a just scheduled non-delayed event to a just invoked child",
-          "category": "unimplemented-feature",
-          "feature": "cancel-child",
-          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should be able to cancel a just scheduled delayed event to a just invoked child",
-          "category": "unimplemented-feature",
-          "feature": "cancel-child",
-          "reason": "Cross-actor event cancellation and invoked child communication are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
         {
           "title": "should warn if called in custom action",
           "category": "non-js-constraint",
@@ -221,29 +59,7 @@
     },
     "final.test.ts": {
       "status": "strict",
-      "allowed_skips": [
-        {
-          "title": "should only call exit actions once when a child machine reaches its final state and sends an event to its parent that ends up stopping that child",
-          "category": "unimplemented-feature",
-          "feature": "actor-model",
-          "reason": "Invoked child actor lifecycle communication (sendParent / stop) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should deliver final outgoing events (from final entry action) to the parent before delivering the `xstate.done.actor.*` event",
-          "category": "unimplemented-feature",
-          "feature": "actor-model",
-          "reason": "Parent-child actor event ordering with xstate.done.actor.* is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should deliver final outgoing events (from root exit action) to the parent before delivering the `xstate.done.actor.*` event",
-          "category": "unimplemented-feature",
-          "feature": "actor-model",
-          "reason": "Parent-child actor event ordering with xstate.done.actor.* is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        }
-      ]
+      "allowed_skips": []
     },
     "tags.test.ts": {
       "status": "strict",
@@ -255,128 +71,19 @@
     },
     "input.test.ts": {
       "status": "strict",
-      "allowed_skips": [
-        {
-          "title": "should provide input data to invoked machines",
-          "category": "actor-model-unsupported",
-          "feature": "invoke",
-          "reason": "Invoked actor lifecycle (invoke: { src, input }) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should provide input data to spawned machines",
-          "category": "actor-model-unsupported",
-          "feature": "spawn",
-          "reason": "Child actor spawning (spawn) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should create a promise with input",
-          "category": "actor-model-unsupported",
-          "feature": "fromPromise",
-          "reason": "Promise actor logic (fromPromise) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should create a transition function actor with input",
-          "category": "actor-model-unsupported",
-          "feature": "fromTransition",
-          "reason": "Transition function actor logic (fromTransition) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should create an observable actor with input",
-          "category": "actor-model-unsupported",
-          "feature": "fromObservable",
-          "reason": "Observable actor logic (fromObservable) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should create a callback actor with input",
-          "category": "actor-model-unsupported",
-          "feature": "fromCallback",
-          "reason": "Callback actor logic (fromCallback) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should provide a static inline input to the referenced actor",
-          "category": "actor-model-unsupported",
-          "feature": "invoke",
-          "reason": "Invoked actor input passing (invoke: { src, input }) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should provide a dynamic inline input to the referenced actor",
-          "category": "actor-model-unsupported",
-          "feature": "invoke",
-          "reason": "Invoked actor dynamic input passing (invoke: { src, input }) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should call the input factory with self when invoking",
-          "category": "actor-model-unsupported",
-          "feature": "invoke",
-          "reason": "Invoked actor self reference is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should call the input factory with self when spawning",
-          "category": "actor-model-unsupported",
-          "feature": "spawn",
-          "reason": "Spawned child actor self reference is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        }
-      ]
+      "allowed_skips": []
     },
     "json.test.ts": {
       "status": "strict",
-      "allowed_skips": [
-        {
-          "title": "should not double-serialize invoke transitions",
-          "category": "actor-model-unsupported",
-          "feature": "invoke",
-          "reason": "Internal invoke transition synthesis (xstate.done.actor.*, xstate.error.actor.*) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        }
-      ]
+      "allowed_skips": []
     },
     "transition.test.ts": {
       "status": "strict",
-      "allowed_skips": [
-        {
-          "title": "sendTo action should be returned",
-          "category": "actor-model-unsupported",
-          "feature": "actor-model",
-          "reason": "Invoked child actor targeting and xstate.spawnChild action generation are not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "should calculate the next snapshot for transition logic",
-          "category": "actor-model-unsupported",
-          "feature": "fromTransition",
-          "reason": "Actor transition logic (fromTransition) is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        },
-        {
-          "title": "serverless workflow example (experimental)",
-          "category": "actor-model-unsupported",
-          "feature": "actor-model",
-          "reason": "Multi-actor workflow orchestration with invoke and fromPromise is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        }
-      ]
+      "allowed_skips": []
     },
     "inspect.test.ts": {
       "status": "strict",
-      "allowed_skips": [
-        {
-          "title": "can inspect communications between actors",
-          "category": "actor-model-unsupported",
-          "feature": "invoke",
-          "reason": "Multi-actor communication via invoke, fromPromise, sendParent, and sendTo is not yet implemented in lavi",
-          "ref": "XSTATE_5_FEATURES.md"
-        }
-      ]
+      "allowed_skips": []
     }
   }
 }

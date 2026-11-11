@@ -1419,7 +1419,7 @@ describe('entry/exit actions', () => {
 
   describe('when reaching a final state', () => {
     // https://github.com/statelyai/xstate/issues/1109
-    it.skip('exit actions should be called when invoked machine reaches its final state', () => {
+    it('exit actions should be called when invoked machine reaches its final state', () => {
       const { resolve, promise } = Promise.withResolvers<void>();
       let exitCalled = false;
       let childExitCalled = false;
@@ -1578,7 +1578,7 @@ describe('entry/exit actions', () => {
       interpreter.send({ type: 'STOP_CHILD' });
     });
 
-    it.skip('sent events from exit handlers of a done child should be received by the parent ', () => {
+    it('sent events from exit handlers of a done child should be received by the parent ', () => {
       let eventReceived = false;
 
       const child = createMachine({
@@ -1668,7 +1668,7 @@ describe('entry/exit actions', () => {
       expect(spy).not.toHaveBeenCalled();
     });
 
-    it.skip('sent events from exit handlers of a done child should be received by its children', () => {
+    it('sent events from exit handlers of a done child should be received by its children', () => {
       const spy = vi.fn();
 
       const grandchild = createMachine({
@@ -2388,7 +2388,7 @@ describe('action meta', () => {
 });
 
 describe('forwardTo()', () => {
-  it.skip('should forward an event to a service', () => {
+  it('should forward an event to a service', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const child = createMachine({
       types: {} as {
@@ -2448,7 +2448,7 @@ describe('forwardTo()', () => {
     return promise;
   });
 
-  it.skip('should forward an event to a service (dynamic)', () => {
+  it('should forward an event to a service (dynamic)', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
 
     const child = createMachine({
@@ -2508,7 +2508,7 @@ describe('forwardTo()', () => {
     return promise;
   });
 
-  it.skip('should not cause an infinite loop when forwarding to undefined', () => {
+  it('should not cause an infinite loop when forwarding to undefined', () => {
     const machine = createMachine({
       on: {
         '*': { guard: () => true, actions: forwardTo(undefined as any) }
@@ -2833,7 +2833,7 @@ describe('enqueueActions', () => {
     createActor(machine).start();
   });
 
-  it.skip('should be able to communicate with the parent using params', () => {
+  it('should be able to communicate with the parent using params', () => {
     type ParentEvent = { type: 'FOO' };
 
     const childMachine = setup({
@@ -2893,7 +2893,7 @@ describe('enqueueActions', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should enqueue.sendParent', () => {
+  it('should enqueue.sendParent', () => {
     interface ChildEvent {
       type: 'CHILD_EVENT';
     }
@@ -2965,7 +2965,7 @@ describe('sendParent', () => {
 });
 
 describe('sendTo', () => {
-  it.skip('should be able to send an event to an actor', () => {
+  it('should be able to send an event to an actor', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -2999,7 +2999,7 @@ describe('sendTo', () => {
     return promise;
   });
 
-  it.skip('should be able to send an event from expression to an actor', () => {
+  it('should be able to send an event from expression to an actor', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3071,7 +3071,7 @@ describe('sendTo', () => {
     });
   });
 
-  it.skip('should be able to send an event to a named actor', () => {
+  it('should be able to send an event to a named actor', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3104,7 +3104,7 @@ describe('sendTo', () => {
     return promise;
   });
 
-  it.skip('should be able to send an event directly to an ActorRef', () => {
+  it('should be able to send an event directly to an ActorRef', () => {
     const { resolve, promise } = Promise.withResolvers<void>();
     const childMachine = createMachine({
       types: {} as {
@@ -3136,7 +3136,7 @@ describe('sendTo', () => {
     return promise;
   });
 
-  it.skip('should be able to read from event', () => {
+  it('should be able to read from event', () => {
     expect.assertions(1);
     const machine = createMachine({
       types: {} as {
@@ -3171,7 +3171,7 @@ describe('sendTo', () => {
     service.send({ type: 'EVENT', value: 'foo' });
   });
 
-  it.skip('should error if given a string', () => {
+  it('should error if given a string', () => {
     const machine = createMachine({
       invoke: {
         id: 'child',
@@ -3197,7 +3197,7 @@ describe('sendTo', () => {
     `);
   });
 
-  it.skip('a self-event "handler" of an event sent using sendTo should be able to read updated snapshot of self', () => {
+  it('a self-event "handler" of an event sent using sendTo should be able to read updated snapshot of self', () => {
     const spy = vi.fn();
     const machine = createMachine({
       context: {
@@ -3240,7 +3240,7 @@ describe('sendTo', () => {
 `);
   });
 
-  it.skip("should not attempt to deliver a delayed event to the spawned actor's ID that was stopped since the event was scheduled", async () => {
+  it("should not attempt to deliver a delayed event to the spawned actor's ID that was stopped since the event was scheduled", async () => {
     const warnSpy = vi.spyOn(console, 'warn');
     const spy1 = vi.fn();
 
@@ -3309,7 +3309,7 @@ Event: {"type":"PING"}",
 `);
   });
 
-  it.skip("should not attempt to deliver a delayed event to the invoked actor's ID that was stopped since the event was scheduled", async () => {
+  it("should not attempt to deliver a delayed event to the invoked actor's ID that was stopped since the event was scheduled", async () => {
     const warnSpy = vi.spyOn(console, 'warn');
     const spy1 = vi.fn();
 
@@ -3625,7 +3625,7 @@ describe('cancel', () => {
     expect(actor.getSnapshot().value).toBe('a');
   });
 
-  it.skip('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it first', async () => {
+  it('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it first', async () => {
     const fooSpy = vi.fn();
     const barSpy = vi.fn();
 
@@ -3673,7 +3673,7 @@ describe('cancel', () => {
     expect(barSpy).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it second', async () => {
+  it('should cancel only the delayed event in the machine that scheduled it when canceling the event with the same ID in the machine that sent it second', async () => {
     const fooSpy = vi.fn();
     const barSpy = vi.fn();
 
@@ -3746,7 +3746,7 @@ describe('cancel', () => {
     expect(spy.mock.calls.length).toBe(0);
   });
 
-  it.skip('should be able to cancel a just scheduled delayed event to a just invoked child', async () => {
+  it('should be able to cancel a just scheduled delayed event to a just invoked child', async () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -3792,7 +3792,7 @@ describe('cancel', () => {
     expect(spy.mock.calls.length).toBe(0);
   });
 
-  it.skip('should not be able to cancel a just scheduled non-delayed event to a just invoked child', async () => {
+  it('should not be able to cancel a just scheduled non-delayed event to a just invoked child', async () => {
     const spy = vi.fn();
 
     const child = createMachine({
@@ -3981,7 +3981,7 @@ describe('action meta', () => {
     'base action objects should have meta.action as the same base action object'
   );
 
-  it.skip('should provide self', () => {
+  it('should provide self', () => {
     expect.assertions(1);
 
     const machine = createMachine({

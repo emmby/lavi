@@ -115,7 +115,7 @@ describe('json', () => {
     expect(validate.errors).not.toBeNull();
   });
 
-  it.skip('should not double-serialize invoke transitions', () => {
+  it('should not double-serialize invoke transitions', () => {
     const machine = createMachine({
       initial: 'active',
       states: {
