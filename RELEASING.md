@@ -75,20 +75,22 @@ The `build-apple-xcframework` job in `release.yml` runs on `macos-15` to cross-c
 
 ## 2. Cutting a Release
 
-1. **Synchronize all workspace manifests to the new version**:
+1. **Update [`CHANGELOG.md`](./CHANGELOG.md)** with a new section for the target version and date.
+2. **Synchronize all workspace manifests to the new version**:
    ```bash
    node scripts/sync-version.mjs 0.4.0
    node scripts/sync-version.mjs --check 0.4.0
    ```
-2. **Run the full test suite locally**:
+3. **Run the full test suite locally**:
    ```bash
    npm test
    ```
-3. *(Optional)* **Run a CI Dry-Run first**:
+4. *(Optional)* **Run a CI Dry-Run first**:
    Trigger the **Release** workflow manually in GitHub Actions with `dry_run: true` to verify all cross-compiled wheels, WASM bundles, and Maven Central bundles build cleanly before tagging.
-4. **Commit, tag, and push**:
+5. **Commit, tag, and push**:
    ```bash
    git commit -am "chore(release): v0.4.0"
    git tag v0.4.0
    git push origin main --tags
    ```
+

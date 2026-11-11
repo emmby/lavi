@@ -58,6 +58,7 @@ Hierarchical statecharts replace fragile `if/else` boolean-flag logic with decla
 * **`lavi-csharp`**: C# / .NET 8.0 P/Invoke library (`Lavi.sln`, `Lavi/Lavi.csproj`) wrapping `liblavi_c_cpp.{dylib,so,dll}` with idiomatic .NET and XState v5 snapshot APIs.
 * **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator, Android AAR packager (16 KB page-alignment check), Apple `LaviFFI.xcframework.zip` packager, and unified Arduino IDE / PlatformIO `.zip` packager (`dist/embedded/lavi-embedded.zip`).
 * **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
+* **[`CHANGELOG.md`](./CHANGELOG.md)**: Version history and release notes across all tagged releases.
 * **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
 
 ## Building & Testing
