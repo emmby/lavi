@@ -79,7 +79,7 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
       - Host JS `setTimeout`/`clearTimeout` handle inspection (`should not try to clear an undefined timeout when exiting source state of a delayed transition`) and internal JS `TransitionNode` string formatting (`should format transitions properly`) are skipped by design because `lavi` evaluates timers against an external clock deadline rather than spawning host JS timers.
   - [x] Wildcard Transitions (`*`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/eventDescriptors.test.ts) — 14/14 passing in `tests/eventDescriptors.test.ts`)
   - [x] Partial Wildcard Transitions (`models.*`) `[Rust | WASM | C/C++]` ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/eventDescriptors.test.ts) — 14/14 passing in `tests/eventDescriptors.test.ts`, including `assertEvent` partial descriptor validation in WASM)
-  - [x] Pure Transition APIs (`initialTransition(logic, options)`, `transition(logic, state, event)`) `[WASM]`
+  - [x] Pure Transition APIs (`initialTransition(logic, options)`, `transition(logic, state, event)` in WASM, `RuntimeMachine::initial_transition_pure_json` / `transition_pure_json` in Rust, `fsm_initial_transition_json` / `fsm_transition_pure_json` in `lavi.h`, `initialTransitionJson` / `transitionPureJson` in `lavi.hpp`, `initial_transition` / `transition_pure` in Python, `initialTransition` / `transitionPure` in Java/Kotlin/Swift/Dart, and `InitialTransition` / `TransitionPure` in C#) `[Rust | WASM | C/C++]`
 
 ---
 
@@ -145,12 +145,13 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 
 ## 4. Actor Model (Medium Priority)
 
-- [x] **Invoking Actors** (`invoke`) (Lifecycle in `lavi-wasm`; TD-7 resolved)
+- [x] **Invoking Actors** (`invoke`) (Lifecycle in `lavi-wasm` & host lifecycle callbacks across all targets; TD-7 & TD-21 resolved)
   - [x] Invoke Promise (`fromPromise`) `[WASM]`
   - [x] Invoke Callback (`fromCallback`) `[WASM]`
-  - [x] Invoke Observable (`fromObservable`) `[WASM]`
+  - [x] Invoke Observable (`fromObservable`, `fromEventObservable`) `[WASM]`
   - [x] Invoke Machine (`fromTransition` / child machine) `[WASM]`
   - [x] `onDone` / `onError` (Transition on actor completion/failure) `[WASM]`
+  - [x] Host Invoke Start/Stop Lifecycle Callbacks (`RuntimeMachine::register_invoke_callbacks` in Rust, `fsm_register_invoke_callbacks` in `lavi.h`, `registerInvokeCallbacks` in `lavi.hpp`, `register_invoke_callbacks` in Python, `registerInvokeCallbacks` / `onInvoke` in Java/Kotlin, `registerInvokeCallbacks` in Swift/Dart, and `RegisterInvokeCallbacks` in C#) `[Rust | WASM | C/C++]`
 - [x] **Spawning Actors** (`spawn`)
   - [x] Dynamic child actor creation via `assign` / `spawnChild` `[WASM]`
 
@@ -173,6 +174,6 @@ This document tracks the feature set of `lavi` against the XState 5 (`statelyai/
 - [x] **Metadata & Descriptions** (`meta: { ... }`, `description`, `output`) ([upstream test](https://github.com/statelyai/xstate/blob/xstate%405.25.0/packages/core/test/meta.test.ts) — 16/16 passing in `tests/meta.test.ts`, 0 skips)
   - [x] State and machine metadata definition and aggregation via `snapshot.getMeta()` in WASM, `RuntimeMachine::get_meta()` / `get_state_meta()` in Rust, `fsm_get_meta_json` / `fsm_get_state_meta_json` in `lavi.h`, and `get_meta_json()` / `get_state_meta_json()` in `lavi.hpp` `[Rust | WASM | C/C++]`
   - [x] State and transition descriptions (`stateNode.description`, `stateNode.root.on.<event>[0].description`) `[Rust | WASM]`
-  - [x] State and machine output definition (`StateDefinition.output`, `MachineDefinition.output`, `snapshot.output` in WASM, `RuntimeMachine::output()` in Rust, `fsm_get_output_json` in `lavi.h`, and `get_output_json()` / `get_output()` in `lavi.hpp`) `[Rust | WASM | C/C++]`
+  - [x] State and machine output definition and dynamic output resolvers (`StateDefinition.output`, `MachineDefinition.output`, `snapshot.output` in WASM, `RuntimeMachine::get_output()` / `get_final_leaf_output()` / `register_output_resolver()` in Rust, `fsm_get_output_json` / `fsm_get_final_leaf_output_json` / `fsm_register_output_resolver` in `lavi.h`, `get_output()` / `getFinalLeafOutput()` / `registerOutputResolver()` in `lavi.hpp`, `get_output` / `get_final_leaf_output` / `register_output_resolver` / `@machine.output_resolver` in Python, `getOutput` / `getFinalLeafOutput` / `registerOutputResolver` / `onOutputResolver` in Java/Kotlin, `getOutput` / `getFinalLeafOutput` / `registerOutputResolver` in Swift/Dart, and `GetOutput` / `GetFinalLeafOutput` / `RegisterOutputResolver` in C#) `[Rust | WASM | C/C++]`
 - [x] **Custom Clocks & Deterministic Virtual Time** (`SimulatedClock`, `register_clock`, `fsm_register_clock`, `fsm_register_clock_with_data`, `fsm_register_simulated_clock`, `fsm_simulated_clock_create`, `fsm_simulated_clock_free`, `fsm_simulated_clock_now`, `fsm_simulated_clock_set`, `fsm_simulated_clock_increment`) `[Rust | WASM | C/C++]`
 

@@ -340,4 +340,76 @@ public class LaviTests
         Assert.Equal("object-style", seenNote);
         _ = inputMachineJson;
     }
+
+    [Fact]
+    public void PureTransitions_OutputResolver_FinalLeafOutput_AndInvokeCallbacks()
+    {
+        const string td21Json = """
+        {
+          "id": "td21Cs",
+          "initial": "active",
+          "context": { "total": 30 },
+          "states": {
+            "active": {
+              "initial": "working",
+              "invoke": { "id": "csWorker", "src": "csTask", "input": { "rate": 8 } },
+              "states": {
+                "working": {
+                  "entry": ["logWorking"],
+                  "on": { "DONE_LEAF": "leafFinal" }
+                },
+                "leafFinal": {
+                  "type": "final",
+                  "output": { "subStatus": "csLeafDone" }
+                }
+              },
+              "on": { "FINISH_ALL": "completed" }
+            },
+            "completed": { "type": "final" }
+          }
+        }
+        """;
+
+        var startedInvokes = new List<string>();
+        var stoppedInvokes = new List<string>();
+
+        using var machine = new Machine(td21Json)
+            .RegisterOutputResolver("", (ctx, evt) =>
+            {
+                var total = ctx["total"].AsInt32 ?? 0;
+                return $$"""{"doubled":{{total * 2}}}""";
+            })
+            .RegisterInvokeCallbacks(
+                onStart: (id, src, inp, ctx, evt) =>
+                {
+                    var rate = inp["rate"].AsInt32 ?? 0;
+                    startedInvokes.Add($"{id}:{src}:{rate}");
+                },
+                onStop: id => stoppedInvokes.Add(id));
+
+        var initPure = machine.InitialTransitionJson();
+        Assert.Contains("\"value\":{\"active\":\"working\"}", initPure);
+        Assert.Empty(startedInvokes);
+        Assert.False(machine.IsValid);
+
+        Assert.True(machine.TryStart());
+        Assert.True(machine.IsValid);
+        Assert.Equal(new[] { "csWorker:csTask:8" }, startedInvokes);
+
+        var liveSnap = machine.GetSnapshotJson();
+        var nextPure = machine.TransitionPureJson(liveSnap, """{"type":"FINISH_ALL"}""");
+        Assert.Contains("\"value\":\"completed\"", nextPure);
+        Assert.True(machine.Matches("active.working"));
+        Assert.Empty(stoppedInvokes);
+
+        Assert.Equal("", machine.GetFinalLeafOutput());
+        machine.Send("DONE_LEAF");
+        Assert.True(machine.Matches("active.leafFinal"));
+        Assert.Contains("csLeafDone", machine.GetFinalLeafOutput());
+
+        machine.Send("FINISH_ALL");
+        Assert.True(machine.IsDone);
+        Assert.Equal(new[] { "csWorker" }, stoppedInvokes);
+        Assert.Contains("\"doubled\":60", machine.GetOutput());
+    }
 }

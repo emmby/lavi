@@ -3,6 +3,7 @@
 
 #include "lavi.h"
 #include <string>
+#include <cstring>
 #include <stdexcept>
 #include <functional>
 #include <type_traits>
@@ -83,6 +84,9 @@ using DelayCallback = std::function<uint64_t(const Value& context, const Value& 
 using GuardWithParamsCallback = std::function<bool(const Value& context, const Value& event, const Value& params)>;
 using ClockCallback = std::function<uint64_t()>;
 using InspectCallback = std::function<void(const std::string& inspect_json)>;
+using OutputResolverCallback = std::function<std::string(const Value& context, const Value& event)>;
+using InvokeStartCallback = std::function<void(const std::string& id, const std::string& src, const Value& input, const Value& context, const Value& event)>;
+using InvokeStopCallback = std::function<void(const std::string& id)>;
 
 /**
  * @brief Virtual clock modeled on XState 5's SimulatedClock.
@@ -160,7 +164,8 @@ public:
  */
 class Machine {
 private:
-    MachineContext* machine;
+    mutable MachineContext* machine;
+    mutable bool m_started = false;
     const char* m_json;
     const char* m_input;
     std::string m_json_str;
@@ -171,18 +176,21 @@ private:
     std::map<std::string, GuardCallback> m_guards;
     std::map<std::string, DelayCallback> m_delays;
     std::map<std::string, GuardWithParamsCallback> m_guardsWithParams;
+    std::map<std::string, OutputResolverCallback> m_outputResolvers;
 
     struct RawAction { fsm_action_callback_t cb; void* user_data; };
     struct RawActionWithParams { fsm_action_with_params_callback_t cb; void* user_data; };
     struct RawGuard { fsm_guard_callback_t cb; void* user_data; };
     struct RawDelay { fsm_delay_callback_t cb; void* user_data; };
     struct RawGuardWithParams { fsm_guard_with_params_callback_t cb; void* user_data; };
+    struct RawOutputResolver { fsm_output_resolver_callback_t cb; void* user_data; };
 
     std::map<std::string, RawAction> m_rawActions;
     std::map<std::string, RawActionWithParams> m_rawActionsWithParams;
     std::map<std::string, RawGuard> m_rawGuards;
     std::map<std::string, RawDelay> m_rawDelays;
     std::map<std::string, RawGuardWithParams> m_rawGuardsWithParams;
+    std::map<std::string, RawOutputResolver> m_rawOutputResolvers;
 
     fsm_clock_callback_t m_clockCallback = nullptr;
     ClockCallback m_clockFn;
@@ -190,6 +198,11 @@ private:
     fsm_inspect_callback_t m_rawInspectCallback = nullptr;
     void* m_rawInspectUserData = nullptr;
     InspectCallback m_inspectFn;
+    fsm_invoke_start_callback_t m_rawInvokeStartCallback = nullptr;
+    fsm_invoke_stop_callback_t m_rawInvokeStopCallback = nullptr;
+    void* m_rawInvokeUserData = nullptr;
+    InvokeStartCallback m_invokeStartFn;
+    InvokeStopCallback m_invokeStopFn;
 
     const char* get_json_ptr() const noexcept {
         if (m_json) return m_json;
@@ -251,6 +264,42 @@ private:
         return false;
     }
 
+    static int32_t c_output_resolver_thunk(const char* name, const fsm_value_t* ctx, const fsm_value_t* evt, char* out_buf, size_t max_len, void* user_data) {
+        if (!user_data) return -1;
+        auto* instance = static_cast<Machine*>(user_data);
+        auto it = instance->m_outputResolvers.find(name ? name : "");
+        if (it != instance->m_outputResolvers.end() && it->second) {
+            std::string json = it->second(Value(ctx), Value(evt));
+            int32_t req = static_cast<int32_t>(json.size() + 1);
+            if (!out_buf || max_len == 0) {
+                return req;
+            }
+            if (max_len < static_cast<size_t>(req)) {
+                return -2;
+            }
+            std::memcpy(out_buf, json.data(), json.size());
+            out_buf[json.size()] = '\0';
+            return static_cast<int32_t>(json.size());
+        }
+        return -1;
+    }
+
+    static void c_invoke_start_thunk(const char* id, const char* src, const fsm_value_t* input, const fsm_value_t* ctx, const fsm_value_t* evt, void* user_data) {
+        if (!user_data) return;
+        auto* instance = static_cast<Machine*>(user_data);
+        if (instance->m_invokeStartFn) {
+            instance->m_invokeStartFn(id ? id : "", src ? src : "", Value(input), Value(ctx), Value(evt));
+        }
+    }
+
+    static void c_invoke_stop_thunk(const char* id, void* user_data) {
+        if (!user_data) return;
+        auto* instance = static_cast<Machine*>(user_data);
+        if (instance->m_invokeStopFn) {
+            instance->m_invokeStopFn(id ? id : "");
+        }
+    }
+
     static uint64_t c_clock_thunk(void* user_data) {
         if (!user_data) return 0;
         auto* instance = static_cast<Machine*>(user_data);
@@ -268,32 +317,44 @@ private:
         }
     }
 
-    void rebind_this_pointers() {
+    void rebind_this_pointers() const {
         if (!machine) return;
+        auto* self = const_cast<Machine*>(this);
         for (const auto& pair : m_callbacks) {
-            fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, this);
+            fsm_register_action(machine, pair.first.c_str(), c_callback_thunk, self);
         }
         for (const auto& pair : m_actionsWithParams) {
-            fsm_register_action_with_params(machine, pair.first.c_str(), c_action_with_params_thunk, this);
+            fsm_register_action_with_params(machine, pair.first.c_str(), c_action_with_params_thunk, self);
         }
         for (const auto& pair : m_guards) {
-            fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, this);
+            fsm_register_guard(machine, pair.first.c_str(), c_guard_thunk, self);
         }
         for (const auto& pair : m_delays) {
-            fsm_register_delay(machine, pair.first.c_str(), c_delay_thunk, this);
+            fsm_register_delay(machine, pair.first.c_str(), c_delay_thunk, self);
         }
         for (const auto& pair : m_guardsWithParams) {
-            fsm_register_guard_with_params(machine, pair.first.c_str(), c_guard_with_params_thunk, this);
+            fsm_register_guard_with_params(machine, pair.first.c_str(), c_guard_with_params_thunk, self);
+        }
+        for (const auto& pair : m_outputResolvers) {
+            fsm_register_output_resolver(machine, pair.first.c_str(), c_output_resolver_thunk, self);
         }
         if (!m_simClock && m_clockFn) {
-            fsm_register_clock_with_data(machine, c_clock_thunk, this);
+            fsm_register_clock_with_data(machine, c_clock_thunk, self);
         }
         if (m_inspectFn) {
-            fsm_register_inspector(machine, c_inspect_thunk, this);
+            fsm_register_inspector(machine, c_inspect_thunk, self);
+        }
+        if (m_invokeStartFn || m_invokeStopFn) {
+            fsm_register_invoke_callbacks(
+                machine,
+                m_invokeStartFn ? c_invoke_start_thunk : nullptr,
+                m_invokeStopFn ? c_invoke_stop_thunk : nullptr,
+                self
+            );
         }
     }
 
-    void bind_registered_handlers() {
+    void bind_registered_handlers() const {
         if (!machine) return;
         rebind_this_pointers();
         for (const auto& pair : m_rawActions) {
@@ -311,6 +372,9 @@ private:
         for (const auto& pair : m_rawGuardsWithParams) {
             fsm_register_guard_with_params(machine, pair.first.c_str(), pair.second.cb, pair.second.user_data);
         }
+        for (const auto& pair : m_rawOutputResolvers) {
+            fsm_register_output_resolver(machine, pair.first.c_str(), pair.second.cb, pair.second.user_data);
+        }
         if (m_simClock) {
             fsm_register_simulated_clock(machine, m_simClock);
         } else if (!m_clockFn && m_clockCallback) {
@@ -319,6 +383,25 @@ private:
         if (!m_inspectFn && m_rawInspectCallback) {
             fsm_register_inspector(machine, m_rawInspectCallback, m_rawInspectUserData);
         }
+        if (!m_invokeStartFn && !m_invokeStopFn && (m_rawInvokeStartCallback || m_rawInvokeStopCallback)) {
+            fsm_register_invoke_callbacks(machine, m_rawInvokeStartCallback, m_rawInvokeStopCallback, m_rawInvokeUserData);
+        }
+    }
+
+    bool ensure_created() const {
+        if (machine) return true;
+        const char* j = get_json_ptr();
+        const char* inp = get_input_ptr();
+        if (inp) {
+            machine = fsm_create_with_input(j, inp);
+        } else {
+            machine = fsm_create(j);
+        }
+        if (!machine) {
+            return false;
+        }
+        bind_registered_handlers();
+        return true;
     }
 
 public:
@@ -366,6 +449,7 @@ public:
     // Allow moving
     Machine(Machine&& other) noexcept
         : machine(other.machine),
+          m_started(other.m_started),
           m_json(other.m_json),
           m_input(other.m_input),
           m_json_str(std::move(other.m_json_str)),
@@ -375,24 +459,35 @@ public:
           m_guards(std::move(other.m_guards)),
           m_delays(std::move(other.m_delays)),
           m_guardsWithParams(std::move(other.m_guardsWithParams)),
+          m_outputResolvers(std::move(other.m_outputResolvers)),
           m_rawActions(std::move(other.m_rawActions)),
           m_rawActionsWithParams(std::move(other.m_rawActionsWithParams)),
           m_rawGuards(std::move(other.m_rawGuards)),
           m_rawDelays(std::move(other.m_rawDelays)),
           m_rawGuardsWithParams(std::move(other.m_rawGuardsWithParams)),
+          m_rawOutputResolvers(std::move(other.m_rawOutputResolvers)),
           m_clockCallback(other.m_clockCallback),
           m_clockFn(std::move(other.m_clockFn)),
           m_simClock(other.m_simClock),
           m_rawInspectCallback(other.m_rawInspectCallback),
           m_rawInspectUserData(other.m_rawInspectUserData),
-          m_inspectFn(std::move(other.m_inspectFn)) {
+          m_inspectFn(std::move(other.m_inspectFn)),
+          m_rawInvokeStartCallback(other.m_rawInvokeStartCallback),
+          m_rawInvokeStopCallback(other.m_rawInvokeStopCallback),
+          m_rawInvokeUserData(other.m_rawInvokeUserData),
+          m_invokeStartFn(std::move(other.m_invokeStartFn)),
+          m_invokeStopFn(std::move(other.m_invokeStopFn)) {
         other.machine = nullptr;
+        other.m_started = false;
         other.m_json = nullptr;
         other.m_input = nullptr;
         other.m_clockCallback = nullptr;
         other.m_simClock = nullptr;
         other.m_rawInspectCallback = nullptr;
         other.m_rawInspectUserData = nullptr;
+        other.m_rawInvokeStartCallback = nullptr;
+        other.m_rawInvokeStopCallback = nullptr;
+        other.m_rawInvokeUserData = nullptr;
         rebind_this_pointers();
     }
 
@@ -400,11 +495,13 @@ public:
         if (this != &other) {
             if (machine) fsm_free(machine);
             machine = other.machine;
+            m_started = other.m_started;
             m_json = other.m_json;
             m_input = other.m_input;
             m_json_str = std::move(other.m_json_str);
             m_input_str = std::move(other.m_input_str);
             other.machine = nullptr;
+            other.m_started = false;
             other.m_json = nullptr;
             other.m_input = nullptr;
             m_callbacks = std::move(other.m_callbacks);
@@ -412,11 +509,13 @@ public:
             m_guards = std::move(other.m_guards);
             m_delays = std::move(other.m_delays);
             m_guardsWithParams = std::move(other.m_guardsWithParams);
+            m_outputResolvers = std::move(other.m_outputResolvers);
             m_rawActions = std::move(other.m_rawActions);
             m_rawActionsWithParams = std::move(other.m_rawActionsWithParams);
             m_rawGuards = std::move(other.m_rawGuards);
             m_rawDelays = std::move(other.m_rawDelays);
             m_rawGuardsWithParams = std::move(other.m_rawGuardsWithParams);
+            m_rawOutputResolvers = std::move(other.m_rawOutputResolvers);
             m_clockCallback = other.m_clockCallback;
             other.m_clockCallback = nullptr;
             m_clockFn = std::move(other.m_clockFn);
@@ -427,6 +526,14 @@ public:
             m_rawInspectUserData = other.m_rawInspectUserData;
             other.m_rawInspectUserData = nullptr;
             m_inspectFn = std::move(other.m_inspectFn);
+            m_rawInvokeStartCallback = other.m_rawInvokeStartCallback;
+            other.m_rawInvokeStartCallback = nullptr;
+            m_rawInvokeStopCallback = other.m_rawInvokeStopCallback;
+            other.m_rawInvokeStopCallback = nullptr;
+            m_rawInvokeUserData = other.m_rawInvokeUserData;
+            other.m_rawInvokeUserData = nullptr;
+            m_invokeStartFn = std::move(other.m_invokeStartFn);
+            m_invokeStopFn = std::move(other.m_invokeStopFn);
             rebind_this_pointers();
         }
         return *this;
@@ -436,22 +543,14 @@ public:
      * @brief Starts the state machine and processes initial actions.
      */
     void start() {
-        if (machine) return;
-        const char* j = get_json_ptr();
-        const char* inp = get_input_ptr();
-        if (inp) {
-            machine = fsm_create_with_input(j, inp);
-        } else {
-            machine = fsm_create(j);
-        }
-        if (!machine) {
+        if (m_started) return;
+        if (!ensure_created()) {
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
             throw std::runtime_error("Failed to create FSM machine from provided JSON.");
 #else
             return;
 #endif
         }
-        bind_registered_handlers();
         if (fsm_start(machine) != 0) {
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
             throw std::runtime_error("Failed to start FSM machine.");
@@ -459,13 +558,14 @@ public:
             return;
 #endif
         }
+        m_started = true;
     }
 
     /**
-     * @brief Returns true if the underlying machine context pointer is non-null.
+     * @brief Returns true if the underlying machine context pointer is non-null and started.
      */
     bool isValid() const noexcept {
-        return machine != nullptr;
+        return machine != nullptr && m_started;
     }
     bool is_valid() const noexcept {
         return isValid();
@@ -502,6 +602,68 @@ public:
         return true;
     }
     bool getOutput(std::string& out) const { return get_output(out); }
+
+    /**
+     * @brief Retrieve the output of the currently active final leaf state serialized as JSON.
+     */
+    std::string get_final_leaf_output_json() const {
+        if (!machine) return "";
+        int32_t req = fsm_get_final_leaf_output_json(machine, nullptr, 0);
+        if (req <= 1) return "";
+        std::vector<char> buf(static_cast<size_t>(req));
+        int32_t written = fsm_get_final_leaf_output_json(machine, buf.data(), buf.size());
+        if (written < 0) return "";
+        return std::string(buf.data(), static_cast<size_t>(written));
+    }
+    std::string getFinalLeafOutputJson() const {
+        return get_final_leaf_output_json();
+    }
+
+    /**
+     * @brief Compute the pure initial transition without starting the actor or executing custom side-effect actions.
+     * @return JSON string with `{"snapshot": ..., "actions": [...]}` or empty string on error.
+     */
+    std::string initial_transition_json(const char* input_json = nullptr) const {
+        if (!ensure_created()) return "";
+        int32_t req = fsm_initial_transition_json(machine, input_json, nullptr, 0);
+        if (req <= 1) return "";
+        std::vector<char> buf(static_cast<size_t>(req));
+        int32_t written = fsm_initial_transition_json(machine, input_json, buf.data(), buf.size());
+        if (written < 0) return "";
+        return std::string(buf.data(), static_cast<size_t>(written));
+    }
+    std::string initial_transition_json(const std::string& input_json) const {
+        return initial_transition_json(input_json.c_str());
+    }
+    std::string initialTransitionJson(const char* input_json = nullptr) const {
+        return initial_transition_json(input_json);
+    }
+    std::string initialTransitionJson(const std::string& input_json) const {
+        return initial_transition_json(input_json.c_str());
+    }
+
+    /**
+     * @brief Compute a pure transition from a serialized snapshot JSON and event JSON without mutating actor state.
+     * @return JSON string with `{"snapshot": ..., "actions": [...]}` or empty string on error.
+     */
+    std::string transition_pure_json(const char* snapshot_json, const char* event_json) const {
+        if (!snapshot_json || !event_json || !ensure_created()) return "";
+        int32_t req = fsm_transition_pure_json(machine, snapshot_json, event_json, nullptr, 0);
+        if (req <= 1) return "";
+        std::vector<char> buf(static_cast<size_t>(req));
+        int32_t written = fsm_transition_pure_json(machine, snapshot_json, event_json, buf.data(), buf.size());
+        if (written < 0) return "";
+        return std::string(buf.data(), static_cast<size_t>(written));
+    }
+    std::string transition_pure_json(const std::string& snapshot_json, const std::string& event_json) const {
+        return transition_pure_json(snapshot_json.c_str(), event_json.c_str());
+    }
+    std::string transitionPureJson(const char* snapshot_json, const char* event_json) const {
+        return transition_pure_json(snapshot_json, event_json);
+    }
+    std::string transitionPureJson(const std::string& snapshot_json, const std::string& event_json) const {
+        return transition_pure_json(snapshot_json.c_str(), event_json.c_str());
+    }
 
     /**
      * @brief Retrieve active states aggregated metadata as a JSON object string.
@@ -629,17 +791,9 @@ public:
         if (!snapshot_json) return false;
         bool created_here = (machine == nullptr);
         if (created_here) {
-            const char* j = get_json_ptr();
-            const char* inp = get_input_ptr();
-            if (inp) {
-                machine = fsm_create_with_input(j, inp);
-            } else {
-                machine = fsm_create(j);
-            }
-            if (!machine) {
+            if (!ensure_created()) {
                 return false;
             }
-            bind_registered_handlers();
         }
         if (fsm_restore_snapshot_json(machine, snapshot_json) != 0) {
             if (created_here) {
@@ -648,6 +802,7 @@ public:
             }
             return false;
         }
+        m_started = true;
         return true;
     }
     bool restoreSnapshot(const std::string& snapshot_json) {
@@ -805,6 +960,65 @@ public:
     void register_guard_with_params(const std::string& name, fsm_guard_with_params_callback_t callback, void* user_data = nullptr) { registerGuardWithParams(name, callback, user_data); }
     void register_guard(const std::string& name, GuardWithParamsCallback callback) { registerGuardWithParams(name, std::move(callback)); }
     void register_guard(const std::string& name, fsm_guard_with_params_callback_t callback, void* user_data = nullptr) { registerGuardWithParams(name, callback, user_data); }
+
+    /**
+     * @brief Register a callback for a dynamic output resolver (lambda overload).
+     */
+    void registerOutputResolver(const std::string& name, OutputResolverCallback callback) {
+        m_outputResolvers[name] = std::move(callback);
+        m_rawOutputResolvers.erase(name);
+        if (machine) {
+            fsm_register_output_resolver(machine, name.c_str(), c_output_resolver_thunk, this);
+        }
+    }
+
+    /**
+     * @brief Register a zero-allocation C function pointer callback for a dynamic output resolver.
+     */
+    void registerOutputResolver(const std::string& name, fsm_output_resolver_callback_t callback, void* user_data = nullptr) {
+        m_rawOutputResolvers[name] = {callback, user_data};
+        m_outputResolvers.erase(name);
+        if (machine) {
+            fsm_register_output_resolver(machine, name.c_str(), callback, user_data);
+        }
+    }
+    void register_output_resolver(const std::string& name, OutputResolverCallback callback) { registerOutputResolver(name, std::move(callback)); }
+    void register_output_resolver(const std::string& name, fsm_output_resolver_callback_t callback, void* user_data = nullptr) { registerOutputResolver(name, callback, user_data); }
+
+    /**
+     * @brief Register invoke lifecycle callbacks (lambda overload).
+     */
+    void registerInvokeCallbacks(InvokeStartCallback on_start, InvokeStopCallback on_stop = nullptr) {
+        m_invokeStartFn = std::move(on_start);
+        m_invokeStopFn = std::move(on_stop);
+        m_rawInvokeStartCallback = nullptr;
+        m_rawInvokeStopCallback = nullptr;
+        m_rawInvokeUserData = nullptr;
+        if (machine) {
+            fsm_register_invoke_callbacks(
+                machine,
+                m_invokeStartFn ? c_invoke_start_thunk : nullptr,
+                m_invokeStopFn ? c_invoke_stop_thunk : nullptr,
+                this
+            );
+        }
+    }
+
+    /**
+     * @brief Register zero-allocation C function pointer invoke lifecycle callbacks.
+     */
+    void registerInvokeCallbacks(fsm_invoke_start_callback_t on_start, fsm_invoke_stop_callback_t on_stop = nullptr, void* user_data = nullptr) {
+        m_rawInvokeStartCallback = on_start;
+        m_rawInvokeStopCallback = on_stop;
+        m_rawInvokeUserData = user_data;
+        m_invokeStartFn = nullptr;
+        m_invokeStopFn = nullptr;
+        if (machine) {
+            fsm_register_invoke_callbacks(machine, on_start, on_stop, user_data);
+        }
+    }
+    void register_invoke_callbacks(InvokeStartCallback on_start, InvokeStopCallback on_stop = nullptr) { registerInvokeCallbacks(std::move(on_start), std::move(on_stop)); }
+    void register_invoke_callbacks(fsm_invoke_start_callback_t on_start, fsm_invoke_stop_callback_t on_stop = nullptr, void* user_data = nullptr) { registerInvokeCallbacks(on_start, on_stop, user_data); }
 
     /**
      * @brief Register a callback for the system clock (raw function pointer).

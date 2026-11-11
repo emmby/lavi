@@ -75,6 +75,9 @@ public typealias ActionWithParamsCallback = (_ context: Value, _ event: Value, _
 public typealias GuardCallback = (_ context: Value, _ event: Value) -> Bool
 public typealias GuardWithParamsCallback = (_ context: Value, _ event: Value, _ params: Value) -> Bool
 public typealias DelayCallback = (_ context: Value, _ event: Value) -> UInt64
+public typealias OutputResolverCallback = (_ context: Value, _ event: Value) -> String
+public typealias InvokeStartCallback = (_ id: String, _ src: String, _ input: Value, _ context: Value, _ event: Value) -> Void
+public typealias InvokeStopCallback = (_ id: String) -> Void
 public typealias ClockCallback = () -> UInt64
 public typealias InspectCallback = (_ inspectJson: String) -> Void
 
@@ -188,6 +191,60 @@ private let swiftDelayThunk: @convention(c) (
     return 0
 }
 
+private let swiftOutputResolverThunk: @convention(c) (
+    UnsafePointer<CChar>?,
+    OpaquePointer?,
+    OpaquePointer?,
+    UnsafeMutablePointer<CChar>?,
+    Int,
+    UnsafeMutableRawPointer?
+) -> Int = { statePathPtr, ctxPtr, evtPtr, outBuf, outBufLen, userData in
+    guard let userData = userData, let statePathPtr = statePathPtr else { return 0 }
+    let machine = Unmanaged<Machine>.fromOpaque(userData).takeUnretainedValue()
+    let path = String(cString: statePathPtr)
+    guard let cb = machine.outputResolvers[path],
+          let outBuf = outBuf,
+          outBufLen > 0 else {
+        return 0
+    }
+    let json = cb(Value(raw: ctxPtr), Value(raw: evtPtr))
+    let utf8 = Array(json.utf8)
+    let copyLen = min(utf8.count, outBufLen - 1)
+    for i in 0..<copyLen {
+        outBuf[i] = CChar(bitPattern: utf8[i])
+    }
+    outBuf[copyLen] = 0
+    return copyLen
+}
+
+private let swiftInvokeStartThunk: @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafePointer<CChar>?,
+    OpaquePointer?,
+    OpaquePointer?,
+    OpaquePointer?,
+    UnsafeMutableRawPointer?
+) -> Void = { idPtr, srcPtr, inputPtr, ctxPtr, evtPtr, userData in
+    guard let userData = userData, let idPtr = idPtr, let srcPtr = srcPtr else { return }
+    let machine = Unmanaged<Machine>.fromOpaque(userData).takeUnretainedValue()
+    machine.invokeStartFn?(
+        String(cString: idPtr),
+        String(cString: srcPtr),
+        Value(raw: inputPtr),
+        Value(raw: ctxPtr),
+        Value(raw: evtPtr)
+    )
+}
+
+private let swiftInvokeStopThunk: @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafeMutableRawPointer?
+) -> Void = { idPtr, userData in
+    guard let userData = userData, let idPtr = idPtr else { return }
+    let machine = Unmanaged<Machine>.fromOpaque(userData).takeUnretainedValue()
+    machine.invokeStopFn?(String(cString: idPtr))
+}
+
 private let swiftClockThunk: @convention(c) (
     UnsafeMutableRawPointer?
 ) -> UInt64 = { userData in
@@ -210,6 +267,7 @@ public final class Machine {
     private var machinePtr: OpaquePointer?
     private let jsonConfig: String
     private let inputJson: String?
+    private var started: Bool = false
     private var closed: Bool = false
 
     internal var actions: [String: ActionCallback] = [:]
@@ -217,6 +275,9 @@ public final class Machine {
     internal var guards: [String: GuardCallback] = [:]
     internal var guardsWithParams: [String: GuardWithParamsCallback] = [:]
     internal var delays: [String: DelayCallback] = [:]
+    internal var outputResolvers: [String: OutputResolverCallback] = [:]
+    internal var invokeStartFn: InvokeStartCallback?
+    internal var invokeStopFn: InvokeStopCallback?
     internal var clockFn: ClockCallback?
     internal var inspectFn: InspectCallback?
     private var simClock: SimulatedClock?
@@ -233,6 +294,7 @@ public final class Machine {
 
     public func close() {
         closed = true
+        started = false
         if let ptr = machinePtr {
             fsm_free(ptr)
             machinePtr = nil
@@ -242,13 +304,16 @@ public final class Machine {
         guards.removeAll()
         guardsWithParams.removeAll()
         delays.removeAll()
+        outputResolvers.removeAll()
+        invokeStartFn = nil
+        invokeStopFn = nil
         clockFn = nil
         inspectFn = nil
         simClock = nil
     }
 
     public var isValid: Bool {
-        return !closed && machinePtr != nil
+        return !closed && started && machinePtr != nil
     }
 
     private var selfOpaque: UnsafeMutableRawPointer {
@@ -305,6 +370,19 @@ public final class Machine {
                 _ = fsm_register_delay(ptr, cName, swiftDelayThunk, userData)
             }
         }
+        for path in outputResolvers.keys {
+            path.withCString { cPath in
+                _ = fsm_register_output_resolver(ptr, cPath, swiftOutputResolverThunk, userData)
+            }
+        }
+        if invokeStartFn != nil || invokeStopFn != nil {
+            _ = fsm_register_invoke_callbacks(
+                ptr,
+                invokeStartFn != nil ? swiftInvokeStartThunk : nil,
+                invokeStopFn != nil ? swiftInvokeStopThunk : nil,
+                userData
+            )
+        }
         if let simPtr = simClock?.ptr {
             _ = fsm_register_simulated_clock(ptr, simPtr)
         } else if clockFn != nil {
@@ -318,9 +396,13 @@ public final class Machine {
     @discardableResult
     public func start() -> Bool {
         if closed { return false }
-        if machinePtr != nil { return true }
+        if started && machinePtr != nil { return true }
         guard let ptr = ensureCreated() else { return false }
-        return fsm_start(ptr) == 0
+        if fsm_start(ptr) == 0 {
+            started = true
+            return true
+        }
+        return false
     }
 
     public func stop() {
@@ -379,6 +461,30 @@ public final class Machine {
             name.withCString { cName in
                 _ = fsm_register_delay(ptr, cName, swiftDelayThunk, selfOpaque)
             }
+        }
+    }
+
+    public func registerOutputResolver(_ statePath: String = "", callback: @escaping OutputResolverCallback) {
+        if closed { return }
+        outputResolvers[statePath] = callback
+        if let ptr = machinePtr {
+            statePath.withCString { cPath in
+                _ = fsm_register_output_resolver(ptr, cPath, swiftOutputResolverThunk, selfOpaque)
+            }
+        }
+    }
+
+    public func registerInvokeCallbacks(onStart: InvokeStartCallback? = nil, onStop: InvokeStopCallback? = nil) {
+        if closed { return }
+        invokeStartFn = onStart
+        invokeStopFn = onStop
+        if let ptr = machinePtr {
+            _ = fsm_register_invoke_callbacks(
+                ptr,
+                onStart != nil ? swiftInvokeStartThunk : nil,
+                onStop != nil ? swiftInvokeStopThunk : nil,
+                selfOpaque
+            )
         }
     }
 
@@ -501,12 +607,45 @@ public final class Machine {
             }
             return false
         }
+        started = true
         return true
     }
 
     public func getOutput() -> String {
         return readBufferString { ptr, buf, len in
             fsm_get_output_json(ptr, buf, len)
+        }
+    }
+
+    public func getFinalLeafOutput() -> String {
+        return readBufferString { ptr, buf, len in
+            fsm_get_final_leaf_output_json(ptr, buf, len)
+        }
+    }
+
+    public func initialTransitionJson(inputJson: String? = nil) -> String {
+        guard let ptr = ensureCreated() else { return "" }
+        if let inp = inputJson {
+            return inp.withCString { cInp in
+                readBufferString { p, buf, len in
+                    fsm_initial_transition_json(p, cInp, buf, len)
+                }
+            }
+        } else {
+            return readBufferString { p, buf, len in
+                fsm_initial_transition_json(p, nil, buf, len)
+            }
+        }
+    }
+
+    public func transitionPureJson(snapshotJson: String, eventJson: String) -> String {
+        guard let ptr = ensureCreated() else { return "" }
+        return snapshotJson.withCString { cSnap in
+            eventJson.withCString { cEvt in
+                readBufferString { p, buf, len in
+                    fsm_transition_pure_json(p, cSnap, cEvt, buf, len)
+                }
+            }
         }
     }
 

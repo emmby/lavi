@@ -796,6 +796,9 @@ pub struct MachineState {
     pub pending_commands: RefCell<VecDeque<PendingCommand>>,
     pub python_actions: RefCell<IndexMap<String, Py<PyAny>>>,
     pub python_guards: RefCell<IndexMap<String, Py<PyAny>>>,
+    pub python_output_resolvers: RefCell<IndexMap<String, Py<PyAny>>>,
+    pub python_invoke_start: RefCell<Option<Py<PyAny>>>,
+    pub python_invoke_stop: RefCell<Option<Py<PyAny>>>,
     pub python_clock: RefCell<Option<Py<PyAny>>>,
     pub python_inspector: RefCell<Option<Py<PyAny>>>,
     pub guards: RefCell<Rc<IndexMap<String, lavi::GuardFunction>>>,
@@ -843,7 +846,17 @@ impl MachineState {
         }
         let guard = self.machine.borrow();
         match guard.as_ref() {
-            Some(m) => Ok(f(m)),
+            Some(m) => {
+                let prev_active = self.active_machine.get();
+                if prev_active.is_null() {
+                    self.active_machine.set(m as *const lavi::RuntimeMachine);
+                }
+                let res = f(m);
+                if prev_active.is_null() {
+                    self.active_machine.set(std::ptr::null());
+                }
+                Ok(res)
+            }
             None => Err(PyRuntimeError::new_err("Machine is closed")),
         }
     }
@@ -957,7 +970,7 @@ impl MachineState {
         if let Some(ref mut m) = *guard {
             m.stop();
         }
-        Ok(())
+        self.check_and_raise_error()
     }
 
     fn drain_pending_commands(&self) -> PyResult<()> {
@@ -1035,6 +1048,25 @@ impl GuardDecorator {
     ) -> PyResult<Bound<'py, PyAny>> {
         let machine_bound = self.machine.bind(py);
         Machine::register_guard(machine_bound, &self.name, &func)?;
+        Ok(func)
+    }
+}
+
+#[pyclass(unsendable, name = "_OutputResolverDecorator")]
+pub struct OutputResolverDecorator {
+    machine: Py<Machine>,
+    name: String,
+}
+
+#[pymethods]
+impl OutputResolverDecorator {
+    fn __call__<'py>(
+        &self,
+        py: Python<'py>,
+        func: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let machine_bound = self.machine.bind(py);
+        Machine::register_output_resolver(machine_bound, &self.name, &func)?;
         Ok(func)
     }
 }
@@ -1151,6 +1183,9 @@ impl Machine {
             pending_commands: RefCell::new(VecDeque::new()),
             python_actions: RefCell::new(IndexMap::new()),
             python_guards: RefCell::new(IndexMap::new()),
+            python_output_resolvers: RefCell::new(IndexMap::new()),
+            python_invoke_start: RefCell::new(None),
+            python_invoke_stop: RefCell::new(None),
             python_clock: RefCell::new(None),
             python_inspector: RefCell::new(None),
             guards: RefCell::new(Rc::new(IndexMap::new())),
@@ -1223,8 +1258,11 @@ impl Machine {
         });
 
         let mut map = (**machine_self.state.actions.borrow()).clone();
-        map.insert(name.to_string(), action_fn);
+        map.insert(name.to_string(), Rc::clone(&action_fn));
         *machine_self.state.actions.borrow_mut() = Rc::new(map);
+        if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+            m.actions.insert(name.to_string(), action_fn);
+        }
 
         drop(machine_self);
         Ok(slf.clone())
@@ -1286,8 +1324,161 @@ impl Machine {
         });
 
         let mut map = (**machine_self.state.guards.borrow()).clone();
-        map.insert(name.to_string(), guard_fn);
+        map.insert(name.to_string(), Rc::clone(&guard_fn));
         *machine_self.state.guards.borrow_mut() = Rc::new(map);
+        if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+            m.guards.insert(name.to_string(), guard_fn);
+        }
+
+        drop(machine_self);
+        Ok(slf.clone())
+    }
+
+    fn register_output_resolver<'py>(
+        slf: &Bound<'py, Self>,
+        name: &str,
+        callback: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let machine_self = slf.borrow();
+        if machine_self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+        if !callback.is_callable() {
+            return Err(PyTypeError::new_err("output resolver callback must be callable"));
+        }
+
+        let py_fn = callback.clone().unbind();
+        machine_self
+            .state
+            .python_output_resolvers
+            .borrow_mut()
+            .insert(name.to_string(), py_fn);
+
+        let weak_state = Rc::downgrade(&machine_self.state);
+        let resolver_name = name.to_string();
+
+        let resolver_fn: lavi::OutputResolver = alloc::rc::Rc::new(move |ctx, evt| {
+            let Some(state) = weak_state.upgrade() else {
+                return lavi::Value::Null;
+            };
+            if state.aborted.get() {
+                return lavi::Value::Null;
+            };
+
+            let _guard = CallbackGuard::new(&state.callback_depth);
+            let result = Python::with_gil(|py| -> PyResult<lavi::Value> {
+                let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
+                let evt_val = Value(Arc::new(evt.clone())).into_py(py);
+                let resolvers_map = state.python_output_resolvers.borrow();
+                let Some(py_fn) = resolvers_map.get(&resolver_name) else {
+                    return Ok(lavi::Value::Null);
+                };
+                let bound = py_fn.bind(py);
+                let ret = bound.call1((ctx_val, evt_val))?;
+                python_to_core_value(&ret)
+            });
+
+            match result {
+                Ok(val) => val,
+                Err(err) => {
+                    state.aborted.set(true);
+                    *state.last_error.borrow_mut() = Some(err);
+                    lavi::Value::Null
+                }
+            }
+        });
+
+        if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+            m.register_output_resolver(name, resolver_fn);
+        }
+
+        drop(machine_self);
+        Ok(slf.clone())
+    }
+
+    #[pyo3(signature = (on_start=None, on_stop=None))]
+    fn register_invoke_callbacks<'py>(
+        slf: &Bound<'py, Self>,
+        on_start: Option<&Bound<'_, PyAny>>,
+        on_stop: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Bound<'py, Self>> {
+        let machine_self = slf.borrow();
+        if machine_self.state.is_closed.get() {
+            return Err(PyRuntimeError::new_err("Machine is closed"));
+        }
+
+        let start_fn_opt: Option<lavi::InvokeStartFunction> = if let Some(cb) = on_start {
+            if !cb.is_callable() {
+                return Err(PyTypeError::new_err("on_start callback must be callable"));
+            }
+            *machine_self.state.python_invoke_start.borrow_mut() = Some(cb.clone().unbind());
+            let weak_state = Rc::downgrade(&machine_self.state);
+            Some(alloc::rc::Rc::new(move |id, src, input_opt, ctx, evt| {
+                let Some(state) = weak_state.upgrade() else {
+                    return;
+                };
+                if state.aborted.get() {
+                    return;
+                }
+                let _guard = CallbackGuard::new(&state.callback_depth);
+                let res = Python::with_gil(|py| -> PyResult<()> {
+                    let cb_opt = state.python_invoke_start.borrow();
+                    if let Some(ref py_fn) = *cb_opt {
+                        let src_val = Value(Arc::new(src.clone())).into_py(py);
+                        let inp_val = match input_opt {
+                            Some(v) => Value(Arc::new(v.clone())).into_py(py),
+                            None => Value(Arc::new(lavi::Value::Null)).into_py(py),
+                        };
+                        let ctx_val = Value(Arc::new(ctx.clone())).into_py(py);
+                        let evt_val = Value(Arc::new(evt.clone())).into_py(py);
+                        let _ = py_fn.bind(py).call1((id, src_val, inp_val, ctx_val, evt_val))?;
+                    }
+                    Ok(())
+                });
+                if let Err(err) = res {
+                    state.aborted.set(true);
+                    *state.last_error.borrow_mut() = Some(err);
+                }
+            }))
+        } else {
+            *machine_self.state.python_invoke_start.borrow_mut() = None;
+            None
+        };
+
+        let stop_fn_opt: Option<lavi::InvokeStopFunction> = if let Some(cb) = on_stop {
+            if !cb.is_callable() {
+                return Err(PyTypeError::new_err("on_stop callback must be callable"));
+            }
+            *machine_self.state.python_invoke_stop.borrow_mut() = Some(cb.clone().unbind());
+            let weak_state = Rc::downgrade(&machine_self.state);
+            Some(alloc::rc::Rc::new(move |id| {
+                let Some(state) = weak_state.upgrade() else {
+                    return;
+                };
+                if state.aborted.get() {
+                    return;
+                }
+                let _guard = CallbackGuard::new(&state.callback_depth);
+                let res = Python::with_gil(|py| -> PyResult<()> {
+                    let cb_opt = state.python_invoke_stop.borrow();
+                    if let Some(ref py_fn) = *cb_opt {
+                        let _ = py_fn.bind(py).call1((id,))?;
+                    }
+                    Ok(())
+                });
+                if let Err(err) = res {
+                    state.aborted.set(true);
+                    *state.last_error.borrow_mut() = Some(err);
+                }
+            }))
+        } else {
+            *machine_self.state.python_invoke_stop.borrow_mut() = None;
+            None
+        };
+
+        if let Some(ref mut m) = *machine_self.state.machine.borrow_mut() {
+            m.register_invoke_callbacks(start_fn_opt, stop_fn_opt);
+        }
 
         drop(machine_self);
         Ok(slf.clone())
@@ -1442,6 +1633,14 @@ impl Machine {
         })
     }
 
+    #[pyo3(signature = (name))]
+    fn output_resolver<'py>(slf: &Bound<'py, Self>, name: &str) -> PyResult<OutputResolverDecorator> {
+        Ok(OutputResolverDecorator {
+            machine: slf.clone().unbind(),
+            name: name.to_string(),
+        })
+    }
+
     #[pyo3(signature = (callback=None))]
     fn clock<'py>(
         slf: &Bound<'py, Self>,
@@ -1485,6 +1684,9 @@ impl Machine {
         *self.state.machine.borrow_mut() = None;
         self.state.python_actions.borrow_mut().clear();
         self.state.python_guards.borrow_mut().clear();
+        self.state.python_output_resolvers.borrow_mut().clear();
+        *self.state.python_invoke_start.borrow_mut() = None;
+        *self.state.python_invoke_stop.borrow_mut() = None;
         *self.state.python_clock.borrow_mut() = None;
         *self.state.python_inspector.borrow_mut() = None;
         *self.state.guards.borrow_mut() = Rc::new(IndexMap::new());
@@ -1516,6 +1718,115 @@ impl Machine {
     #[getter(context)]
     fn py_context(&self) -> PyResult<Value> {
         self.get_context()
+    }
+
+    fn get_output(&self) -> PyResult<Value> {
+        let val = self.state.with_machine(|m| {
+            if !m.is_started {
+                lavi::Value::Null
+            } else {
+                m.get_output().unwrap_or(lavi::Value::Null)
+            }
+        })?;
+        self.state.check_and_raise_error()?;
+        Ok(Value(Arc::new(val)))
+    }
+
+    fn get_output_json(&self) -> PyResult<Option<String>> {
+        let json = self.state.with_machine(|m| {
+            if !m.is_started {
+                None
+            } else {
+                m.get_output().map(|v| v.to_json_string())
+            }
+        })?;
+        self.state.check_and_raise_error()?;
+        Ok(json)
+    }
+
+    fn get_final_leaf_output(&self) -> PyResult<Value> {
+        let val = self.state.with_machine(|m| {
+            if !m.is_started {
+                lavi::Value::Null
+            } else {
+                m.get_final_leaf_output()
+                    .unwrap_or(lavi::Value::Null)
+            }
+        })?;
+        self.state.check_and_raise_error()?;
+        Ok(Value(Arc::new(val)))
+    }
+
+    fn get_final_leaf_output_json(&self) -> PyResult<Option<String>> {
+        let json = self.state.with_machine(|m| {
+            if !m.is_started {
+                None
+            } else {
+                m.get_final_leaf_output()
+                    .map(|v| v.to_json_string())
+            }
+        })?;
+        self.state.check_and_raise_error()?;
+        Ok(json)
+    }
+
+    #[pyo3(signature = (input_val=None))]
+    fn initial_transition(&self, input_val: Option<&Bound<'_, PyAny>>) -> PyResult<Value> {
+        let parsed_input = match input_val {
+            None => None,
+            Some(v) => Some(python_to_core_value(v)?),
+        };
+        let res = self.state.with_machine(|m| {
+            m.initial_transition_pure_value(parsed_input.as_ref())
+        })?;
+        self.state.check_and_raise_error()?;
+        Ok(Value(Arc::new(res)))
+    }
+
+    #[pyo3(signature = (input_json=None))]
+    fn initial_transition_json(&self, input_json: Option<&str>) -> PyResult<String> {
+        let res = self
+            .state
+            .with_machine(|m| m.initial_transition_pure_json(input_json))?
+            .map_err(PyValueError::new_err)?;
+        self.state.check_and_raise_error()?;
+        Ok(res)
+    }
+
+    fn transition_pure(
+        &self,
+        state_or_snapshot: &Bound<'_, PyAny>,
+        event: &Bound<'_, PyAny>,
+    ) -> PyResult<Value> {
+        let snap_val = if let Ok(s) = state_or_snapshot.extract::<String>() {
+            lavi::Value::from_json(&s).unwrap_or(lavi::Value::String(s))
+        } else {
+            python_to_core_value(state_or_snapshot)?
+        };
+        let evt_val = if let Ok(s) = event.extract::<String>() {
+            if s.trim_start().starts_with('{') {
+                lavi::Value::from_json(&s).unwrap_or(lavi::Value::String(s))
+            } else {
+                lavi::Value::String(s)
+            }
+        } else {
+            python_to_core_value(event)?
+        };
+        let res = self
+            .state
+            .with_machine(|m| m.transition_pure_snapshot_value(&snap_val, &evt_val))?
+            .map_err(PyValueError::new_err)?;
+        self.state.check_and_raise_error()?;
+        Ok(Value(Arc::new(res)))
+    }
+
+    fn transition_pure_json(&self, snapshot_json: &str, event_json: &str) -> PyResult<String> {
+        let res = self
+            .state
+            .with_machine(|m| m.transition_pure_json(snapshot_json, event_json))?
+            .map_err(PyValueError::new_err)?;
+        self.state.check_and_raise_error()?;
+        Ok(res)
     }
 
     #[pyo3(signature = (event, payload=None))]
@@ -1721,6 +2032,18 @@ impl Machine {
         for py_fn in guards.values() {
             visit.call(py_fn)?;
         }
+        let output_resolvers = self.state.python_output_resolvers.borrow();
+        for py_fn in output_resolvers.values() {
+            visit.call(py_fn)?;
+        }
+        let inv_start = self.state.python_invoke_start.borrow();
+        if let Some(ref py_fn) = *inv_start {
+            visit.call(py_fn)?;
+        }
+        let inv_stop = self.state.python_invoke_stop.borrow();
+        if let Some(ref py_fn) = *inv_stop {
+            visit.call(py_fn)?;
+        }
         let clock = self.state.python_clock.borrow();
         if let Some(ref py_fn) = *clock {
             visit.call(py_fn)?;
@@ -1735,6 +2058,9 @@ impl Machine {
     fn __clear__(&mut self) {
         self.state.python_actions.borrow_mut().clear();
         self.state.python_guards.borrow_mut().clear();
+        self.state.python_output_resolvers.borrow_mut().clear();
+        *self.state.python_invoke_start.borrow_mut() = None;
+        *self.state.python_invoke_stop.borrow_mut() = None;
         *self.state.python_clock.borrow_mut() = None;
         *self.state.python_inspector.borrow_mut() = None;
         *self.state.guards.borrow_mut() = Rc::new(IndexMap::new());
@@ -1754,6 +2080,7 @@ fn _lavi_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Machine>()?;
     m.add_class::<ActionDecorator>()?;
     m.add_class::<GuardDecorator>()?;
+    m.add_class::<OutputResolverDecorator>()?;
     m.add_class::<ClockDecorator>()?;
     m.add_class::<InspectorDecorator>()?;
     Ok(())

@@ -28,6 +28,9 @@ public final class Machine implements AutoCloseable {
     private final Map<String, ParameterizedActionCallback> parameterizedActions = new HashMap<String, ParameterizedActionCallback>();
     private final Map<String, GuardCallback> guards = new HashMap<String, GuardCallback>();
     private final Map<String, ParameterizedGuardCallback> parameterizedGuards = new HashMap<String, ParameterizedGuardCallback>();
+    private final Map<String, OutputResolverCallback> outputResolvers = new HashMap<String, OutputResolverCallback>();
+    private InvokeStartCallback invokeStartCallback;
+    private InvokeStopCallback invokeStopCallback;
     private ClockCallback clockCallback;
     private InspectCallback inspectCallback;
     private SimulatedClock simulatedClock;
@@ -100,6 +103,24 @@ public final class Machine implements AutoCloseable {
         return this;
     }
 
+    public synchronized Machine registerOutputResolver(String statePath, OutputResolverCallback cb) {
+        checkClosed();
+        if (statePath == null || cb == null) {
+            throw new IllegalArgumentException("statePath and callback cannot be null");
+        }
+        outputResolvers.put(statePath, cb);
+        nativeRegisterOutputResolver(nativeHandle, statePath);
+        return this;
+    }
+
+    public synchronized Machine registerInvokeCallbacks(InvokeStartCallback onStart, InvokeStopCallback onStop) {
+        checkClosed();
+        this.invokeStartCallback = onStart;
+        this.invokeStopCallback = onStop;
+        nativeRegisterInvokeCallbacks(nativeHandle, onStart != null, onStop != null);
+        return this;
+    }
+
     public synchronized Machine registerClock(ClockCallback cb) {
         checkClosed();
         if (cb == null) {
@@ -167,6 +188,9 @@ public final class Machine implements AutoCloseable {
         parameterizedActions.clear();
         guards.clear();
         parameterizedGuards.clear();
+        outputResolvers.clear();
+        invokeStartCallback = null;
+        invokeStopCallback = null;
         clockCallback = null;
         inspectCallback = null;
     }
@@ -175,6 +199,58 @@ public final class Machine implements AutoCloseable {
         checkClosed();
         long handle = nativeGetContext(nativeHandle);
         return handle != 0L ? Value.fromNativeHandle(handle) : Value.NULL;
+    }
+
+    public synchronized Value getOutput() {
+        checkClosed();
+        long handle = nativeGetOutput(nativeHandle);
+        return handle != 0L ? Value.fromNativeHandle(handle) : Value.NULL;
+    }
+
+    public synchronized String getOutputJson() {
+        Value out = getOutput();
+        return out.isNull() ? null : out.toJson();
+    }
+
+    public synchronized Value getFinalLeafOutput() {
+        checkClosed();
+        long handle = nativeGetFinalLeafOutput(nativeHandle);
+        return handle != 0L ? Value.fromNativeHandle(handle) : Value.NULL;
+    }
+
+    public synchronized String getFinalLeafOutputJson() {
+        Value out = getFinalLeafOutput();
+        return out.isNull() ? null : out.toJson();
+    }
+
+    public synchronized String initialTransitionJson() {
+        return initialTransitionJson(null);
+    }
+
+    public synchronized String initialTransitionJson(String inputJson) {
+        checkClosed();
+        return nativeInitialTransitionJson(nativeHandle, inputJson);
+    }
+
+    public synchronized Value initialTransition() {
+        return Value.fromJson(initialTransitionJson(null));
+    }
+
+    public synchronized Value initialTransition(Value input) {
+        String inpJson = (input == null || input.isNull()) ? null : input.toJson();
+        return Value.fromJson(initialTransitionJson(inpJson));
+    }
+
+    public synchronized String transitionPureJson(String snapshotOrStateJson, String eventJson) {
+        checkClosed();
+        if (snapshotOrStateJson == null || eventJson == null) {
+            throw new IllegalArgumentException("snapshotOrStateJson and eventJson cannot be null");
+        }
+        return nativeTransitionPureJson(nativeHandle, snapshotOrStateJson, eventJson);
+    }
+
+    public synchronized Value transitionPure(String snapshotOrStateJson, String eventJson) {
+        return Value.fromJson(transitionPureJson(snapshotOrStateJson, eventJson));
     }
 
     public synchronized boolean matches(String statePath) {
@@ -290,6 +366,45 @@ public final class Machine implements AutoCloseable {
         return false;
     }
 
+    // Called from JNI when computing dynamic final state or machine output
+    private String dispatchOutputResolver(String statePath, long ctxHandle, long evtHandle) {
+        OutputResolverCallback cb = outputResolvers.get(statePath);
+        if (cb == null) {
+            if (ctxHandle != 0L) Value.nativeFree(ctxHandle);
+            if (evtHandle != 0L) Value.nativeFree(evtHandle);
+            return "null";
+        }
+        Value ctx = Value.fromNativeHandle(ctxHandle);
+        Value evt = Value.fromNativeHandle(evtHandle);
+        Value out = cb.resolve(ctx, evt);
+        return out != null ? out.toJson() : "null";
+    }
+
+    // Called from JNI when an invoked child service starts
+    private void dispatchInvokeStart(String id, long srcHandle, long inputHandle, long ctxHandle, long evtHandle) {
+        InvokeStartCallback cb = invokeStartCallback;
+        if (cb == null) {
+            if (srcHandle != 0L) Value.nativeFree(srcHandle);
+            if (inputHandle != 0L) Value.nativeFree(inputHandle);
+            if (ctxHandle != 0L) Value.nativeFree(ctxHandle);
+            if (evtHandle != 0L) Value.nativeFree(evtHandle);
+            return;
+        }
+        Value src = srcHandle != 0L ? Value.fromNativeHandle(srcHandle) : Value.NULL;
+        Value inp = inputHandle != 0L ? Value.fromNativeHandle(inputHandle) : Value.NULL;
+        Value ctx = ctxHandle != 0L ? Value.fromNativeHandle(ctxHandle) : Value.NULL;
+        Value evt = evtHandle != 0L ? Value.fromNativeHandle(evtHandle) : Value.NULL;
+        cb.onStart(id, src, inp, ctx, evt);
+    }
+
+    // Called from JNI when an invoked child service stops
+    private void dispatchInvokeStop(String id) {
+        InvokeStopCallback cb = invokeStopCallback;
+        if (cb != null) {
+            cb.onStop(id);
+        }
+    }
+
     // Called from JNI during transitions
     private long dispatchClock() {
         if (clockCallback != null) {
@@ -312,6 +427,8 @@ public final class Machine implements AutoCloseable {
     private static native long nativeCreate(String jsonConfig, long clockHandle);
     private static native void nativeRegisterAction(long handle, String name);
     private static native void nativeRegisterGuard(long handle, String name);
+    private static native void nativeRegisterOutputResolver(long handle, String statePath);
+    private static native void nativeRegisterInvokeCallbacks(long handle, boolean hasStart, boolean hasStop);
     private static native void nativeRegisterClockCallback(long handle);
     private static native void nativeRegisterSimulatedClock(long handle, long clockHandle);
     private static native void nativeRegisterInspector(long handle);
@@ -319,6 +436,10 @@ public final class Machine implements AutoCloseable {
     private native void nativeStop(long handle);
     private static native void nativeFree(long handle);
     private native long nativeGetContext(long handle);
+    private native long nativeGetOutput(long handle);
+    private native long nativeGetFinalLeafOutput(long handle);
+    private native String nativeInitialTransitionJson(long handle, String inputJson);
+    private native String nativeTransitionPureJson(long handle, String snapshotJson, String eventJson);
     private native boolean nativeMatches(long handle, String statePath);
     private native boolean nativeCan(long handle, String event, String payloadJson);
     private native boolean nativeHasTag(long handle, String tag);

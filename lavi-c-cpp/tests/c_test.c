@@ -156,6 +156,49 @@ static void inspect_action_params_cb(const char* action_name, const fsm_value_t*
     c_action_params_verified = true;
 }
 
+static int32_t c_output_resolver_cb(const char* state_path, const fsm_value_t* context, const fsm_value_t* event, char* out_buf, size_t max_len, void* user_data) {
+    (void)event;
+    (void)user_data;
+    assert(strcmp(state_path, "") == 0);
+    const fsm_value_t* total_v = fsm_value_get_property(context, "total");
+    int total = (total_v && fsm_value_is_number(total_v)) ? (int)fsm_value_get_number(total_v) : 0;
+    char formatted[64];
+    int n = snprintf(formatted, sizeof(formatted), "{\"doubled\":%d}", total * 2);
+    assert(n > 0);
+    if (out_buf == NULL || max_len == 0) {
+        return (int32_t)(n + 1);
+    }
+    if (max_len < (size_t)(n + 1)) {
+        return -2;
+    }
+    memcpy(out_buf, formatted, (size_t)(n + 1));
+    return (int32_t)n;
+}
+
+static int c_invoke_start_count = 0;
+static int c_invoke_stop_count = 0;
+static char c_last_invoke_id[64] = {0};
+static char c_last_invoke_src[64] = {0};
+static char c_last_stopped_id[64] = {0};
+
+static void c_invoke_start_cb(const char* invoke_id, const char* src, const fsm_value_t* input, const fsm_value_t* context, const fsm_value_t* event, void* user_data) {
+    (void)input;
+    (void)context;
+    (void)event;
+    int* tag = (int*)user_data;
+    if (tag) (*tag) += 10;
+    c_invoke_start_count++;
+    snprintf(c_last_invoke_id, sizeof(c_last_invoke_id), "%s", invoke_id ? invoke_id : "");
+    snprintf(c_last_invoke_src, sizeof(c_last_invoke_src), "%s", src ? src : "");
+}
+
+static void c_invoke_stop_cb(const char* invoke_id, void* user_data) {
+    int* tag = (int*)user_data;
+    if (tag) (*tag) += 1;
+    c_invoke_stop_count++;
+    snprintf(c_last_stopped_id, sizeof(c_last_stopped_id), "%s", invoke_id ? invoke_id : "");
+}
+
 int main() {
 
     printf("Starting C Integration Test...\n");
@@ -880,6 +923,116 @@ int main() {
     assert(c_inspect_saw_microstep == true);
     assert(c_inspect_saw_snapshot == true);
     fsm_destroy(insp_m);
+
+    // ==========================================
+    // TD-21: Pure Transitions, Final Leaf Output, Output Resolver & Invoke Callbacks
+    // ==========================================
+    const char* TD21_C_JSON = "{"
+      "\"id\": \"td21C\","
+      "\"initial\": \"active\","
+      "\"context\": { \"total\": 21 },"
+      "\"states\": {"
+        "\"active\": {"
+          "\"initial\": \"working\","
+          "\"invoke\": { \"id\": \"workerSvc\", \"src\": \"fetchWorker\" },"
+          "\"onDone\": \"completed\","
+          "\"states\": {"
+            "\"working\": {"
+              "\"entry\": [\"onEnterWorking\"],"
+              "\"on\": { \"COMPLETE_SUB\": \"subDone\" }"
+            "},"
+            "\"subDone\": {"
+              "\"type\": \"final\","
+              "\"output\": { \"leafResult\": \"subOk\" }"
+            "}"
+          "}"
+        "},"
+        "\"completed\": {"
+          "\"type\": \"final\""
+        "}"
+      "}"
+    "}";
+
+    MachineContext* td21_m = fsm_create(TD21_C_JSON);
+    assert(td21_m != NULL);
+    int invoke_user_tag = 0;
+    assert(fsm_register_output_resolver(td21_m, "", c_output_resolver_cb, NULL) == 0);
+    assert(fsm_register_invoke_callbacks(td21_m, c_invoke_start_cb, c_invoke_stop_cb, &invoke_user_tag) == 0);
+
+    // 1. Pure initialTransition before fsm_start (does not trigger invoke start or mutate live machine)
+    int32_t init_pure_req = fsm_initial_transition_json(td21_m, NULL, NULL, 0);
+    assert(init_pure_req > 0);
+    char* init_pure_buf = (char*)malloc((size_t)init_pure_req);
+    assert(fsm_initial_transition_json(td21_m, NULL, init_pure_buf, (size_t)init_pure_req) == init_pure_req - 1);
+    assert(strstr(init_pure_buf, "\"value\":{\"active\":\"working\"}") != NULL);
+    assert(strstr(init_pure_buf, "\"xstate.spawnChild\"") != NULL);
+    assert(strstr(init_pure_buf, "{\"type\":\"onEnterWorking\"}") != NULL);
+    assert(c_invoke_start_count == 0);
+
+    // Let's start live machine and verify invoke start callback fired
+    assert(fsm_start(td21_m) == 0);
+    assert(c_invoke_start_count == 1);
+    assert(strcmp(c_last_invoke_id, "workerSvc") == 0);
+    assert(strcmp(c_last_invoke_src, "fetchWorker") == 0);
+    assert(invoke_user_tag == 10);
+
+    // Grab live snapshot while in active.working
+    int32_t snap_req = fsm_get_snapshot_json(td21_m, NULL, 0);
+    char* snap_buf = (char*)malloc((size_t)snap_req);
+    fsm_get_snapshot_json(td21_m, snap_buf, (size_t)snap_req);
+
+    // 2. Pure transition from snapshot + event (does not mutate td21_m or stop invoke)
+    int32_t next_pure_req = fsm_transition_pure_json(td21_m, snap_buf, "{\"type\":\"COMPLETE_SUB\"}", NULL, 0);
+    assert(next_pure_req > 0);
+    char* next_pure_buf = (char*)malloc((size_t)next_pure_req);
+    assert(fsm_transition_pure_json(td21_m, snap_buf, "{\"type\":\"COMPLETE_SUB\"}", next_pure_buf, (size_t)next_pure_req) == next_pure_req - 1);
+    assert(strstr(next_pure_buf, "\"value\":\"completed\"") != NULL);
+    // Live machine is still in active.working and invoke has not stopped!
+    assert(fsm_matches(td21_m, "active.working"));
+    assert(c_invoke_stop_count == 0);
+
+    // 3. Test final leaf output on a compound state
+    const char* LEAF_OUT_JSON = "{"
+      "\"id\": \"leafOutC\","
+      "\"initial\": \"parent\","
+      "\"states\": {"
+        "\"parent\": {"
+          "\"initial\": \"step1\","
+          "\"states\": {"
+            "\"step1\": { \"on\": { \"FINISH_LEAF\": \"stepFinal\" } },"
+            "\"stepFinal\": { \"type\": \"final\", \"output\": { \"leafCode\": 77 } }"
+          "}"
+        "}"
+      "}"
+    "}";
+    MachineContext* leaf_m = fsm_create(LEAF_OUT_JSON);
+    assert(fsm_start(leaf_m) == 0);
+    assert(fsm_get_final_leaf_output_json(leaf_m, temp_buf, sizeof(temp_buf)) == -4);
+    assert(fsm_send_event(leaf_m, "FINISH_LEAF") == 0);
+    int32_t leaf_req = fsm_get_final_leaf_output_json(leaf_m, NULL, 0);
+    assert(leaf_req > 0);
+    char* leaf_buf = (char*)malloc((size_t)leaf_req);
+    assert(fsm_get_final_leaf_output_json(leaf_m, leaf_buf, (size_t)leaf_req) == leaf_req - 1);
+    assert(strstr(leaf_buf, "\"leafCode\":77") != NULL);
+    free(leaf_buf);
+    fsm_destroy(leaf_m);
+
+    // 4. Transition live td21_m to completed -> stops invoke & resolves dynamic output via c_output_resolver_cb
+    assert(fsm_send_event(td21_m, "COMPLETE_SUB") == 0);
+    assert(fsm_matches(td21_m, "completed"));
+    assert(fsm_is_done(td21_m) == 1);
+    assert(c_invoke_stop_count == 1);
+    assert(strcmp(c_last_stopped_id, "workerSvc") == 0);
+    assert(invoke_user_tag == 11);
+
+    char resolved_out[64];
+    assert(fsm_get_output_json(td21_m, resolved_out, sizeof(resolved_out)) > 0);
+    assert(strstr(resolved_out, "\"doubled\":42") != NULL);
+
+    free(init_pure_buf);
+    free(snap_buf);
+    free(next_pure_buf);
+    fsm_destroy(td21_m);
 
     printf("C Test Passed!\n");
     return 0;

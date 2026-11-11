@@ -60,6 +60,29 @@ internal static class NativeMethods
         IntPtr inspectJson,
         IntPtr userData);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate UIntPtr NativeOutputResolverCallback(
+        IntPtr statePath,
+        IntPtr context,
+        IntPtr evt,
+        IntPtr outBuffer,
+        UIntPtr outBufferLen,
+        IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void NativeInvokeStartCallback(
+        IntPtr invokeId,
+        IntPtr srcJson,
+        IntPtr input,
+        IntPtr context,
+        IntPtr evt,
+        IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate void NativeInvokeStopCallback(
+        IntPtr invokeId,
+        IntPtr userData);
+
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr fsm_create(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string jsonConfig);
@@ -183,6 +206,20 @@ internal static class NativeMethods
         IntPtr userData);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int fsm_register_output_resolver(
+        IntPtr ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string statePath,
+        NativeOutputResolverCallback callback,
+        IntPtr userData);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int fsm_register_invoke_callbacks(
+        IntPtr ctx,
+        NativeInvokeStartCallback? onStart,
+        NativeInvokeStopCallback? onStop,
+        IntPtr userData);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int fsm_register_clock_with_data(
         IntPtr ctx,
         NativeClockWithDataCallback callback,
@@ -241,6 +278,27 @@ internal static class NativeMethods
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int fsm_get_output_json(
         IntPtr ctx,
+        byte[]? buffer,
+        UIntPtr bufferLen);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int fsm_get_final_leaf_output_json(
+        IntPtr ctx,
+        byte[]? buffer,
+        UIntPtr bufferLen);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int fsm_initial_transition_json(
+        IntPtr ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? inputJson,
+        byte[]? buffer,
+        UIntPtr bufferLen);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int fsm_transition_pure_json(
+        IntPtr ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string snapshotJson,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string eventJson,
         byte[]? buffer,
         UIntPtr bufferLen);
 

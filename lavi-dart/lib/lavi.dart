@@ -68,6 +68,10 @@ typedef GuardCallback = bool Function(Value context, Value event);
 typedef GuardWithParamsCallback = bool Function(
     Value context, Value event, Value params);
 typedef DelayCallback = int Function(Value context, Value event);
+typedef OutputResolverCallback = String Function(Value context, Value event);
+typedef InvokeStartCallback = void Function(
+    String id, String src, Value input, Value context, Value event);
+typedef InvokeStopCallback = void Function(String id);
 typedef ClockCallback = int Function();
 typedef InspectCallback = void Function(String inspectJson);
 
@@ -110,6 +114,7 @@ class Machine {
   Pointer<NativeMachineContext> _machinePtr = nullptr;
   final String _jsonConfig;
   final String? _inputJson;
+  bool _started = false;
   bool _closed = false;
 
   final Map<String, ActionCallback> _actions = {};
@@ -117,6 +122,9 @@ class Machine {
   final Map<String, GuardCallback> _guards = {};
   final Map<String, GuardWithParamsCallback> _guardsWithParams = {};
   final Map<String, DelayCallback> _delays = {};
+  final Map<String, OutputResolverCallback> _outputResolvers = {};
+  InvokeStartCallback? _invokeStartFn;
+  InvokeStopCallback? _invokeStopFn;
   ClockCallback? _clockFn;
   InspectCallback? _inspectFn;
   SimulatedClock? _simClock;
@@ -126,6 +134,9 @@ class Machine {
   NativeCallable<NativeGuardCallback>? _guardCallable;
   NativeCallable<NativeGuardWithParamsCallback>? _guardWithParamsCallable;
   NativeCallable<NativeDelayCallback>? _delayCallable;
+  NativeCallable<NativeOutputResolverCallback>? _outputResolverCallable;
+  NativeCallable<NativeInvokeStartCallback>? _invokeStartCallable;
+  NativeCallable<NativeInvokeStopCallback>? _invokeStopCallable;
   NativeCallable<NativeClockWithDataCallback>? _clockCallable;
   NativeCallable<NativeInspectCallback>? _inspectCallable;
 
@@ -133,7 +144,7 @@ class Machine {
       : _inputJson = inputJson,
         _simClock = clock;
 
-  bool get isValid => !_closed && _machinePtr != nullptr;
+  bool get isValid => !_closed && _started && _machinePtr != nullptr;
 
   NativeCallable<NativeActionCallback> _ensureActionCallable() {
     return _actionCallable ??=
@@ -221,6 +232,65 @@ class Machine {
         return 0;
       },
       exceptionalReturn: 0,
+    );
+  }
+
+  NativeCallable<NativeOutputResolverCallback> _ensureOutputResolverCallable() {
+    return _outputResolverCallable ??=
+        NativeCallable<NativeOutputResolverCallback>.isolateLocal(
+      (Pointer<Utf8> pathPtr,
+          Pointer<NativeFsmValue> ctxPtr,
+          Pointer<NativeFsmValue> evtPtr,
+          Pointer<Uint8> outBuf,
+          int outBufLen,
+          Pointer<Void> _) {
+        if (pathPtr == nullptr || outBuf == nullptr || outBufLen <= 0) return 0;
+        final path = pathPtr.toDartString();
+        final cb = _outputResolvers[path];
+        if (cb == null) return 0;
+        final json = cb(Value.fromRaw(ctxPtr), Value.fromRaw(evtPtr));
+        final encoded = utf8.encode(json);
+        final copyLen =
+            encoded.length < (outBufLen - 1) ? encoded.length : (outBufLen - 1);
+        final dst = outBuf.asTypedList(outBufLen);
+        for (var i = 0; i < copyLen; i++) {
+          dst[i] = encoded[i];
+        }
+        dst[copyLen] = 0;
+        return copyLen;
+      },
+      exceptionalReturn: 0,
+    );
+  }
+
+  NativeCallable<NativeInvokeStartCallback> _ensureInvokeStartCallable() {
+    return _invokeStartCallable ??=
+        NativeCallable<NativeInvokeStartCallback>.isolateLocal(
+      (Pointer<Utf8> idPtr,
+          Pointer<Utf8> srcPtr,
+          Pointer<NativeFsmValue> inpPtr,
+          Pointer<NativeFsmValue> ctxPtr,
+          Pointer<NativeFsmValue> evtPtr,
+          Pointer<Void> _) {
+        if (idPtr == nullptr || srcPtr == nullptr) return;
+        _invokeStartFn?.call(
+          idPtr.toDartString(),
+          srcPtr.toDartString(),
+          Value.fromRaw(inpPtr),
+          Value.fromRaw(ctxPtr),
+          Value.fromRaw(evtPtr),
+        );
+      },
+    );
+  }
+
+  NativeCallable<NativeInvokeStopCallback> _ensureInvokeStopCallable() {
+    return _invokeStopCallable ??=
+        NativeCallable<NativeInvokeStopCallback>.isolateLocal(
+      (Pointer<Utf8> idPtr, Pointer<Void> _) {
+        if (idPtr == nullptr) return;
+        _invokeStopFn?.call(idPtr.toDartString());
+      },
     );
   }
 
@@ -316,6 +386,27 @@ class Machine {
         calloc.free(cName);
       }
     }
+    for (final path in _outputResolvers.keys) {
+      final cPath = path.toNativeUtf8();
+      try {
+        b.fsmRegisterOutputResolver(
+            ptr, cPath, _ensureOutputResolverCallable().nativeFunction, nullptr);
+      } finally {
+        calloc.free(cPath);
+      }
+    }
+    if (_invokeStartFn != null || _invokeStopFn != null) {
+      b.fsmRegisterInvokeCallbacks(
+        ptr,
+        _invokeStartFn != null
+            ? _ensureInvokeStartCallable().nativeFunction
+            : nullptr,
+        _invokeStopFn != null
+            ? _ensureInvokeStopCallable().nativeFunction
+            : nullptr,
+        nullptr,
+      );
+    }
     final sim = _simClock;
     if (sim != null && sim.rawPointer != nullptr) {
       b.fsmRegisterSimulatedClock(ptr, sim.rawPointer);
@@ -331,10 +422,14 @@ class Machine {
 
   bool start() {
     if (_closed) return false;
-    if (_machinePtr != nullptr) return true;
+    if (_started && _machinePtr != nullptr) return true;
     final ptr = _ensureCreated();
     if (ptr == nullptr) return false;
-    return getBindings().fsmStart(ptr) == 0;
+    if (getBindings().fsmStart(ptr) == 0) {
+      _started = true;
+      return true;
+    }
+    return false;
   }
 
   void stop() {
@@ -346,6 +441,7 @@ class Machine {
   void close() {
     if (_closed) return;
     _closed = true;
+    _started = false;
     if (_machinePtr != nullptr) {
       getBindings().fsmFree(_machinePtr);
       _machinePtr = nullptr;
@@ -360,6 +456,12 @@ class Machine {
     _guardWithParamsCallable = null;
     _delayCallable?.close();
     _delayCallable = null;
+    _outputResolverCallable?.close();
+    _outputResolverCallable = null;
+    _invokeStartCallable?.close();
+    _invokeStartCallable = null;
+    _invokeStopCallable?.close();
+    _invokeStopCallable = null;
     _clockCallable?.close();
     _clockCallable = null;
     _inspectCallable?.close();
@@ -370,6 +472,9 @@ class Machine {
     _guards.clear();
     _guardsWithParams.clear();
     _delays.clear();
+    _outputResolvers.clear();
+    _invokeStartFn = null;
+    _invokeStopFn = null;
     _clockFn = null;
     _inspectFn = null;
     _simClock = null;
@@ -449,6 +554,35 @@ class Machine {
       } finally {
         calloc.free(cName);
       }
+    }
+  }
+
+  void registerOutputResolver(String statePath, OutputResolverCallback callback) {
+    if (_closed) return;
+    _outputResolvers[statePath] = callback;
+    if (_machinePtr != nullptr) {
+      final cPath = statePath.toNativeUtf8();
+      try {
+        getBindings().fsmRegisterOutputResolver(_machinePtr, cPath,
+            _ensureOutputResolverCallable().nativeFunction, nullptr);
+      } finally {
+        calloc.free(cPath);
+      }
+    }
+  }
+
+  void registerInvokeCallbacks(
+      {InvokeStartCallback? onStart, InvokeStopCallback? onStop}) {
+    if (_closed) return;
+    _invokeStartFn = onStart;
+    _invokeStopFn = onStop;
+    if (_machinePtr != nullptr) {
+      getBindings().fsmRegisterInvokeCallbacks(
+        _machinePtr,
+        onStart != null ? _ensureInvokeStartCallable().nativeFunction : nullptr,
+        onStop != null ? _ensureInvokeStopCallable().nativeFunction : nullptr,
+        nullptr,
+      );
     }
   }
 
@@ -593,10 +727,47 @@ class Machine {
       }
       return false;
     }
+    _started = true;
     return true;
   }
 
   String getOutput() => _readBufferString(getBindings().fsmGetOutputJson);
+
+  String getFinalLeafOutput() =>
+      _readBufferString(getBindings().fsmGetFinalLeafOutputJson);
+
+  String initialTransitionJson({String? inputJson}) {
+    final ptr = _ensureCreated();
+    if (ptr == nullptr) return '';
+    Pointer<Utf8> cInp = nullptr;
+    if (inputJson != null) {
+      cInp = inputJson.toNativeUtf8();
+    }
+    try {
+      return _readBufferString(
+        (p, buf, len) =>
+            getBindings().fsmInitialTransitionJson(p, cInp, buf, len),
+      );
+    } finally {
+      if (cInp != nullptr) calloc.free(cInp);
+    }
+  }
+
+  String transitionPureJson(String snapshotJson, String eventJson) {
+    final ptr = _ensureCreated();
+    if (ptr == nullptr) return '';
+    final cSnap = snapshotJson.toNativeUtf8();
+    final cEvt = eventJson.toNativeUtf8();
+    try {
+      return _readBufferString(
+        (p, buf, len) =>
+            getBindings().fsmTransitionPureJson(p, cSnap, cEvt, buf, len),
+      );
+    } finally {
+      calloc.free(cSnap);
+      calloc.free(cEvt);
+    }
+  }
 
   String getMeta() => _readBufferString(getBindings().fsmGetMetaJson);
 

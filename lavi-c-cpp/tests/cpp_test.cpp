@@ -877,6 +877,89 @@ int main() {
         assert(saw_microstep);
         assert(saw_snapshot);
 
+        // 6. TD-21: Pure Transitions, Final Leaf Output, Output Resolver & Invoke Callbacks in C++
+        const char* TD21_CPP_JSON = R"({
+          "id": "td21Cpp",
+          "initial": "active",
+          "context": { "total": 15 },
+          "states": {
+            "active": {
+              "initial": "working",
+              "invoke": { "id": "childWorker", "src": "workerTask", "input": { "rate": 5 } },
+              "states": {
+                "working": {
+                  "entry": ["logWorking"],
+                  "on": { "DONE_LEAF": "leafFinal" }
+                },
+                "leafFinal": {
+                  "type": "final",
+                  "output": { "subStatus": "leafDone" }
+                }
+              },
+              "on": { "FINISH_ALL": "completed" }
+            },
+            "completed": {
+              "type": "final"
+            }
+          }
+        })";
+
+        lavi::Machine td21_cpp(TD21_CPP_JSON);
+        std::vector<std::string> started_invokes;
+        std::vector<std::string> stopped_invokes;
+        double invoke_input_rate = 0;
+
+        td21_cpp.registerOutputResolver("", [](const lavi::Value& ctx, const lavi::Value&) -> std::string {
+            double total = 0;
+            assert(ctx.getProperty("total").getNumber(total));
+            return "{\"tripled\":" + std::to_string(static_cast<int>(total * 3)) + "}";
+        });
+
+        td21_cpp.registerInvokeCallbacks(
+            [&](const std::string& id, const std::string& src, const lavi::Value& inp, const lavi::Value&, const lavi::Value&) {
+                started_invokes.push_back(id + ":" + src);
+                assert(inp.getProperty("rate").getNumber(invoke_input_rate));
+            },
+            [&](const std::string& id) {
+                stopped_invokes.push_back(id);
+            }
+        );
+
+        // Call initialTransitionJson BEFORE start()
+        std::string init_pure = td21_cpp.initialTransitionJson();
+        assert(init_pure.find("\"value\":{\"active\":\"working\"}") != std::string::npos);
+        assert(init_pure.find("\"logWorking\"") != std::string::npos);
+        assert(started_invokes.empty());
+
+        // Start machine and move it to verify move semantics for output resolver + invoke callbacks
+        td21_cpp.start();
+        assert(started_invokes.size() == 1);
+        assert(started_invokes[0] == "childWorker:workerTask");
+        assert(invoke_input_rate == 5.0);
+
+        lavi::Machine td21_moved = std::move(td21_cpp);
+        std::string live_snap = td21_moved.getSnapshot();
+        std::string pure_next = td21_moved.transitionPureJson(live_snap, R"({"type":"FINISH_ALL"})");
+        assert(pure_next.find("\"value\":\"completed\"") != std::string::npos);
+        // Live machine still in active.working and invoke not stopped
+        assert(td21_moved.matches("active.working"));
+        assert(stopped_invokes.empty());
+
+        // Reach leaf final state and verify getFinalLeafOutputJson
+        assert(td21_moved.getFinalLeafOutputJson().empty());
+        td21_moved.send("DONE_LEAF");
+        assert(td21_moved.matches("active.leafFinal"));
+        std::string leaf_out = td21_moved.getFinalLeafOutputJson();
+        assert(leaf_out.find("\"subStatus\":\"leafDone\"") != std::string::npos);
+
+        // Transition out of active to completed -> stops invoke & computes dynamic output
+        td21_moved.send("FINISH_ALL");
+        assert(td21_moved.isDone());
+        assert(stopped_invokes.size() == 1);
+        assert(stopped_invokes[0] == "childWorker");
+        std::string final_out = td21_moved.getOutputJson();
+        assert(final_out.find("\"tripled\":45") != std::string::npos);
+
     } catch (const std::exception& e) {
 
         std::cerr << "Test Failed with exception: " << e.what() << std::endl;

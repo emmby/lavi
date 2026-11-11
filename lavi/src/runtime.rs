@@ -38,6 +38,9 @@ pub struct RuntimeMachine {
     pub actions_with_effects: IndexMap<String, ActionWithEffectsFunction>,
     pub logger_fn: Option<LoggerFunction>,
     pub inspector_fn: Option<InspectFunction>,
+    pub invoke_start_fn: Option<InvokeStartFunction>,
+    pub invoke_stop_fn: Option<InvokeStopFunction>,
+    pub active_invokes: Vec<(String, String)>,
     pub pending_init_actions: Option<Vec<InspectEvent>>,
     pub last_error: Option<String>,
     pub last_exited_paths: Vec<String>,
@@ -125,6 +128,9 @@ impl Default for RuntimeMachine {
             actions_with_effects: IndexMap::new(),
             logger_fn: None,
             inspector_fn: None,
+            invoke_start_fn: None,
+            invoke_stop_fn: None,
+            active_invokes: Vec::new(),
             pending_init_actions: None,
             last_error: None,
             last_exited_paths: Vec::new(),
@@ -190,6 +196,9 @@ impl RuntimeMachine {
             actions_with_effects: IndexMap::new(),
             logger_fn: None,
             inspector_fn: None,
+            invoke_start_fn: None,
+            invoke_stop_fn: None,
+            active_invokes: Vec::new(),
             pending_init_actions: None,
             last_error: None,
             last_exited_paths: Vec::new(),
@@ -238,6 +247,79 @@ impl RuntimeMachine {
 
     pub fn register_inspector(&mut self, inspector: InspectFunction) {
         self.inspector_fn = Some(inspector);
+    }
+
+    pub fn register_invoke_callbacks(
+        &mut self,
+        on_start: Option<InvokeStartFunction>,
+        on_stop: Option<InvokeStopFunction>,
+    ) {
+        self.invoke_start_fn = on_start;
+        self.invoke_stop_fn = on_stop;
+    }
+
+    pub(crate) fn start_invokes_for_path(&mut self, path: &str, event_payload: &Value) {
+        if self.invoke_start_fn.is_none() && self.invoke_stop_fn.is_none() {
+            return;
+        }
+        let start_fn = self.invoke_start_fn.clone();
+        let invokes = if path.is_empty() {
+            self.definition.invoke.clone()
+        } else if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
+            def.invoke.clone()
+        } else {
+            return;
+        };
+        for (inv_idx, inv) in invokes.into_iter().enumerate() {
+            let invoke_id = inv.id.unwrap_or_else(|| {
+                if path.is_empty() {
+                    let root_id = if self.definition.id.is_empty() {
+                        "(machine)"
+                    } else {
+                        &self.definition.id
+                    };
+                    format!("{}.{}", inv_idx, root_id)
+                } else {
+                    format!("{}.{}", inv_idx, path)
+                }
+            });
+            self.active_invokes
+                .push((path.to_string(), invoke_id.clone()));
+            if let Some(ref on_start) = start_fn {
+                on_start(
+                    &invoke_id,
+                    &inv.src,
+                    &inv.input,
+                    &self.context,
+                    event_payload,
+                );
+            }
+        }
+    }
+
+    pub(crate) fn stop_invokes_for_path(&mut self, path: &str) {
+        if self.active_invokes.is_empty() {
+            return;
+        }
+        let mut stopped_ids = Vec::new();
+        self.active_invokes.retain(|(p, id)| {
+            let matches_path = if path.is_empty() {
+                true
+            } else {
+                p == path || p.starts_with(&format!("{}.", path))
+            };
+            if matches_path {
+                stopped_ids.push(id.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if let Some(stop_fn) = self.invoke_stop_fn.clone() {
+            for id in stopped_ids {
+                stop_fn(&id);
+            }
+        }
     }
 
     pub fn get_state_node_id(&self, path: &str) -> String {
@@ -360,6 +442,8 @@ impl RuntimeMachine {
     ) -> (StateValue, Value, Vec<Action>, IndexMap<String, StateValue>) {
         let mut m = self.clone();
         m.inspector_fn = None;
+        m.invoke_start_fn = None;
+        m.invoke_stop_fn = None;
         m.pending_init_actions = None;
         m.current_state = state.clone();
         m.context = context.clone();
@@ -424,6 +508,8 @@ impl RuntimeMachine {
     ) -> (StateValue, Value, Vec<Action>) {
         let mut m = self.clone();
         m.inspector_fn = None;
+        m.invoke_start_fn = None;
+        m.invoke_stop_fn = None;
         m.pending_init_actions = None;
         if let Some(inp) = input.or(self.input.as_ref()) {
             m.input = Some(inp.clone());
@@ -491,13 +577,9 @@ impl RuntimeMachine {
                     m.internal_queue.push_back(p.clone());
                     collected_actions.push(act.clone());
                 }
-                Action::Named(name) => {
-                    if name.starts_with("auto_action_assign_") {
-                        if let Some(f) = actions.get(name) {
-                            f(&mut m.context, &init_event, &None);
-                        }
-                    } else {
-                        collected_actions.push(act.clone());
+                Action::Named(name) if name.starts_with("auto_action_assign_") => {
+                    if let Some(f) = actions.get(name) {
+                        f(&mut m.context, &init_event, &None);
                     }
                 }
                 _ => {
@@ -543,13 +625,9 @@ impl RuntimeMachine {
                     m.internal_queue.push_back(p.clone());
                     collected_actions.push(act.clone());
                 }
-                Action::Named(name) => {
-                    if name.starts_with("auto_action_assign_") {
-                        if let Some(f) = actions.get(name) {
-                            f(&mut m.context, &init_event, &None);
-                        }
-                    } else {
-                        collected_actions.push(act.clone());
+                Action::Named(name) if name.starts_with("auto_action_assign_") => {
+                    if let Some(f) = actions.get(name) {
+                        f(&mut m.context, &init_event, &None);
                     }
                 }
                 _ => {
@@ -597,13 +675,9 @@ impl RuntimeMachine {
                                     m.internal_queue.push_back(p.clone());
                                     collected_actions.push(act.clone());
                                 }
-                                Action::Named(name) => {
-                                    if name.starts_with("auto_action_assign_") {
-                                        if let Some(f) = actions.get(name) {
-                                            f(&mut m.context, &init_event, &None);
-                                        }
-                                    } else {
-                                        collected_actions.push(act.clone());
+                                Action::Named(name) if name.starts_with("auto_action_assign_") => {
+                                    if let Some(f) = actions.get(name) {
+                                        f(&mut m.context, &init_event, &None);
                                     }
                                 }
                                 _ => {
@@ -665,13 +739,9 @@ impl RuntimeMachine {
                                     Action::Raise(p) => {
                                         m.internal_queue.push_back(p.clone());
                                     }
-                                    Action::Named(name) => {
-                                        if name.starts_with("auto_action_assign_") {
-                                            if let Some(f) = actions.get(name) {
-                                                f(&mut m.context, &init_event, &None);
-                                            }
-                                        } else {
-                                            collected_actions.push(act.clone());
+                                    Action::Named(name) if name.starts_with("auto_action_assign_") => {
+                                        if let Some(f) = actions.get(name) {
+                                            f(&mut m.context, &init_event, &None);
                                         }
                                     }
                                     _ => {
@@ -701,13 +771,9 @@ impl RuntimeMachine {
                     m.internal_queue.push_back(p.clone());
                     collected_actions.push(act.clone());
                 }
-                Action::Named(name) => {
-                    if name.starts_with("auto_action_assign_") {
-                        if let Some(f) = actions.get(name) {
-                            f(&mut m.context, &init_event, &None);
-                        }
-                    } else {
-                        collected_actions.push(act.clone());
+                Action::Named(name) if name.starts_with("auto_action_assign_") => {
+                    if let Some(f) = actions.get(name) {
+                        f(&mut m.context, &init_event, &None);
                     }
                 }
                 _ => {
@@ -722,6 +788,109 @@ impl RuntimeMachine {
         m.refresh_status();
 
         (m.current_state, m.context, collected_actions)
+    }
+
+    pub fn initial_transition_pure_value(&self, input: Option<&Value>) -> Value {
+        let (state, context, actions) = self.initial_transition_pure(input);
+        let mut map = IndexMap::new();
+        map.insert("value".to_string(), state.to_value());
+        map.insert("context".to_string(), context);
+        let actions_arr = actions.iter().map(Action::to_value).collect();
+        map.insert("actions".to_string(), Value::Array(actions_arr));
+        Value::Object(map)
+    }
+
+    pub fn initial_transition_pure_json(&self, input_json: Option<&str>) -> Result<String, String> {
+        let parsed_input = match input_json {
+            Some(s) if !s.trim().is_empty() => {
+                Some(Value::from_json(s).map_err(|e| e.to_string())?)
+            }
+            _ => None,
+        };
+        Ok(self
+            .initial_transition_pure_value(parsed_input.as_ref())
+            .to_json_string())
+    }
+
+    pub fn transition_pure_snapshot_value(
+        &self,
+        state_or_snapshot: &Value,
+        event: &Value,
+    ) -> Result<Value, String> {
+        let (state_val, ctx_val, history_opt) = match state_or_snapshot {
+            Value::Object(obj) if obj.contains_key("value") => {
+                let sv = value_to_state_value(obj.get("value").unwrap().clone());
+                let ctx = obj
+                    .get("context")
+                    .cloned()
+                    .unwrap_or_else(|| self.context.clone());
+                let hist = if let Some(Value::Object(h_map)) = obj.get("historyValue") {
+                    let mut parsed_hist = IndexMap::new();
+                    for (k, v) in h_map {
+                        parsed_hist.insert(k.clone(), value_to_state_value(v.clone()));
+                    }
+                    Some(parsed_hist)
+                } else {
+                    None
+                };
+                (sv, ctx, hist)
+            }
+            other => {
+                let sv = value_to_state_value(other.clone());
+                (sv, self.context.clone(), None)
+            }
+        };
+
+        let (event_type, event_payload) = match event {
+            Value::String(s) => (s.clone(), Value::event(s)),
+            Value::Object(map) => {
+                let ev_type = map
+                    .get("type")
+                    .and_then(|v| v.as_string())
+                    .cloned()
+                    .ok_or_else(|| "Event object must contain a string 'type' field".to_string())?;
+                (ev_type, event.clone())
+            }
+            _ => return Err("Event must be a string or an object with a 'type' field".to_string()),
+        };
+
+        let (next_state, next_ctx, actions, next_history) = self
+            .transition_pure_with_context_and_history(
+                &state_val,
+                &ctx_val,
+                history_opt.as_ref(),
+                &event_type,
+                &event_payload,
+            );
+
+        let mut map = IndexMap::new();
+        map.insert("value".to_string(), next_state.to_value());
+        map.insert("context".to_string(), next_ctx);
+        let actions_arr = actions.iter().map(Action::to_value).collect();
+        map.insert("actions".to_string(), Value::Array(actions_arr));
+        let mut hist_map = IndexMap::new();
+        for (k, v) in next_history {
+            hist_map.insert(k, v.to_value());
+        }
+        map.insert("historyValue".to_string(), Value::Object(hist_map));
+        Ok(Value::Object(map))
+    }
+
+    pub fn transition_pure_json(
+        &self,
+        state_or_snapshot_json: &str,
+        event_json: &str,
+    ) -> Result<String, String> {
+        let state_or_snap_val = match Value::from_json(state_or_snapshot_json) {
+            Ok(v) => v,
+            Err(_) => Value::String(state_or_snapshot_json.to_string()),
+        };
+        let event_val = match Value::from_json(event_json) {
+            Ok(v) => v,
+            Err(_) => Value::String(event_json.to_string()),
+        };
+        let res = self.transition_pure_snapshot_value(&state_or_snap_val, &event_val)?;
+        Ok(res.to_json_string())
     }
 
     pub fn evaluate_guard_ast(
@@ -1258,6 +1427,7 @@ impl RuntimeMachine {
                     );
                 }
             }
+            self.stop_invokes_for_path("");
             self.active_timers.clear();
             self.internal_queue.clear();
             self.external_queue.clear();
@@ -1291,6 +1461,7 @@ impl RuntimeMachine {
 
     pub fn stop(&mut self) {
         self.status = MachineStatus::Stopped;
+        self.stop_invokes_for_path("");
         self.active_timers.clear();
         self.external_queue.clear();
         self.internal_queue.clear();
@@ -1683,6 +1854,13 @@ impl RuntimeMachine {
             self.status = MachineStatus::Stopped;
             self.is_processing = false;
             return;
+        }
+
+        if self.invoke_start_fn.is_some() || self.invoke_stop_fn.is_some() {
+            self.start_invokes_for_path("", &init_event);
+            for p in &seen_paths {
+                self.start_invokes_for_path(p, &init_event);
+            }
         }
 
         self.check_state_completions();
@@ -2481,12 +2659,9 @@ impl RuntimeMachine {
         let mut mp = states;
         let mut current_def = None;
         for p in path.split('.') {
-            if let Some(d) = mp.get(p) {
-                current_def = Some(d);
-                mp = &d.states;
-            } else {
-                return None;
-            }
+            let d = mp.get(p)?;
+            current_def = Some(d);
+            mp = &d.states;
         }
         current_def
     }
@@ -3578,6 +3753,21 @@ impl RuntimeMachine {
                                params: Some(Value::Object(p_map)),
                            }));
                        }
+                   } else {
+                       let mut stopped = Vec::new();
+                       self.active_invokes.retain(|(sp, id)| {
+                           if sp == path {
+                               stopped.push(id.clone());
+                               false
+                           } else {
+                               true
+                           }
+                       });
+                       if let Some(ref on_stop) = self.invoke_stop_fn {
+                           for id in stopped {
+                               on_stop(&id);
+                           }
+                       }
                    }
               }
               exited_paths.push(path.clone());
@@ -3654,6 +3844,8 @@ impl RuntimeMachine {
                         params: Some(Value::Object(p_map)),
                     }));
                 }
+            } else {
+                self.stop_invokes_for_path("");
             }
             self.completed_states.clear();
             self.is_machine_completed = false;
@@ -3691,8 +3883,8 @@ impl RuntimeMachine {
             for action in &self.definition.entry {
                 exec_action!(action);
             }
-            for (inv_idx, inv) in self.definition.invoke.iter().enumerate() {
-                if let Some(col) = action_collector.as_deref_mut() {
+            if let Some(col) = action_collector.as_deref_mut() {
+                for (inv_idx, inv) in self.definition.invoke.iter().enumerate() {
                     let root_id = if self.definition.id.is_empty() { "(machine)" } else { &self.definition.id };
                     let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, root_id));
                     let mut p_map = IndexMap::new();
@@ -3706,6 +3898,8 @@ impl RuntimeMachine {
                         params: Some(Value::Object(p_map)),
                     }));
                 }
+            } else {
+                self.start_invokes_for_path("", event_payload);
             }
             for action in &self.definition.initial_actions {
                 exec_action!(action);
@@ -3715,8 +3909,8 @@ impl RuntimeMachine {
         for path in &entered_paths {
             if let Some(def) = Self::get_state_def_recursive(&self.definition.states, path) {
                 for action in &def.entry { exec_action!(action); }
-                for (inv_idx, inv) in def.invoke.iter().enumerate() {
-                    if let Some(col) = action_collector.as_deref_mut() {
+                if let Some(col) = action_collector.as_deref_mut() {
+                    for (inv_idx, inv) in def.invoke.iter().enumerate() {
                         let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, path));
                         let mut p_map = IndexMap::new();
                         p_map.insert("id".to_string(), Value::String(invoke_id));
@@ -3728,6 +3922,14 @@ impl RuntimeMachine {
                             action_type: "xstate.spawnChild".to_string(),
                             params: Some(Value::Object(p_map)),
                         }));
+                    }
+                } else if self.invoke_start_fn.is_some() || self.invoke_stop_fn.is_some() {
+                    for (inv_idx, inv) in def.invoke.iter().enumerate() {
+                        let invoke_id = inv.id.clone().unwrap_or_else(|| format!("{}.{}", inv_idx, path));
+                        self.active_invokes.push((path.clone(), invoke_id.clone()));
+                        if let Some(ref on_start) = self.invoke_start_fn {
+                            on_start(&invoke_id, &inv.src, &inv.input, &self.context, event_payload);
+                        }
                     }
                 }
                 for (delay, t_defs) in &def.after {

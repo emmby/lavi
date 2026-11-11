@@ -241,4 +241,75 @@ final class LaviTests: XCTestCase {
         XCTAssertTrue(inspected.contains(where: { $0.contains("@xstate.microstep") }))
         XCTAssertTrue(inspected.contains(where: { $0.contains("@xstate.snapshot") }))
     }
+
+    func testPureTransitionsOutputResolverFinalLeafAndInvokeCallbacks() {
+        let td21Json = """
+        {
+          "id": "td21Swift",
+          "initial": "active",
+          "context": { "total": 14 },
+          "states": {
+            "active": {
+              "initial": "working",
+              "invoke": { "id": "swiftWorker", "src": "swiftTask", "input": { "rate": 6 } },
+              "states": {
+                "working": {
+                  "entry": ["logWorking"],
+                  "on": { "DONE_LEAF": "leafFinal" }
+                },
+                "leafFinal": {
+                  "type": "final",
+                  "output": { "subStatus": "swiftLeafDone" }
+                }
+              },
+              "on": { "FINISH_ALL": "completed" }
+            },
+            "completed": { "type": "final" }
+          }
+        }
+        """
+
+        let machine = Machine(jsonConfig: td21Json)
+        var startedInvokes: [String] = []
+        var stoppedInvokes: [String] = []
+
+        machine.registerOutputResolver("") { ctx, _ in
+            let total = Int(ctx["total"].numberValue ?? 0)
+            return #"{"doubled":\#(total * 2)}"#
+        }
+        machine.registerInvokeCallbacks(
+            onStart: { id, src, inp, _, _ in
+                let rate = Int(inp["rate"].numberValue ?? 0)
+                startedInvokes.append("\(id):\(src):\(rate)")
+            },
+            onStop: { id in
+                stoppedInvokes.append(id)
+            }
+        )
+
+        let initPure = machine.initialTransitionJson()
+        XCTAssertTrue(initPure.contains(#""value":{"active":"working"}"#))
+        XCTAssertTrue(startedInvokes.isEmpty)
+        XCTAssertFalse(machine.isValid)
+
+        XCTAssertTrue(machine.start())
+        XCTAssertTrue(machine.isValid)
+        XCTAssertEqual(startedInvokes, ["swiftWorker:swiftTask:6"])
+
+        let liveSnap = machine.getSnapshot()
+        let nextPure = machine.transitionPureJson(snapshotJson: liveSnap, eventJson: #"{"type":"FINISH_ALL"}"#)
+        XCTAssertTrue(nextPure.contains(#""value":"completed""#))
+        XCTAssertTrue(machine.matches("active.working"))
+        XCTAssertTrue(stoppedInvokes.isEmpty)
+
+        XCTAssertEqual(machine.getFinalLeafOutput(), "")
+        machine.send("DONE_LEAF")
+        XCTAssertTrue(machine.matches("active.leafFinal"))
+        XCTAssertTrue(machine.getFinalLeafOutput().contains("swiftLeafDone"))
+
+        machine.send("FINISH_ALL")
+        XCTAssertTrue(machine.isDone)
+        XCTAssertEqual(stoppedInvokes, ["swiftWorker"])
+        XCTAssertTrue(machine.getOutput().contains(#""doubled":28"#))
+    }
 }
