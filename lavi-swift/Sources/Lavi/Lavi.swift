@@ -624,7 +624,7 @@ public final class Machine {
     }
 
     public func initialTransitionJson(inputJson: String? = nil) -> String {
-        guard let ptr = ensureCreated() else { return "" }
+        guard ensureCreated() != nil else { return "" }
         if let inp = inputJson {
             return inp.withCString { cInp in
                 readBufferString { p, buf, len in
@@ -639,7 +639,7 @@ public final class Machine {
     }
 
     public func transitionPureJson(snapshotJson: String, eventJson: String) -> String {
-        guard let ptr = ensureCreated() else { return "" }
+        guard ensureCreated() != nil else { return "" }
         return snapshotJson.withCString { cSnap in
             eventJson.withCString { cEvt in
                 readBufferString { p, buf, len in

@@ -50,13 +50,22 @@ CRATE_NAME = "lavi-c-cpp"
 LIB_NAME = "lavi_c_cpp"
 STATIC_LIB_FILENAME = f"lib{LIB_NAME}.a"
 
-if os.path.basename(LIB_ROOT) == CRATE_NAME and os.path.isfile(os.path.join(LIB_ROOT, "Cargo.toml")):
-    REPO_ROOT = os.path.abspath(os.path.join(LIB_ROOT, ".."))
-    CARGO_TOML = os.path.join(LIB_ROOT, "Cargo.toml")
-else:
-    REPO_ROOT = LIB_ROOT
-    CARGO_TOML = os.path.join(LIB_ROOT, CRATE_NAME, "Cargo.toml")
+def _resolve_cargo_paths(lib_root):
+    nested_manifest = os.path.join(lib_root, CRATE_NAME, "Cargo.toml")
+    direct_manifest = os.path.join(lib_root, "Cargo.toml")
+    if os.path.isfile(nested_manifest):
+        return lib_root, nested_manifest
+    if os.path.isfile(direct_manifest):
+        parent_root = os.path.abspath(os.path.join(lib_root, ".."))
+        if os.path.isfile(os.path.join(parent_root, "Cargo.toml")):
+            return parent_root, direct_manifest
+        return lib_root, direct_manifest
+    if os.path.basename(lib_root) == CRATE_NAME:
+        return os.path.abspath(os.path.join(lib_root, "..")), direct_manifest
+    return lib_root, nested_manifest
 
+
+REPO_ROOT, CARGO_TOML = _resolve_cargo_paths(LIB_ROOT)
 TARGET_DIR = os.path.join(REPO_ROOT, "target")
 
 

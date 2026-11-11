@@ -180,6 +180,12 @@ describe('build-release-natives', () => {
     expect(result.entries).toContain('lavi/build_rust.py');
     expect(result.entries).toContain('lavi/LICENSE');
     expect(result.entries).toContain('lavi/README.md');
+    expect(result.entries).toContain('lavi/Cargo.toml');
+    expect(result.entries).toContain('lavi/Cargo.lock');
+    expect(result.entries).toContain('lavi/lavi/Cargo.toml');
+    expect(result.entries).toContain('lavi/lavi/src/lib.rs');
+    expect(result.entries).toContain('lavi/lavi-c-cpp/Cargo.toml');
+    expect(result.entries).toContain('lavi/lavi-c-cpp/src/lib.rs');
     expect(result.entries).toContain('lavi/src/lavi.h');
     expect(result.entries).toContain('lavi/src/lavi.hpp');
     expect(result.entries).toContain('lavi/src/esp32/liblavi_c_cpp.a');

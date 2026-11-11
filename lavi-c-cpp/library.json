@@ -38,6 +38,10 @@
       "build_rust.py",
       "LICENSE",
       "README.md",
+      "Cargo.toml",
+      "Cargo.lock",
+      "lavi/**",
+      "lavi-c-cpp/**",
       "include/**",
       "src/**",
       "examples/**"

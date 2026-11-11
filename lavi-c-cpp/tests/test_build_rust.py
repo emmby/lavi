@@ -175,11 +175,42 @@ class TestBuildRust(unittest.TestCase):
             os.path.join(CRATE_DIR, "include"),
         )
         self.assertTrue(os.path.isfile(build_rust.CARGO_TOML))
-        self.assertFalse(os.path.exists(os.path.join(REPO_ROOT, "library.json")))
+        self.assertTrue(os.path.isfile(os.path.join(REPO_ROOT, "library.json")))
         self.assertFalse(os.path.exists(os.path.join(REPO_ROOT, "build_rust.py")))
         self.assertFalse(hasattr(build_rust, "DEPENDENCY_REF"))
         self.assertFalse(hasattr(build_rust, "DEPENDENCY_URL"))
         self.assertFalse(hasattr(build_rust, "clone_dependency"))
+
+    def test_resolve_cargo_paths_across_pio_layouts(self):
+        """Validate _resolve_cargo_paths for embedded zip, Git repo root, and standalone layouts."""
+        import tempfile
+
+        tmp_base = os.path.join(REPO_ROOT, ".tmp")
+        os.makedirs(tmp_base, exist_ok=True)
+        # 1. Embedded zip / Registry layout: .pio/libdeps/native/lavi/lavi-c-cpp/Cargo.toml
+        with tempfile.TemporaryDirectory(dir=tmp_base) as tmp_dir:
+            pio_lib_dir = os.path.join(tmp_dir, ".pio", "libdeps", "native", "lavi")
+            os.makedirs(os.path.join(pio_lib_dir, "lavi-c-cpp"), exist_ok=True)
+            os.makedirs(os.path.join(pio_lib_dir, "lavi"), exist_ok=True)
+            with open(os.path.join(pio_lib_dir, "Cargo.toml"), "w", encoding="utf-8") as f:
+                f.write("[workspace]\n")
+            nested_toml = os.path.join(pio_lib_dir, "lavi-c-cpp", "Cargo.toml")
+            with open(nested_toml, "w", encoding="utf-8") as f:
+                f.write('[package]\nname = "lavi-c-cpp"\n')
+            repo_root, cargo_toml = build_rust._resolve_cargo_paths(pio_lib_dir)
+            self.assertEqual(repo_root, pio_lib_dir)
+            self.assertEqual(cargo_toml, nested_toml)
+
+        # 2. Subfolder layout renamed to 'lavi' without parent workspace: .pio/libdeps/native/lavi/Cargo.toml
+        with tempfile.TemporaryDirectory(dir=tmp_base) as tmp_dir:
+            pio_lib_dir = os.path.join(tmp_dir, ".pio", "libdeps", "native", "lavi")
+            os.makedirs(pio_lib_dir, exist_ok=True)
+            direct_toml = os.path.join(pio_lib_dir, "Cargo.toml")
+            with open(direct_toml, "w", encoding="utf-8") as f:
+                f.write('[package]\nname = "lavi-c-cpp"\n')
+            repo_root, cargo_toml = build_rust._resolve_cargo_paths(pio_lib_dir)
+            self.assertEqual(repo_root, pio_lib_dir)
+            self.assertEqual(cargo_toml, direct_toml)
 
     def test_scons_exec_without_dunder_file(self):
         """Simulate PlatformIO SCons SConscript execution where __file__ is not in globals()."""
@@ -381,6 +412,21 @@ class TestBuildRust(unittest.TestCase):
             any("lavi-wasm" in pattern for pattern in export_includes),
             "library.json export.include must not include lavi-wasm",
         )
+        for required_entry in ["Cargo.toml", "lavi/**", "lavi-c-cpp/**"]:
+            self.assertIn(required_entry, export_includes)
+
+        root_lib_json_path = os.path.join(REPO_ROOT, "library.json")
+        with open(root_lib_json_path, "r", encoding="utf-8") as rf:
+            root_manifest = json.load(rf)
+        self.assertEqual(root_manifest.get("name"), "lavi")
+        self.assertEqual(root_manifest.get("version"), manifest.get("version"))
+        root_build = root_manifest.get("build", {})
+        self.assertEqual(root_build.get("extraScript"), "lavi-c-cpp/build_rust.py")
+        self.assertEqual(root_build.get("includeDir"), "lavi-c-cpp/include")
+        root_exports = root_manifest.get("export", {}).get("include", [])
+        self.assertIn("Cargo.toml", root_exports)
+        self.assertIn("lavi/src/**", root_exports)
+        self.assertIn("lavi-c-cpp/Cargo.toml", root_exports)
 
     def test_library_properties_configuration(self):
         props_path = os.path.join(CRATE_DIR, "library.properties")
