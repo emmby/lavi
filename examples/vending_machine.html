@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Espresso Vending Machine — Lavi WASM Demo</title>
+    <link rel="stylesheet" href="showcase.css">
+    <style>
+        .vending-stage {
+            border-radius: 12px;
+            border: 1px solid #334155;
+            background: linear-gradient(160deg, #1e293b 0%, #0f172a 100%);
+            color: #f8fafc;
+            padding: 18px;
+            margin-bottom: 12px;
+        }
+
+        .vending-screen {
+            background: #020617;
+            border: 2px solid #334155;
+            border-radius: 10px;
+            padding: 12px 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        .vending-screen-label {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .vending-screen-balance {
+            font-size: 22px;
+            font-weight: 800;
+            color: #4ade80;
+        }
+
+        .drink-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .drink-slot {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 12px 8px;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s, opacity 0.2s;
+        }
+
+        .drink-slot.affordable {
+            border-color: #38bdf8;
+            background: rgba(56, 189, 248, 0.12);
+        }
+
+        .drink-slot.locked {
+            opacity: 0.5;
+        }
+
+        .drink-emoji {
+            font-size: 26px;
+            margin-bottom: 4px;
+        }
+
+        .drink-name {
+            font-size: 12.5px;
+            font-weight: 700;
+        }
+
+        .drink-price {
+            font-size: 11.5px;
+            color: #94a3b8;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            margin-top: 2px;
+        }
+
+        .pickup-tray {
+            background: #020617;
+            border: 1px dashed #475569;
+            border-radius: 8px;
+            padding: 10px 12px;
+            text-align: center;
+            font-size: 13px;
+            color: #cbd5e1;
+            min-height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pickup-tray.active {
+            border-color: #4ade80;
+            color: #4ade80;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-shell">
+        <header class="header-bar">
+            <div>
+                <h1>Espresso Vending Machine</h1>
+                <p>Core Feature Guide powered by <code>lavi-wasm</code></p>
+            </div>
+        </header>
+
+        <div class="intro-banner">
+            <p>
+                A coin-operated drink dispenser where all three drink choices share one parameterized <code>hasEnoughBalance</code> guard.
+                <strong>Try this:</strong> insert coins and watch <code>snapshot.can()</code> automatically enable each drink button and SVG transition arrow as your balance crosses $1.50, $2.00, and $2.50.
+            </p>
+        </div>
+
+        <div class="demo-grid">
+            <section class="card">
+                <div class="sim-layout">
+                    <div>
+                        <div class="card-header">
+                            <div class="card-title">
+                                Drink Dispenser
+                                <span class="hint-text">Buttons auto-enable via <code>snapshot.can()</code></span>
+                            </div>
+                        </div>
+
+                        <div class="vending-stage">
+                            <div class="vending-screen">
+                                <div>
+                                    <div class="vending-screen-label">Inserted Credit</div>
+                                    <div id="lblScreenMessage" style="font-size: 12px; color: #38bdf8; margin-top: 2px;">Insert coins to begin</div>
+                                </div>
+                                <div id="lblScreenBalance" class="vending-screen-balance">$0.00</div>
+                            </div>
+
+                            <div class="drink-grid">
+                                <div id="slotEspresso" class="drink-slot locked">
+                                    <div class="drink-emoji">☕</div>
+                                    <div class="drink-name">Espresso</div>
+                                    <div class="drink-price">$1.50</div>
+                                </div>
+                                <div id="slotMatcha" class="drink-slot locked">
+                                    <div class="drink-emoji">🍵</div>
+                                    <div class="drink-name">Matcha</div>
+                                    <div class="drink-price">$2.00</div>
+                                </div>
+                                <div id="slotColdBrew" class="drink-slot locked">
+                                    <div class="drink-emoji">🧊</div>
+                                    <div class="drink-name">Cold Brew</div>
+                                    <div class="drink-price">$2.50</div>
+                                </div>
+                            </div>
+
+                            <div id="pickupTray" class="pickup-tray">Pickup Tray Empty</div>
+                        </div>
+                    </div>
+
+                    <div class="sim-right">
+                        <div class="status-strip" style="margin-top: 0;">
+                            <div class="status-pill">
+                                <span class="status-pill-label">State</span>
+                                <span id="lblState" class="status-pill-value ok">idle</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Balance</span>
+                                <span id="lblBalance" class="status-pill-value on">$0.00</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Served</span>
+                                <span id="lblServed" class="status-pill-value ok">0</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Last Item</span>
+                                <span id="lblLastItem" class="status-pill-value off">None</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="controls-label">Insert Coins</div>
+                            <div class="button-row" style="margin-bottom: 12px;">
+                                <button type="button" id="btnCoin25" class="ctrl-btn btn-primary">+ $0.25</button>
+                                <button type="button" id="btnCoin100" class="ctrl-btn btn-primary">+ $1.00</button>
+                                <button type="button" id="btnRefund" class="ctrl-btn btn-neutral">↩ Refund</button>
+                            </div>
+
+                            <div class="controls-label">Select Drink (Parameterized Guard)</div>
+                            <div class="button-row">
+                                <button type="button" id="btnEspresso" class="ctrl-btn btn-success">☕ Espresso ($1.50)</button>
+                                <button type="button" id="btnMatcha" class="ctrl-btn btn-success">🍵 Matcha ($2.00)</button>
+                                <button type="button" id="btnColdBrew" class="ctrl-btn btn-success">🧊 Cold Brew ($2.50)</button>
+                            </div>
+                        </div>
+
+                        <div id="lblExplanation" class="explanation-box" style="margin-top: 0;">
+                            <strong>What's happening:</strong> Insert coins to increase <code>context.balance</code>. All three drink transitions share a single <code>hasEnoughBalance</code> guard configured with different <code>params: { price }</code> values!
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" id="statechartCard">
+                <div>
+                    <div class="card-header">
+                        <div class="card-title">Statechart</div>
+                        <div class="diagram-controls">
+                            <button type="button" id="btnToggleZoom" class="zoom-toggle-btn" aria-pressed="false">Zoom 100%</button>
+                            <button type="button" id="btnToggleMaximize" class="zoom-toggle-btn" aria-pressed="false">Maximize</button>
+                            <div class="view-toggle" role="tablist" aria-label="Statechart view">
+                                <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (xstate-diagram)</button>
+                                <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="diagramView" class="diagram-panel"></div>
+                    <div class="diagram-hint">Click any highlighted transition arrow in the diagram to trigger it.</div>
+                    <pre id="jsonView" class="json-panel"></pre>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { setup, createActor, assign } from '../lavi-wasm/pkg/lavi.js';
+        import { initStatechartPanel } from './showcase.js';
+
+        await init();
+
+        const formatCents = (cents) => `$${(cents / 100).toFixed(2)}`;
+
+        const STATE_NOTES = {
+            idle: 'Ready in <strong>idle</strong>. Insert coins to update <code>context.balance</code>. Each drink button checks <code>hasEnoughBalance</code> with its own <code>params: { price }</code>.',
+            dispensing: 'Pouring your drink in <strong>dispensing</strong>! An <code>after: { 1200 }</code> timer automatically returns the machine to <strong>idle</strong> when finished.'
+        };
+
+        const machineDef = {
+            id: 'vendingMachine',
+            initial: 'idle',
+            context: {
+                balanceCents: 0,
+                servedCount: 0,
+                dispensingItem: null,
+                lastItem: 'None'
+            },
+            states: {
+                idle: {
+                    on: {
+                        INSERT_COIN: {
+                            actions: ['addBalance']
+                        },
+                        REFUND: {
+                            guard: 'hasBalance',
+                            actions: ['refundAll']
+                        },
+                        SELECT_ESPRESSO: {
+                            target: 'dispensing',
+                            guard: { type: 'hasEnoughBalance', params: { price: 150 } },
+                            actions: [{ type: 'purchaseItem', params: { name: 'Espresso', price: 150 } }]
+                        },
+                        SELECT_MATCHA: {
+                            target: 'dispensing',
+                            guard: { type: 'hasEnoughBalance', params: { price: 200 } },
+                            actions: [{ type: 'purchaseItem', params: { name: 'Matcha', price: 200 } }]
+                        },
+                        SELECT_COLD_BREW: {
+                            target: 'dispensing',
+                            guard: { type: 'hasEnoughBalance', params: { price: 250 } },
+                            actions: [{ type: 'purchaseItem', params: { name: 'Cold Brew', price: 250 } }]
+                        }
+                    }
+                },
+                dispensing: {
+                    after: {
+                        1200: { target: 'idle' }
+                    },
+                    exit: ['clearDispensedItem']
+                }
+            }
+        };
+
+        const config = {
+            guards: {
+                hasBalance: ({ context }) => context.balanceCents > 0,
+                hasEnoughBalance: ({ context }, params) => context.balanceCents >= params.price
+            },
+            actions: {
+                addBalance: assign({
+                    balanceCents: ({ context, event }) => context.balanceCents + (event.amount || 25)
+                }),
+                refundAll: assign({
+                    balanceCents: 0
+                }),
+                purchaseItem: assign({
+                    balanceCents: ({ context }, params) => context.balanceCents - params.price,
+                    servedCount: ({ context }) => context.servedCount + 1,
+                    dispensingItem: (_, params) => params.name,
+                    lastItem: (_, params) => params.name
+                }),
+                clearDispensedItem: assign({
+                    dispensingItem: null
+                })
+            }
+        };
+
+        const machine = setup(config).createMachine(machineDef);
+        const actor = createActor(machine);
+
+        const btnCoin25 = document.getElementById('btnCoin25');
+        const btnCoin100 = document.getElementById('btnCoin100');
+        const btnRefund = document.getElementById('btnRefund');
+        const btnEspresso = document.getElementById('btnEspresso');
+        const btnMatcha = document.getElementById('btnMatcha');
+        const btnColdBrew = document.getElementById('btnColdBrew');
+
+        function renderDemoUI(snap, { leaf }) {
+            const ctx = snap.context || {};
+            const bal = ctx.balanceCents ?? 0;
+            const formatted = formatCents(bal);
+
+            document.getElementById('lblScreenBalance').textContent = formatted;
+            document.getElementById('lblState').className = `status-pill-value ${leaf === 'dispensing' ? 'warn' : 'ok'}`;
+            document.getElementById('lblBalance').textContent = formatted;
+            document.getElementById('lblServed').textContent = String(ctx.servedCount ?? 0);
+            document.getElementById('lblLastItem').textContent = ctx.lastItem || 'None';
+            document.getElementById('lblLastItem').className = `status-pill-value ${ctx.lastItem && ctx.lastItem !== 'None' ? 'on' : 'off'}`;
+
+            const screenMsg = document.getElementById('lblScreenMessage');
+            const pickupTray = document.getElementById('pickupTray');
+            if (leaf === 'dispensing') {
+                screenMsg.textContent = `Brewing ${ctx.dispensingItem || 'drink'}...`;
+                pickupTray.textContent = `☕ Dispensing ${ctx.dispensingItem || 'drink'}...`;
+                pickupTray.classList.add('active');
+            } else {
+                screenMsg.textContent = bal >= 150 ? 'Select a highlighted drink' : 'Insert coins to begin';
+                pickupTray.textContent = ctx.lastItem && ctx.lastItem !== 'None'
+                    ? `Enjoy your ${ctx.lastItem}!`
+                    : 'Pickup Tray Empty';
+                pickupTray.classList.toggle('active', Boolean(ctx.lastItem && ctx.lastItem !== 'None'));
+            }
+
+            const canEspresso = snap.can({ type: 'SELECT_ESPRESSO' });
+            const canMatcha = snap.can({ type: 'SELECT_MATCHA' });
+            const canColdBrew = snap.can({ type: 'SELECT_COLD_BREW' });
+
+            btnCoin25.disabled = !snap.can({ type: 'INSERT_COIN' });
+            btnCoin100.disabled = !snap.can({ type: 'INSERT_COIN' });
+            btnRefund.disabled = !snap.can({ type: 'REFUND' });
+            btnEspresso.disabled = !canEspresso;
+            btnMatcha.disabled = !canMatcha;
+            btnColdBrew.disabled = !canColdBrew;
+
+            document.getElementById('slotEspresso').className = `drink-slot ${canEspresso ? 'affordable' : 'locked'}`;
+            document.getElementById('slotMatcha').className = `drink-slot ${canMatcha ? 'affordable' : 'locked'}`;
+            document.getElementById('slotColdBrew').className = `drink-slot ${canColdBrew ? 'affordable' : 'locked'}`;
+        }
+
+        const panel = await initStatechartPanel({
+            actor,
+            machineDef,
+            svgUrl: './vending_machine.svg',
+            svgLabel: 'Espresso Vending Machine Interactive Statechart',
+            stateNotes: STATE_NOTES,
+            onAfterSync: renderDemoUI
+        });
+
+        actor.subscribe(() => panel.syncStatechart());
+        actor.start();
+        panel.syncStatechart();
+
+        btnCoin25.addEventListener('click', () => panel.triggerEvent('INSERT_COIN', { amount: 25 }));
+        btnCoin100.addEventListener('click', () => panel.triggerEvent('INSERT_COIN', { amount: 100 }));
+        btnRefund.addEventListener('click', () => panel.triggerEvent('REFUND'));
+        btnEspresso.addEventListener('click', () => panel.triggerEvent('SELECT_ESPRESSO'));
+        btnMatcha.addEventListener('click', () => panel.triggerEvent('SELECT_MATCHA'));
+        btnColdBrew.addEventListener('click', () => panel.triggerEvent('SELECT_COLD_BREW'));
+
+        setInterval(() => {
+            actor.tick();
+        }, 100);
+    </script>
+</body>
+</html>

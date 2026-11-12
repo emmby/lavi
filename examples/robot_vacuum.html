@@ -195,32 +195,66 @@
             box-shadow: 0 1px 2px rgba(0,0,0,0.06);
         }
 
-        /* Everyday Status Strip */
+        .intro-banner {
+            background: transparent;
+            border-left: 3px solid var(--accent);
+            padding: 4px 0 4px 14px;
+            margin-bottom: 16px;
+        }
+
+        .intro-banner p {
+            margin: 0;
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: #334155;
+            max-width: 880px;
+        }
+
+        /* Read-only Telemetry / Context Strip */
         .status-strip {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
+            gap: 0;
             margin-bottom: 14px;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
         }
 
         .status-pill {
-            background: #f8fafc;
-            border: 1px solid var(--border);
-            border-radius: 8px;
+            background: transparent;
+            border: none;
+            border-right: 1px solid var(--border);
+            border-radius: 0;
             padding: 8px 10px;
             font-size: 12px;
+        }
+
+        .status-pill.row-top {
+            border-bottom: 1px solid var(--border);
+        }
+
+        .status-pill.row-start {
+            padding-left: 0;
+        }
+
+        .status-pill.row-end {
+            border-right: none;
         }
 
         .status-pill-label {
             color: var(--muted);
             display: block;
-            font-size: 11px;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
             margin-bottom: 2px;
         }
 
         .status-pill-value {
             font-weight: 700;
             color: var(--text);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12.5px;
         }
 
         .status-pill-value.on { color: #0284c7; }
@@ -449,8 +483,14 @@
                 <h1>Autonomous Robot Vacuum</h1>
                 <p>Interactive WebAssembly statechart demo powered by <code>lavi-wasm</code></p>
             </div>
-            <span id="lblState" class="state-badge">moving.cleaning.patrol</span>
         </header>
+
+        <div class="intro-banner">
+            <p>
+                An autonomous vacuum sweeping a living room floor.
+                <strong>Try this:</strong> click <strong>Spot Clean</strong> then <strong>Bump Furniture</strong> to watch it dodge an obstacle and resume Spot Clean via History (H), or click <strong>Low Battery (14%)</strong> to see an <code>always</code> guard route it home to dock.
+            </p>
+        </div>
 
         <div class="demo-grid">
             <!-- Top Card: Living Room Floor & Controls -->
@@ -462,7 +502,6 @@
                                 Living Room Floor
                                 <span class="hint-text" id="lblCrumbStats">Sweep up the crumbs!</span>
                             </div>
-                            <span id="lblBattery" class="badge">🔋 85% Battery</span>
                         </div>
 
                         <div class="floor-wrapper" id="floorWrapper">
@@ -480,7 +519,15 @@
 
                     <div class="sim-right">
                         <div class="status-strip" style="margin-top: 0;">
-                            <div class="status-pill">
+                            <div class="status-pill row-top row-start" style="grid-column: span 2;">
+                                <span class="status-pill-label">State</span>
+                                <span id="lblState" class="status-pill-value on">moving.cleaning.patrol</span>
+                            </div>
+                            <div class="status-pill row-top row-end">
+                                <span class="status-pill-label">Battery</span>
+                                <span id="lblBattery" class="status-pill-value on">85%</span>
+                            </div>
+                            <div class="status-pill row-start">
                                 <span class="status-pill-label">Wheels</span>
                                 <span id="lblWheels" class="status-pill-value on">Driving Forward</span>
                             </div>
@@ -488,7 +535,7 @@
                                 <span class="status-pill-label">Vacuum Suction</span>
                                 <span id="lblVacuum" class="status-pill-value on">Standard</span>
                             </div>
-                            <div class="status-pill">
+                            <div class="status-pill row-end">
                                 <span class="status-pill-label">Side Brushes</span>
                                 <span id="lblBrushes" class="status-pill-value on">Spinning</span>
                             </div>
@@ -805,22 +852,23 @@
             const leaf = parts[parts.length - 1] || '';
             const ctx = snap.context || {};
 
-            // 1. State badge
+            // 1. State readout
             const lblState = document.getElementById('lblState');
             lblState.textContent = dotPath;
+            lblState.className = `status-pill-value ${leaf === 'stairsAlert' ? 'warn' : parts[0] === 'moving' ? 'on' : 'off'}`;
 
-            // 2. Battery badge
+            // 2. Battery readout
             const lblBattery = document.getElementById('lblBattery');
             const batt = ctx.battery ?? 85;
             if (leaf === 'docked') {
-                lblBattery.textContent = `⚡ Charging (${batt}%)`;
-                lblBattery.className = 'badge charging';
+                lblBattery.textContent = `Charging (${batt}%)`;
+                lblBattery.className = 'status-pill-value turbo';
             } else if (batt <= 15) {
-                lblBattery.textContent = `🪫 ${batt}% Low Battery`;
-                lblBattery.className = 'badge low';
+                lblBattery.textContent = `${batt}% (Low)`;
+                lblBattery.className = 'status-pill-value warn';
             } else {
-                lblBattery.textContent = `🔋 ${batt}% Battery`;
-                lblBattery.className = 'badge';
+                lblBattery.textContent = `${batt}%`;
+                lblBattery.className = 'status-pill-value on';
             }
 
             // 3. Hardware status pills (everyday terms)

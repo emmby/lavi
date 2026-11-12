@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="xstate-diagram" viewBox="0 0 940 340" width="940" height="340" data-machine-id="checkoutWizard" data-root-initial="checkoutWizard.cart">
+  <defs>
+    <marker id="arrow-transition" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-transition-active" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#0284c7"/>
+    </marker>
+    <marker id="arrow-transition-triggered" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#059669"/>
+    </marker>
+    <style>
+      .cw-box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.75px; }
+      .cw-title { font-family: system-ui, -apple-system, sans-serif; font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .cw-meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #475569; }
+      .cw-divider { stroke: #e2e8f0; stroke-width: 1px; }
+      .edge-path { fill: none; stroke: #94a3b8; stroke-width: 1.8px; marker-end: url(#arrow-transition); }
+      .edge-label-bg { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.25px; }
+      .edge-label-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; font-weight: 600; fill: #334155; }
+      .transition-edge.is-enabled > .edge-path { marker-end: url(#arrow-transition-active); }
+      .transition-edge.is-triggered > .edge-path { marker-end: url(#arrow-transition-triggered); }
+    </style>
+  </defs>
+
+  <!-- Initial -> cart -->
+  <circle cx="28" cy="110" r="6" fill="#0f172a"/>
+  <path d="M 34 110 L 66 110" fill="none" stroke="#0f172a" stroke-width="2" marker-end="url(#arrow-transition)"/>
+
+  <!-- State: cart -->
+  <g class="state-node state-node--atomic" data-state-path="cart">
+    <rect class="state-box cw-box" x="70" y="54" width="175" height="114" rx="10"/>
+    <text class="state-title cw-title" x="157" y="80" text-anchor="middle">cart</text>
+    <line class="cw-divider" x1="70" y1="92" x2="245" y2="92"/>
+    <text class="cw-meta" x="82" y="112">entry / logCartEntry</text>
+    <text class="cw-meta" x="82" y="130">exit  / logCartExit</text>
+    <g class="internal-transition" data-internal-event="ADD_ITEM">
+      <text class="cw-meta" x="82" y="150">ADD_ITEM / addItem</text>
+    </g>
+  </g>
+
+  <!-- State: payment -->
+  <g class="state-node state-node--atomic" data-state-path="payment">
+    <rect class="state-box cw-box" x="340" y="54" width="185" height="114" rx="10"/>
+    <text class="state-title cw-title" x="432" y="80" text-anchor="middle">payment</text>
+    <line class="cw-divider" x1="340" y1="92" x2="525" y2="92"/>
+    <text class="cw-meta" x="352" y="112">entry / logPaymentEntry</text>
+    <g class="internal-transition" data-internal-event="TOGGLE_CARD">
+      <text class="cw-meta" x="352" y="134">TOGGLE_CARD / flipCard</text>
+    </g>
+  </g>
+
+  <!-- State: validating -->
+  <g class="state-node state-node--atomic" data-state-path="validating">
+    <rect class="state-box cw-box" x="625" y="64" width="120" height="90" rx="10"/>
+    <text class="state-title cw-title" x="685" y="90" text-anchor="middle">validating</text>
+    <line class="cw-divider" x1="625" y1="102" x2="745" y2="102"/>
+    <text class="cw-meta" x="637" y="124">always [...]</text>
+  </g>
+
+  <!-- State: confirmed -->
+  <g class="state-node state-node--atomic" data-state-path="confirmed">
+    <rect class="state-box cw-box" x="785" y="24" width="140" height="100" rx="10"/>
+    <text class="state-title cw-title" x="855" y="50" text-anchor="middle">confirmed</text>
+    <line class="cw-divider" x1="785" y1="62" x2="925" y2="62"/>
+    <text class="cw-meta" x="797" y="84">entry / recordOrder</text>
+    <text class="cw-meta" x="797" y="102">Order complete!</text>
+  </g>
+
+  <!-- State: paymentError -->
+  <g class="state-node state-node--atomic" data-state-path="paymentError">
+    <rect class="state-box cw-box" x="595" y="220" width="180" height="92" rx="10"/>
+    <text class="state-title cw-title" x="685" y="246" text-anchor="middle">paymentError</text>
+    <line class="cw-divider" x1="595" y1="258" x2="775" y2="258"/>
+    <text class="cw-meta" x="609" y="280">entry / logError</text>
+    <text class="cw-meta" x="609" y="298">Card declined</text>
+  </g>
+
+  <!-- Edge: cart -> payment (NEXT [hasItems]) -->
+  <g class="transition-edge" data-edge-source-path="cart" data-edge-event="NEXT">
+    <path class="edge-path" d="M 245 90 L 336 90"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="252" y="64" width="82" height="20" rx="5"/>
+      <text class="edge-label-text" x="293" y="78" text-anchor="middle">NEXT [items]</text>
+    </g>
+  </g>
+
+  <!-- Edge: payment -> cart (BACK) -->
+  <g class="transition-edge" data-edge-source-path="payment" data-edge-event="BACK">
+    <path class="edge-path" d="M 340 138 L 249 138"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="268" y="144" width="48" height="20" rx="5"/>
+      <text class="edge-label-text" x="292" y="158" text-anchor="middle">BACK</text>
+    </g>
+  </g>
+
+  <!-- Edge: payment -> validating (SUBMIT) -->
+  <g class="transition-edge" data-edge-source-path="payment" data-edge-event="SUBMIT">
+    <path class="edge-path" d="M 525 108 L 621 108"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="544" y="82" width="60" height="20" rx="5"/>
+      <text class="edge-label-text" x="574" y="96" text-anchor="middle">SUBMIT</text>
+    </g>
+  </g>
+
+  <!-- Edge: validating -> confirmed (always) -->
+  <g class="transition-edge" data-edge-source-path="validating" data-edge-event="always">
+    <path class="edge-path" d="M 745 84 L 781 74"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="724" y="34" width="84" height="20" rx="5"/>
+      <text class="edge-label-text" x="766" y="48" text-anchor="middle">always [ok]</text>
+    </g>
+  </g>
+
+  <!-- Edge: validating -> paymentError (always) -->
+  <g class="transition-edge" data-edge-source-path="validating" data-edge-event="always">
+    <path class="edge-path" d="M 685 154 L 685 216"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="640" y="176" width="90" height="20" rx="5"/>
+      <text class="edge-label-text" x="685" y="190" text-anchor="middle">always [fail]</text>
+    </g>
+  </g>
+
+  <!-- Edge: paymentError -> payment (RETRY) -->
+  <g class="transition-edge" data-edge-source-path="paymentError" data-edge-event="RETRY">
+    <path class="edge-path" d="M 595 266 L 432 266 Q 416 266 416 250 L 416 172"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="454" y="256" width="52" height="20" rx="5"/>
+      <text class="edge-label-text" x="480" y="270" text-anchor="middle">RETRY</text>
+    </g>
+  </g>
+
+  <!-- Edge: confirmed -> cart (RESET) -->
+  <g class="transition-edge" data-edge-source-path="confirmed" data-edge-event="RESET">
+    <path class="edge-path" d="M 855 124 L 855 316 Q 855 326 845 326 L 167 326 Q 157 326 157 316 L 157 172"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="478" y="314" width="52" height="20" rx="5"/>
+      <text class="edge-label-text" x="504" y="328" text-anchor="middle">RESET</text>
+    </g>
+  </g>
+</svg>

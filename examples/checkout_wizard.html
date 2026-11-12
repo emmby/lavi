@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout Wizard — Lavi WASM Demo</title>
+    <link rel="stylesheet" href="showcase.css">
+    <style>
+        .wizard-stage {
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #f8fafc;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .stepper {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .step-chip {
+            background: #ffffff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--muted);
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .step-chip.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: #0369a1;
+        }
+
+        .step-chip.error {
+            border-color: var(--danger);
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .step-chip.done {
+            border-color: var(--success);
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .action-log {
+            background: #0f172a;
+            color: #cbd5e1;
+            border-radius: 10px;
+            padding: 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11.5px;
+            line-height: 1.5;
+            height: 145px;
+            overflow-y: auto;
+        }
+
+        .action-log-entry {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 2px 0;
+        }
+
+        .action-log-entry:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-shell">
+        <header class="header-bar">
+            <div>
+                <h1>Checkout Wizard</h1>
+                <p>Core Feature Guide powered by <code>lavi-wasm</code></p>
+            </div>
+        </header>
+
+        <div class="intro-banner">
+            <p>
+                A multi-step checkout flow with an eventless <code>always</code> validation state and live action trace.
+                <strong>Try this:</strong> click <strong>Next → Payment</strong> to see <code>exit → transition → entry</code> ordering, then toggle <strong>Card Valid</strong> off before submitting to watch <code>validating</code> route straight to <code>paymentError</code>.
+            </p>
+        </div>
+
+        <div class="demo-grid">
+            <section class="card">
+                <div class="sim-layout">
+                    <div>
+                        <div class="card-header">
+                            <div class="card-title">
+                                Order Flow &amp; Execution Trace
+                                <span class="hint-text">Watch SCXML exit → transition → entry order</span>
+                            </div>
+                        </div>
+
+                        <div class="wizard-stage">
+                            <div class="stepper">
+                                <div id="stepCart" class="step-chip active">1. Cart</div>
+                                <div id="stepPayment" class="step-chip">2. Payment</div>
+                                <div id="stepResult" class="step-chip">3. Confirmed</div>
+                            </div>
+
+                            <div class="controls-label" style="margin-bottom: 6px;">Action Execution Log</div>
+                            <div id="actionLog" class="action-log"></div>
+                        </div>
+                    </div>
+
+                    <div class="sim-right">
+                        <div class="status-strip" style="margin-top: 0;">
+                            <div class="status-pill">
+                                <span class="status-pill-label">State</span>
+                                <span id="lblState" class="status-pill-value on">cart</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Items</span>
+                                <span id="lblItems" class="status-pill-value on">1</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Card</span>
+                                <span id="lblCard" class="status-pill-value ok">Valid</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Orders</span>
+                                <span id="lblOrders" class="status-pill-value on">0</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="controls-label">Try Triggering an Event</div>
+                            <div class="button-row">
+                                <button type="button" id="btnAddItem" class="ctrl-btn btn-neutral">+ Add Item</button>
+                                <button type="button" id="btnNext" class="ctrl-btn btn-primary">Next → Payment</button>
+                                <button type="button" id="btnBack" class="ctrl-btn btn-neutral">← Back</button>
+                                <button type="button" id="btnToggleCard" class="ctrl-btn btn-warn">💳 Toggle Card Valid</button>
+                                <button type="button" id="btnSubmit" class="ctrl-btn btn-success">✓ Submit Order</button>
+                                <button type="button" id="btnRetry" class="ctrl-btn btn-danger">↻ Retry</button>
+                                <button type="button" id="btnReset" class="ctrl-btn btn-neutral">New Order</button>
+                            </div>
+                        </div>
+
+                        <div id="lblExplanation" class="explanation-box" style="margin-top: 0;">
+                            <strong>What's happening:</strong> You're in <strong>cart</strong>. Clicking <strong>Next</strong> fires <code>exit: logCartExit</code>, the transition action, and <code>entry: logPaymentEntry</code> in strict SCXML order.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" id="statechartCard">
+                <div>
+                    <div class="card-header">
+                        <div class="card-title">Statechart</div>
+                        <div class="diagram-controls">
+                            <button type="button" id="btnToggleZoom" class="zoom-toggle-btn" aria-pressed="false">Zoom 100%</button>
+                            <button type="button" id="btnToggleMaximize" class="zoom-toggle-btn" aria-pressed="false">Maximize</button>
+                            <div class="view-toggle" role="tablist" aria-label="Statechart view">
+                                <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (xstate-diagram)</button>
+                                <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="diagramView" class="diagram-panel"></div>
+                    <div class="diagram-hint">Click any highlighted transition arrow or internal event in the diagram to trigger it.</div>
+                    <pre id="jsonView" class="json-panel"></pre>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { setup, createActor, assign, enqueueActions } from '../lavi-wasm/pkg/lavi.js';
+        import { initStatechartPanel } from './showcase.js';
+
+        await init();
+
+        const STATE_NOTES = {
+            cart: 'In <strong>cart</strong>: add items, then click <strong>Next</strong>. Leaving <strong>cart</strong> runs <code>logCartExit</code> before entering <strong>payment</strong>.',
+            payment: 'In <strong>payment</strong>: try toggling <strong>Card Valid</strong> to false before clicking <strong>Submit</strong>—<code>validating</code> uses an eventless <code>always</code> transition to route immediately to <strong>confirmed</strong> or <strong>paymentError</strong>!',
+            paymentError: 'In <strong>paymentError</strong>: the <code>always</code> guard saw an invalid card. Toggle the card back to valid or click <strong>Retry</strong>.',
+            confirmed: 'Order <strong>confirmed</strong>! <code>enqueueActions</code> atomically incremented <code>ordersPlaced</code> and appended the confirmation log.'
+        };
+
+        const machineDef = {
+            id: 'checkoutWizard',
+            initial: 'cart',
+            context: {
+                items: 1,
+                cardValid: true,
+                ordersPlaced: 0,
+                logs: []
+            },
+            states: {
+                cart: {
+                    entry: ['logCartEntry'],
+                    exit: ['logCartExit'],
+                    on: {
+                        ADD_ITEM: { actions: ['addItem'] },
+                        NEXT: {
+                            target: 'payment',
+                            guard: 'hasItems',
+                            actions: ['logProceedToPayment']
+                        }
+                    }
+                },
+                payment: {
+                    entry: ['logPaymentEntry'],
+                    on: {
+                        BACK: { target: 'cart' },
+                        TOGGLE_CARD: { actions: ['flipCard'] },
+                        SUBMIT: { target: 'validating' }
+                    }
+                },
+                validating: {
+                    always: [
+                        { target: 'confirmed', guard: 'isCardValid' },
+                        { target: 'paymentError' }
+                    ]
+                },
+                paymentError: {
+                    entry: ['logError'],
+                    on: {
+                        RETRY: { target: 'payment' }
+                    }
+                },
+                confirmed: {
+                    entry: ['recordOrder'],
+                    on: {
+                        RESET: { target: 'cart', actions: ['resetCart'] }
+                    }
+                }
+            }
+        };
+
+        const appendLog = (logs, msg) => [...logs.slice(-14), msg];
+
+        const config = {
+            guards: {
+                hasItems: ({ context }) => context.items > 0,
+                isCardValid: ({ context }) => Boolean(context.cardValid)
+            },
+            actions: {
+                logCartEntry: assign({
+                    logs: ({ context }) => appendLog(context.logs, '→ entry(cart)')
+                }),
+                logCartExit: assign({
+                    logs: ({ context }) => appendLog(context.logs, '← exit(cart)')
+                }),
+                logProceedToPayment: assign({
+                    logs: ({ context }) => appendLog(context.logs, '⚡ transition(NEXT)')
+                }),
+                logPaymentEntry: assign({
+                    logs: ({ context }) => appendLog(context.logs, '→ entry(payment)')
+                }),
+                logError: assign({
+                    logs: ({ context }) => appendLog(context.logs, '✖ entry(paymentError): card declined')
+                }),
+                addItem: assign({
+                    items: ({ context }) => context.items + 1,
+                    logs: ({ context }) => appendLog(context.logs, `+ action(addItem): items=${context.items + 1}`)
+                }),
+                flipCard: assign({
+                    cardValid: ({ context }) => !context.cardValid,
+                    logs: ({ context }) => appendLog(context.logs, `💳 action(flipCard): valid=${!context.cardValid}`)
+                }),
+                recordOrder: enqueueActions(({ enqueue }) => {
+                    enqueue.assign({
+                        ordersPlaced: ({ context }) => context.ordersPlaced + 1,
+                        logs: ({ context }) => appendLog(context.logs, '✓ enqueueActions(recordOrder): order confirmed!')
+                    });
+                }),
+                resetCart: assign({
+                    items: 1,
+                    cardValid: true,
+                    logs: ({ context }) => appendLog(context.logs, '↻ action(resetCart)')
+                })
+            }
+        };
+
+        const machine = setup(config).createMachine(machineDef);
+        const actor = createActor(machine);
+
+        const btnAddItem = document.getElementById('btnAddItem');
+        const btnNext = document.getElementById('btnNext');
+        const btnBack = document.getElementById('btnBack');
+        const btnToggleCard = document.getElementById('btnToggleCard');
+        const btnSubmit = document.getElementById('btnSubmit');
+        const btnRetry = document.getElementById('btnRetry');
+        const btnReset = document.getElementById('btnReset');
+
+        function renderDemoUI(snap, { leaf }) {
+            const ctx = snap.context || {};
+
+            document.getElementById('lblItems').textContent = String(ctx.items ?? 1);
+            document.getElementById('lblOrders').textContent = String(ctx.ordersPlaced ?? 0);
+
+            const cardEl = document.getElementById('lblCard');
+            cardEl.textContent = ctx.cardValid ? 'Valid' : 'Declined';
+            cardEl.className = `status-pill-value ${ctx.cardValid ? 'ok' : 'danger'}`;
+
+            document.getElementById('lblState').className =
+                `status-pill-value ${leaf === 'paymentError' ? 'danger' : leaf === 'confirmed' ? 'ok' : 'on'}`;
+
+            document.getElementById('stepCart').className = `step-chip ${leaf === 'cart' ? 'active' : ''}`;
+            document.getElementById('stepPayment').className = `step-chip ${leaf === 'payment' ? 'active' : ''}`;
+
+            const resultChip = document.getElementById('stepResult');
+            if (leaf === 'confirmed') {
+                resultChip.textContent = '3. Confirmed';
+                resultChip.className = 'step-chip done';
+            } else if (leaf === 'paymentError') {
+                resultChip.textContent = '3. Payment Error';
+                resultChip.className = 'step-chip error';
+            } else {
+                resultChip.textContent = '3. Confirmed';
+                resultChip.className = 'step-chip';
+            }
+
+            const logEl = document.getElementById('actionLog');
+            logEl.innerHTML = (ctx.logs || [])
+                .map((line) => `<div class="action-log-entry">${line}</div>`)
+                .join('');
+            logEl.scrollTop = logEl.scrollHeight;
+
+            btnAddItem.disabled = !snap.can({ type: 'ADD_ITEM' });
+            btnNext.disabled = !snap.can({ type: 'NEXT' });
+            btnBack.disabled = !snap.can({ type: 'BACK' });
+            btnToggleCard.disabled = !snap.can({ type: 'TOGGLE_CARD' });
+            btnSubmit.disabled = !snap.can({ type: 'SUBMIT' });
+            btnRetry.disabled = !snap.can({ type: 'RETRY' });
+            btnReset.disabled = !snap.can({ type: 'RESET' });
+        }
+
+        const panel = await initStatechartPanel({
+            actor,
+            machineDef,
+            svgUrl: './checkout_wizard.svg',
+            svgLabel: 'Checkout Wizard Interactive Statechart',
+            stateNotes: STATE_NOTES,
+            onAfterSync: renderDemoUI
+        });
+
+        actor.subscribe(() => panel.syncStatechart());
+        actor.start();
+        panel.syncStatechart();
+
+        btnAddItem.addEventListener('click', () => panel.triggerEvent('ADD_ITEM'));
+        btnNext.addEventListener('click', () => panel.triggerEvent('NEXT'));
+        btnBack.addEventListener('click', () => panel.triggerEvent('BACK'));
+        btnToggleCard.addEventListener('click', () => panel.triggerEvent('TOGGLE_CARD'));
+        btnSubmit.addEventListener('click', () => panel.triggerEvent('SUBMIT'));
+        btnRetry.addEventListener('click', () => panel.triggerEvent('RETRY'));
+        btnReset.addEventListener('click', () => panel.triggerEvent('RESET'));
+    </script>
+</body>
+</html>

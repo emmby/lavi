@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Dimmer — Lavi WASM Demo</title>
+    <link rel="stylesheet" href="showcase.css">
+    <style>
+        .room-stage {
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #0f172a;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 240px;
+            margin-bottom: 12px;
+            transition: background 0.35s ease;
+        }
+
+        .room-stage.lit {
+            background: radial-gradient(circle at 50% 42%, rgba(254, 240, 138, 0.32), #1e293b 72%);
+        }
+
+        .bulb {
+            width: 112px;
+            height: 112px;
+            border-radius: 50%;
+            background: #334155;
+            border: 3px solid #475569;
+            transition: all 0.25s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .bulb.on {
+            background: #fde047;
+            border-color: #facc15;
+            box-shadow: 0 0 48px rgba(253, 224, 71, 0.75);
+        }
+
+        .brightness-meter {
+            width: 100%;
+            max-width: 260px;
+            margin-top: 18px;
+        }
+
+        .brightness-track {
+            height: 8px;
+            background: #334155;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .brightness-fill {
+            height: 100%;
+            width: 80%;
+            background: linear-gradient(90deg, #facc15, #fef08a);
+            transition: width 0.2s ease, opacity 0.2s ease;
+        }
+
+        .brightness-caption {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #94a3b8;
+            text-align: center;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-shell">
+        <header class="header-bar">
+            <div>
+                <h1>Smart Dimmer Switch</h1>
+                <p>Core Feature Guide powered by <code>lavi-wasm</code></p>
+            </div>
+        </header>
+
+        <div class="intro-banner">
+            <p>
+                A wall dimmer that remembers its brightness level even when turned off.
+                <strong>Try this:</strong> toggle the lamp on, adjust brightness with <strong>Dim</strong> / <strong>Brighten</strong>, and watch how the statechart automatically disables events when guards reach their min/max limits.
+            </p>
+        </div>
+
+        <div class="demo-grid">
+            <section class="card">
+                <div class="sim-layout">
+                    <div>
+                        <div class="card-header">
+                            <div class="card-title">
+                                Living Room Lamp
+                                <span class="hint-text">Remembers brightness across toggles</span>
+                            </div>
+                        </div>
+
+                        <div id="roomStage" class="room-stage">
+                            <div id="bulb" class="bulb" aria-label="Lamp Bulb">💡</div>
+                            <div class="brightness-meter">
+                                <div class="brightness-track">
+                                    <div id="brightnessFill" class="brightness-fill"></div>
+                                </div>
+                                <div id="lblBrightnessCaption" class="brightness-caption">Brightness: 80%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sim-right">
+                        <div class="status-strip" style="margin-top: 0;">
+                            <div class="status-pill">
+                                <span class="status-pill-label">State</span>
+                                <span id="lblState" class="status-pill-value off">off</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Brightness</span>
+                                <span id="lblBrightness" class="status-pill-value on">80%</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Times Turned On</span>
+                                <span id="lblToggles" class="status-pill-value on">0</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="controls-label">Try Triggering an Event</div>
+                            <div class="button-row">
+                                <button type="button" id="btnToggle" class="ctrl-btn btn-primary">💡 Toggle Power</button>
+                                <button type="button" id="btnDim" class="ctrl-btn btn-neutral">🔅 Dim -20%</button>
+                                <button type="button" id="btnBrighten" class="ctrl-btn btn-warn">🔆 Brighten +20%</button>
+                            </div>
+                        </div>
+
+                        <div id="lblExplanation" class="explanation-box" style="margin-top: 0;">
+                            <strong>What's happening:</strong> The lamp is <strong>off</strong>. Notice <code>DIM</code> and <code>BRIGHTEN</code> are disabled because those events only exist inside the <strong>on</strong> state.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" id="statechartCard">
+                <div>
+                    <div class="card-header">
+                        <div class="card-title">Statechart</div>
+                        <div class="diagram-controls">
+                            <button type="button" id="btnToggleZoom" class="zoom-toggle-btn" aria-pressed="false">Zoom 100%</button>
+                            <button type="button" id="btnToggleMaximize" class="zoom-toggle-btn" aria-pressed="false">Maximize</button>
+                            <div class="view-toggle" role="tablist" aria-label="Statechart view">
+                                <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (xstate-diagram)</button>
+                                <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="diagramView" class="diagram-panel"></div>
+                    <div class="diagram-hint">Click any highlighted transition arrow or internal event in the diagram to trigger it.</div>
+                    <pre id="jsonView" class="json-panel"></pre>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { setup, createActor, assign } from '../lavi-wasm/pkg/lavi.js';
+        import { initStatechartPanel } from './showcase.js';
+
+        await init();
+
+        const STATE_NOTES = {
+            off: 'The lamp is <strong>off</strong>. <code>DIM</code> and <code>BRIGHTEN</code> are disabled because they are only handled in the <strong>on</strong> state, while <code>context.brightness</code> is preserved.',
+            on: 'The lamp is <strong>on</strong>! Entering <strong>on</strong> ran <code>incrementToggles</code>. Try dimming or brightening—the guards <code>canDim</code> (≥ 40%) and <code>canBrighten</code> (≤ 80%) prevent going out of bounds.'
+        };
+
+        const machineDef = {
+            id: 'smartDimmer',
+            initial: 'off',
+            context: {
+                brightness: 80,
+                toggleCount: 0
+            },
+            states: {
+                off: {
+                    on: {
+                        TOGGLE: { target: 'on' }
+                    }
+                },
+                on: {
+                    entry: ['incrementToggles'],
+                    on: {
+                        TOGGLE: { target: 'off' },
+                        DIM: {
+                            guard: 'canDim',
+                            actions: ['dimLight']
+                        },
+                        BRIGHTEN: {
+                            guard: 'canBrighten',
+                            actions: ['brightenLight']
+                        }
+                    }
+                }
+            }
+        };
+
+        const config = {
+            guards: {
+                canDim: ({ context }) => context.brightness > 20,
+                canBrighten: ({ context }) => context.brightness < 100
+            },
+            actions: {
+                incrementToggles: assign({
+                    toggleCount: ({ context }) => context.toggleCount + 1
+                }),
+                dimLight: assign({
+                    brightness: ({ context }) => Math.max(20, context.brightness - 20)
+                }),
+                brightenLight: assign({
+                    brightness: ({ context }) => Math.min(100, context.brightness + 20)
+                })
+            }
+        };
+
+        const machine = setup(config).createMachine(machineDef);
+        const actor = createActor(machine);
+
+        const roomStage = document.getElementById('roomStage');
+        const bulb = document.getElementById('bulb');
+        const brightnessFill = document.getElementById('brightnessFill');
+        const btnToggle = document.getElementById('btnToggle');
+        const btnDim = document.getElementById('btnDim');
+        const btnBrighten = document.getElementById('btnBrighten');
+
+        function renderDemoUI(snap, { leaf }) {
+            const ctx = snap.context || {};
+            const isOn = leaf === 'on';
+            const brightness = ctx.brightness ?? 80;
+
+            roomStage.classList.toggle('lit', isOn);
+            bulb.classList.toggle('on', isOn);
+            bulb.style.opacity = isOn ? String(0.35 + (brightness / 100) * 0.65) : '0.6';
+
+            brightnessFill.style.width = `${brightness}%`;
+            brightnessFill.style.opacity = isOn ? '1' : '0.35';
+            document.getElementById('lblBrightnessCaption').textContent = `Brightness: ${brightness}%`;
+
+            const lblState = document.getElementById('lblState');
+            lblState.className = `status-pill-value ${isOn ? 'ok' : 'off'}`;
+
+            document.getElementById('lblBrightness').textContent = `${brightness}%`;
+            document.getElementById('lblToggles').textContent = String(ctx.toggleCount ?? 0);
+
+            btnDim.disabled = !snap.can({ type: 'DIM' });
+            btnBrighten.disabled = !snap.can({ type: 'BRIGHTEN' });
+        }
+
+        const panel = await initStatechartPanel({
+            actor,
+            machineDef,
+            svgUrl: './smart_dimmer.svg',
+            svgLabel: 'Smart Dimmer Interactive Statechart',
+            stateNotes: STATE_NOTES,
+            onAfterSync: renderDemoUI
+        });
+
+        actor.subscribe(() => panel.syncStatechart());
+        actor.start();
+        panel.syncStatechart();
+
+        btnToggle.addEventListener('click', () => panel.triggerEvent('TOGGLE'));
+        btnDim.addEventListener('click', () => panel.triggerEvent('DIM'));
+        btnBrighten.addEventListener('click', () => panel.triggerEvent('BRIGHTEN'));
+    </script>
+</body>
+</html>

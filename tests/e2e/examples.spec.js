@@ -15,225 +15,194 @@ test.describe('FSM WASM Examples', () => {
     });
   });
 
-  test('Simple Switch', async ({ page }) => {
-    await page.goto('/examples/simple.html');
-    
+  test('Smart Dimmer', async ({ page }) => {
+    await page.goto('/examples/smart_dimmer.html');
+
     const bulb = page.locator('#bulb');
     const stateLabel = page.locator('#lblState');
     const toggleBtn = page.locator('#btnToggle');
+    const dimBtn = page.locator('#btnDim');
+    const brightenBtn = page.locator('#btnBrighten');
+    const brightnessLabel = page.locator('#lblBrightness');
+    const togglesLabel = page.locator('#lblToggles');
 
-    // Initial State: OFF (bulb not .on)
+    // Initial State: off, brightness 80%
     await expect(bulb).not.toHaveClass(/on/);
-    await expect(stateLabel).toHaveText('OFF');
+    await expect(stateLabel).toHaveText('off');
+    await expect(brightnessLabel).toHaveText('80%');
+    await expect(dimBtn).toBeDisabled();
+    await expect(brightenBtn).toBeDisabled();
 
-    // Toggle -> ON
+    // Toggle -> on
     await toggleBtn.click();
     await expect(bulb).toHaveClass(/on/);
-    await expect(stateLabel).toHaveText('ON');
+    await expect(stateLabel).toHaveText('on');
+    await expect(togglesLabel).toHaveText('1');
+    await expect(dimBtn).toBeEnabled();
+    await expect(brightenBtn).toBeEnabled();
 
-    // Toggle -> OFF
+    // Brighten -> 100% (brightenBtn now disabled by guard)
+    await brightenBtn.click();
+    await expect(brightnessLabel).toHaveText('100%');
+    await expect(brightenBtn).toBeDisabled();
+
+    // Dim -> 80%
+    await dimBtn.click();
+    await expect(brightnessLabel).toHaveText('80%');
+    await expect(brightenBtn).toBeEnabled();
+
+    // Toggle -> off (remembers 80%)
     await toggleBtn.click();
     await expect(bulb).not.toHaveClass(/on/);
-    await expect(stateLabel).toHaveText('OFF');
+    await expect(stateLabel).toHaveText('off');
+    await expect(brightnessLabel).toHaveText('80%');
   });
 
   test('Traffic Light', async ({ page }) => {
     await page.goto('/examples/traffic_light.html');
-    
+
     const red = page.locator('#red');
     const yellow = page.locator('#yellow');
     const green = page.locator('#green');
     const timerBtn = page.locator('#btnTimer');
+    const pedestrianBtn = page.locator('#btnPedestrian');
+    const sensorCheckbox = page.locator('#chkCrosswalkEnabled');
     const stateLabel = page.locator('#lblState');
-    const contextLabel = page.locator('#lblContext');
+    const cycleCount = page.locator('#lblCycleCount');
+    const walkStatus = page.locator('#lblWalkStatus');
 
-    // Initial State: GREEN
+    const greenNode = page.locator('#statechartSvg g.state-node[data-state-path="green"]');
+    const yellowNode = page.locator('#statechartSvg g.state-node[data-state-path="yellow"]');
+    const redNode = page.locator('#statechartSvg g.state-node[data-state-path="red"]');
+
+    // Pause auto clock so manual transitions are deterministic
+    await page.locator('#btnToggleClock').click();
+
+    // Initial State: green
     await expect(green).toHaveClass(/active/);
     await expect(yellow).not.toHaveClass(/active/);
     await expect(red).not.toHaveClass(/active/);
-    await expect(stateLabel).toHaveText('GREEN');
-    await expect(contextLabel).toContainText('"cycle_count": 0');
+    await expect(stateLabel).toHaveText('green');
+    await expect(cycleCount).toHaveText('0');
+    await expect(walkStatus).toHaveText('WAIT');
+    await expect(greenNode).toHaveClass(/is-active/);
+    await expect(pedestrianBtn).toBeEnabled();
 
-    // Timer -> YELLOW
+    // Timer -> yellow
     await timerBtn.click();
     await expect(green).not.toHaveClass(/active/);
     await expect(yellow).toHaveClass(/active/);
-    await expect(stateLabel).toHaveText('YELLOW');
+    await expect(stateLabel).toHaveText('yellow');
+    await expect(yellowNode).toHaveClass(/is-active/);
+    await expect(pedestrianBtn).toBeDisabled();
 
-    // Timer -> RED
+    // Timer -> red (entry increments cycleCount & sets WALK)
     await timerBtn.click();
     await expect(yellow).not.toHaveClass(/active/);
     await expect(red).toHaveClass(/active/);
-    await expect(stateLabel).toHaveText('RED');
+    await expect(stateLabel).toHaveText('red');
+    await expect(cycleCount).toHaveText('1');
+    await expect(walkStatus).toHaveText('WALK');
+    await expect(redNode).toHaveClass(/is-active/);
 
-    // Timer -> GREEN (cycle_count++ -> 1)
+    // Timer -> green (exit clears WALK)
     await timerBtn.click();
     await expect(red).not.toHaveClass(/active/);
     await expect(green).toHaveClass(/active/);
-    await expect(stateLabel).toHaveText('GREEN');
-    await expect(contextLabel).toContainText('"cycle_count": 1');
+    await expect(stateLabel).toHaveText('green');
+    await expect(walkStatus).toHaveText('WAIT');
+
+    // Guard check: disabling crosswalk sensor disables REQUEST_CROSSWALK
+    await sensorCheckbox.uncheck();
+    await expect(pedestrianBtn).toBeDisabled();
+    await sensorCheckbox.check();
+    await expect(pedestrianBtn).toBeEnabled();
+
+    // Request Crosswalk -> yellow
+    await pedestrianBtn.click();
+    await expect(stateLabel).toHaveText('yellow');
+
+    // Diagram / Machine JSON toggle
+    await page.locator('#btnShowJson').click();
+    await expect(page.locator('#jsonView')).toBeVisible();
+    await expect(page.locator('#jsonView')).toContainText('"id": "trafficLight"');
+    await page.locator('#btnShowDiagram').click();
+    await expect(page.locator('#diagramView')).toBeVisible();
   });
 
-  test('Guards (Door)', async ({ page }) => {
-    await page.goto('/examples/guards.html');
-
-    const door = page.locator('#door');
-    const openBtn = page.locator('#btnOpen');
-    const closeBtn = page.locator('#btnClose');
-    const lockBtn = page.locator('#btnLock');
-    const unlockBtn = page.locator('#btnUnlock');
-    const lockIcon = page.locator('#lockIcon');
-    const stateLabel = page.locator('#lblState');
-
-    // Initial: Closed & Locked
-    await expect(door).not.toHaveClass(/open/);
-    await expect(lockIcon).toHaveText('🔒'); 
-    await expect(stateLabel).toHaveText('CLOSED');
-
-    // Try Open (should fail because locked)
-    await openBtn.click();
-    await expect(door).not.toHaveClass(/open/);
-    await expect(stateLabel).toHaveText('CLOSED');
-
-    // Unlock
-    await unlockBtn.click();
-    await expect(lockIcon).toHaveText('🔓');
-
-    // Open (should succeed)
-    await openBtn.click();
-    await expect(door).toHaveClass(/open/);
-    await expect(stateLabel).toHaveText('OPEN');
-
-    // Close
-    await closeBtn.click();
-    await expect(door).not.toHaveClass(/open/);
-    await expect(stateLabel).toHaveText('CLOSED');
-    
-    // Lock again
-    await lockBtn.click();
-    await expect(lockIcon).toHaveText('🔒');
-  });
-
-  test('Actions Demo', async ({ page }) => {
-    await page.goto('/examples/actions.html');
+  test('Vending Machine', async ({ page }) => {
+    await page.goto('/examples/vending_machine.html');
 
     const stateLabel = page.locator('#lblState');
-    const contextLabel = page.locator('#lblContext');
-    const nextBtn = page.locator('#btnNext');
-    const resetBtn = page.locator('#btnReset');
-    const logBox = page.locator('#logBox');
+    const balanceLabel = page.locator('#lblBalance');
+    const servedLabel = page.locator('#lblServed');
+    const btnCoin100 = page.locator('#btnCoin100');
+    const btnCoin25 = page.locator('#btnCoin25');
+    const btnEspresso = page.locator('#btnEspresso');
+    const btnMatcha = page.locator('#btnMatcha');
+    const btnColdBrew = page.locator('#btnColdBrew');
+    const btnRefund = page.locator('#btnRefund');
 
-    // Initial: A, count=0
-    await expect(stateLabel).toHaveText('A');
-    await expect(stateLabel).toHaveClass(/state-a/);
-    await expect(contextLabel).toContainText('"count": 0');
+    // Initial: idle, $0.00, all drinks disabled
+    await expect(stateLabel).toHaveText('idle');
+    await expect(balanceLabel).toHaveText('$0.00');
+    await expect(btnEspresso).toBeDisabled();
+    await expect(btnMatcha).toBeDisabled();
+    await expect(btnColdBrew).toBeDisabled();
+    await expect(btnRefund).toBeDisabled();
 
-    // NEXT -> B, count=10 (from set_count_10) then incremented?
-    // Let's check machine def:
-    // A -> NEXT -> B: actions [log_transition, set_count_10]
-    // B entry: [set_entered_b, increment, render]
-    // So transition sets count to 10. Then entry increments it to 11.
-    
-    await nextBtn.click();
-    
-    await expect(stateLabel).toHaveText('B');
-    await expect(stateLabel).toHaveClass(/state-b/);
-    // Wait for context update
-    await expect(contextLabel).toContainText('"count": 11'); 
-    
-    await expect(logBox).toContainText('Entered B');
-    await expect(logBox).toContainText('Transitioning...');
+    // Insert $1.00 + $0.25 + $0.25 -> $1.50 (Espresso enabled, Matcha disabled)
+    await btnCoin100.click();
+    await btnCoin25.click();
+    await btnCoin25.click();
+    await expect(balanceLabel).toHaveText('$1.50');
+    await expect(btnRefund).toBeEnabled();
+    await expect(btnEspresso).toBeEnabled();
+    await expect(btnMatcha).toBeDisabled();
 
-    // RESET -> A
-    // B -> RESET -> A: actions [increment, render]
-    // A entry: [render]
-    // So 11 -> 12.
-    
-    await resetBtn.click();
-    await expect(stateLabel).toHaveText('A');
-    await expect(contextLabel).toContainText('"count": 12');
-    await expect(logBox).toContainText('Exited A'); // Note: 'Exited A' happens on exit of A, so that was in previous step log
-  });
-  
-  test('Dynamic Assignment', async ({ page }) => {
-      await page.goto('/examples/dynamic_assignment.html');
-      
-      const countLabel = page.locator('#counterVal');
-      const incBtn = page.locator('#btnInc');
-      const resetBtn = page.locator('#btnReset');
-
-      // Initial: 0
-      await expect(countLabel).toHaveText('0');
-
-      // Inc -> 1
-      await incBtn.click();
-      await expect(countLabel).toHaveText('1');
-
-      // Inc -> 2
-      await incBtn.click();
-      await expect(countLabel).toHaveText('2');
-      
-      // Reset -> 0
-      await resetBtn.click();
-      await expect(countLabel).toHaveText('0');
+    // Select Espresso -> dispensing, then after 1.2s -> idle with $0.00 & served=1
+    await btnEspresso.click();
+    await expect(stateLabel).toHaveText('dispensing');
+    await expect(balanceLabel).toHaveText('$0.00');
+    await expect(servedLabel).toHaveText('1');
+    await expect(stateLabel).toHaveText('idle', { timeout: 3000 });
   });
 
-  test('Parameterized Guards', async ({ page }) => {
-      await page.goto('/examples/parameterized_guards.html');
-      
-      const stateLabel = page.locator('#state');
-      const countLabel = page.locator('#count');
-      const incBtn = page.locator('#btnInc');
-      const nextBtn = page.locator('#btnNext');
-      const resetBtn = page.locator('#btnReset');
+  test('Checkout Wizard', async ({ page }) => {
+    await page.goto('/examples/checkout_wizard.html');
 
-      // Initial: start, 0
-      await expect(stateLabel).toHaveText('start');
-      await expect(countLabel).toHaveText('0');
+    const stateLabel = page.locator('#lblState');
+    const itemsLabel = page.locator('#lblItems');
+    const ordersLabel = page.locator('#lblOrders');
+    const actionLog = page.locator('#actionLog');
 
-      // Inc -> 1
-      await incBtn.click();
-      await expect(countLabel).toHaveText('1');
-      
-      // Try Next (1 > 2 is false) -> Stay start
-      await nextBtn.click();
-      await expect(stateLabel).toHaveText('start');
+    // Initial: cart
+    await expect(stateLabel).toHaveText('cart');
+    await expect(itemsLabel).toHaveText('1');
+    await expect(actionLog).toContainText('entry(cart)');
 
-      // Inc -> 2
-      await incBtn.click();
-      await expect(countLabel).toHaveText('2');
-      
-      // Try Next (2 > 2 is false) -> Stay start
-      await nextBtn.click();
-      await expect(stateLabel).toHaveText('start');
+    // Add item -> items=2
+    await page.locator('#btnAddItem').click();
+    await expect(itemsLabel).toHaveText('2');
 
-      // Inc -> 3
-      await incBtn.click();
-      await expect(countLabel).toHaveText('3');
+    // Next -> payment (exit cart -> transition -> entry payment)
+    await page.locator('#btnNext').click();
+    await expect(stateLabel).toHaveText('payment');
+    await expect(actionLog).toContainText('exit(cart)');
+    await expect(actionLog).toContainText('entry(payment)');
 
-      // Try Next (3 > 2 is true) -> Medium
-      await nextBtn.click();
-      await expect(stateLabel).toHaveText('medium');
+    // Toggle card invalid + Submit -> validating always routes to paymentError
+    await page.locator('#btnToggleCard').click();
+    await page.locator('#btnSubmit').click();
+    await expect(stateLabel).toHaveText('paymentError');
 
-      // Reset -> Start, 0
-      await resetBtn.click();
-      await expect(stateLabel).toHaveText('start');
-      await expect(countLabel).toHaveText('0');
-
-      // Inc x 6 -> 6
-      for(let i=0; i<6; i++) {
-        await incBtn.click();
-      }
-      await expect(countLabel).toHaveText('6');
-
-      // Try Next (6 > 5 is true) -> High
-      await nextBtn.click();
-      await expect(stateLabel).toHaveText('high');
-      // Wait, in JS UI: document.getElementById('state').textContent = typeof snap.value === 'string' ? snap.value : JSON.stringify(snap.value);
-      // If result is "high", prompt text is high.
-      // But verify if `snap.value` is "high" or object. It should be "high".
-      // Let's use regex or relax expectation.
-      await expect(stateLabel).toHaveText(/high/);
+    // Retry -> payment, toggle card valid, Submit -> confirmed
+    await page.locator('#btnRetry').click();
+    await expect(stateLabel).toHaveText('payment');
+    await page.locator('#btnToggleCard').click();
+    await page.locator('#btnSubmit').click();
+    await expect(stateLabel).toHaveText('confirmed');
+    await expect(ordersLabel).toHaveText('1');
   });
 
   test('Autonomous Robot Vacuum', async ({ page }) => {

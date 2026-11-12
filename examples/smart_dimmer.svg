@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="xstate-diagram" viewBox="0 0 760 280" width="760" height="280" data-machine-id="smartDimmer" data-root-initial="smartDimmer.off">
+  <defs>
+    <marker id="arrow-transition" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-transition-active" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#0284c7"/>
+    </marker>
+    <marker id="arrow-transition-triggered" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#059669"/>
+    </marker>
+    <style>
+      .sd-box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.75px; }
+      .sd-title { font-family: system-ui, -apple-system, sans-serif; font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .sd-meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #475569; }
+      .sd-divider { stroke: #e2e8f0; stroke-width: 1px; }
+      .edge-path { fill: none; stroke: #94a3b8; stroke-width: 1.8px; marker-end: url(#arrow-transition); }
+      .edge-label-bg { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.25px; }
+      .edge-label-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 600; fill: #334155; }
+      .transition-edge.is-enabled > .edge-path { marker-end: url(#arrow-transition-active); }
+      .transition-edge.is-triggered > .edge-path { marker-end: url(#arrow-transition-triggered); }
+    </style>
+  </defs>
+
+  <!-- Initial -> off -->
+  <circle cx="34" cy="140" r="6" fill="#0f172a"/>
+  <path d="M 40 140 L 80 140" fill="none" stroke="#0f172a" stroke-width="2" marker-end="url(#arrow-transition)"/>
+
+  <!-- State: off -->
+  <g class="state-node state-node--atomic" data-state-path="off">
+    <rect class="state-box sd-box" x="84" y="84" width="180" height="112" rx="10"/>
+    <text class="state-title sd-title" x="174" y="110" text-anchor="middle">off</text>
+    <line class="sd-divider" x1="84" y1="122" x2="264" y2="122"/>
+    <text class="sd-meta" x="98" y="144">Power: OFF</text>
+    <text class="sd-meta" x="98" y="164">Remembers brightness</text>
+  </g>
+
+  <!-- State: on -->
+  <g class="state-node state-node--atomic" data-state-path="on">
+    <rect class="state-box sd-box" x="430" y="70" width="240" height="140" rx="10"/>
+    <text class="state-title sd-title" x="550" y="96" text-anchor="middle">on</text>
+    <line class="sd-divider" x1="430" y1="108" x2="670" y2="108"/>
+    <text class="sd-meta" x="444" y="128">entry / incrementToggles</text>
+    <line class="sd-divider" x1="430" y1="140" x2="670" y2="140"/>
+    <g class="internal-transition" data-internal-event="DIM">
+      <text class="sd-meta" x="444" y="162">DIM [canDim] / dimLight</text>
+    </g>
+    <g class="internal-transition" data-internal-event="BRIGHTEN">
+      <text class="sd-meta" x="444" y="184">BRIGHTEN [canBrighten] / brighten</text>
+    </g>
+  </g>
+
+  <!-- Edge: off -> on (TOGGLE) -->
+  <g class="transition-edge" data-edge-source-path="off" data-edge-event="TOGGLE">
+    <path class="edge-path" d="M 264 114 Q 347 72 426 114"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="315" y="74" width="64" height="22" rx="6"/>
+      <text class="edge-label-text" x="347" y="89" text-anchor="middle">TOGGLE</text>
+    </g>
+  </g>
+
+  <!-- Edge: on -> off (TOGGLE) -->
+  <g class="transition-edge" data-edge-source-path="on" data-edge-event="TOGGLE">
+    <path class="edge-path" d="M 430 166 Q 347 210 268 166"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="315" y="186" width="64" height="22" rx="6"/>
+      <text class="edge-label-text" x="347" y="201" text-anchor="middle">TOGGLE</text>
+    </g>
+  </g>
+</svg>

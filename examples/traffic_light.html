@@ -3,130 +3,416 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Traffic Light Demo</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Crosswalk Traffic Light — Lavi WASM Demo</title>
+    <link rel="stylesheet" href="showcase.css">
     <style>
-        .traffic-light {
-            background: #111;
+        .intersection-stage {
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: linear-gradient(180deg, #e0f2fe 0%, #f1f5f9 55%, #e2e8f0 100%);
             padding: 20px;
-            border-radius: 20px;
-            display: inline-block;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 32px;
+            min-height: 250px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .traffic-housing {
+            background: #1e293b;
+            padding: 14px 16px;
+            border-radius: 18px;
+            border: 3px solid #334155;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.22);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
 
         .light {
-            width: 80px;
-            height: 80px;
+            width: 56px;
+            height: 56px;
             border-radius: 50%;
-            background: #333;
-            margin: 15px;
-            transition: all 0.3s;
-            box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+            background: #0f172a;
+            border: 2px solid #334155;
+            transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
         }
 
-        .light.red.active { background: #ff3333; box-shadow: 0 0 30px #ff3333; }
-        .light.yellow.active { background: #ffcc00; box-shadow: 0 0 30px #ffcc00; }
-        .light.green.active { background: #33ff33; box-shadow: 0 0 30px #33ff33; }
+        .light.red.active {
+            background: #ef4444;
+            box-shadow: 0 0 26px rgba(239, 68, 68, 0.85);
+            transform: scale(1.04);
+        }
+
+        .light.yellow.active {
+            background: #facc15;
+            box-shadow: 0 0 26px rgba(250, 204, 21, 0.85);
+            transform: scale(1.04);
+        }
+
+        .light.green.active {
+            background: #22c55e;
+            box-shadow: 0 0 26px rgba(34, 197, 94, 0.85);
+            transform: scale(1.04);
+        }
+
+        .crosswalk-box {
+            background: #0f172a;
+            border: 3px solid #334155;
+            border-radius: 14px;
+            padding: 16px 20px;
+            min-width: 150px;
+            text-align: center;
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+        }
+
+        .crosswalk-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #94a3b8;
+            margin-bottom: 6px;
+            font-weight: 700;
+        }
+
+        .crosswalk-signal {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            color: #fb923c;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        .crosswalk-signal.walk {
+            color: #4ade80;
+            text-shadow: 0 0 14px rgba(74, 222, 128, 0.55);
+        }
+
+        .phase-progress-wrap {
+            margin-top: 12px;
+            background: #1e293b;
+            border-radius: 999px;
+            height: 6px;
+            overflow: hidden;
+        }
+
+        .phase-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: #38bdf8;
+            transition: width 80ms linear;
+        }
+
+        .sensor-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12.5px;
+            color: var(--muted);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .sensor-toggle input {
+            accent-color: var(--accent);
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Traffic Light</h1>
-        
-        <div class="visual-box">
-            <div class="traffic-light">
-                <div id="red" class="light red"></div>
-                <div id="yellow" class="light yellow"></div>
-                <div id="green" class="light green"></div>
+    <div class="page-shell">
+        <header class="header-bar">
+            <div>
+                <h1>Crosswalk Traffic Light</h1>
+                <p>Core Feature Guide powered by <code>lavi-wasm</code></p>
             </div>
+        </header>
+
+        <div class="intro-banner">
+            <p>
+                A timed 3-phase intersection signal with a pedestrian crosswalk.
+                <strong>Try this:</strong> watch it cycle automatically via <code>after()</code> timers, click <strong>Request Crosswalk</strong> during green, or uncheck the crosswalk sensor to see the <code>guard</code> disable both the button and SVG arrow.
+            </p>
         </div>
-        
-        <button id="btnTimer">TIMER</button>
-        
-        <div class="status-box">
-            <div class="status-row"><span class="status-label">State:</span><span id="lblState">...</span></div>
-            <div class="status-row"><span class="status-label">Context:</span><span id="lblContext">...</span></div>
-        </div>
-        <div class="code-container">
-            <div class="code-title">Machine Configuration</div>
-            <pre id="defDisplay" class="code-block"></pre>
+
+        <div class="demo-grid">
+            <!-- Top Card: Intersection Visual & Controls -->
+            <section class="card">
+                <div class="sim-layout">
+                    <div>
+                        <div class="card-header">
+                            <div class="card-title">
+                                Intersection Signal
+                                <span class="hint-text" id="lblPhaseTimer">Auto-advancing via after()</span>
+                            </div>
+                        </div>
+
+                        <div class="intersection-stage">
+                            <div class="traffic-housing" aria-label="Traffic Light">
+                                <div id="red" class="light red"></div>
+                                <div id="yellow" class="light yellow"></div>
+                                <div id="green" class="light green"></div>
+                            </div>
+
+                            <div class="crosswalk-box">
+                                <div class="crosswalk-label">Pedestrian Signal</div>
+                                <div id="lblCrosswalkDisplay" class="crosswalk-signal">DON'T WALK</div>
+                                <div class="phase-progress-wrap" title="Time remaining in current phase">
+                                    <div id="phaseProgressBar" class="phase-progress-bar"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <label class="sensor-toggle">
+                            <input type="checkbox" id="chkCrosswalkEnabled" checked>
+                            Crosswalk button enabled (<code>guard: canRequestWalk</code>)
+                        </label>
+                    </div>
+
+                    <div class="sim-right">
+                        <div class="status-strip" style="margin-top: 0;">
+                            <div class="status-pill">
+                                <span class="status-pill-label">State</span>
+                                <span id="lblState" class="status-pill-value ok">green</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Cycles</span>
+                                <span id="lblCycleCount" class="status-pill-value on">0</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Crosswalk</span>
+                                <span id="lblWalkStatus" class="status-pill-value warn">WAIT</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Auto Clock</span>
+                                <span id="lblClockStatus" class="status-pill-value ok">Running</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="controls-label">Try Triggering an Event</div>
+                            <div class="button-row">
+                                <button type="button" id="btnPedestrian" class="ctrl-btn btn-primary">🚶 Request Crosswalk</button>
+                                <button type="button" id="btnTimer" class="ctrl-btn btn-neutral">⏭ Advance Phase (TIMER)</button>
+                                <button type="button" id="btnToggleClock" class="ctrl-btn btn-warn">⏸ Pause Clock</button>
+                            </div>
+                        </div>
+
+                        <div id="lblExplanation" class="explanation-box" style="margin-top: 0;">
+                            <strong>What's happening:</strong> Traffic is flowing in <strong>green</strong>. After 4 seconds (or immediately when a pedestrian presses Wait while the guard allows it), the light transitions to <strong>yellow</strong>.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Bottom Card: Interactive xstate-diagram & Machine JSON -->
+            <section class="card" id="statechartCard">
+                <div>
+                    <div class="card-header">
+                        <div class="card-title">Statechart</div>
+                        <div class="diagram-controls">
+                            <button type="button" id="btnToggleZoom" class="zoom-toggle-btn" aria-pressed="false" title="Toggle zoomed view">Zoom 100%</button>
+                            <button type="button" id="btnToggleMaximize" class="zoom-toggle-btn" aria-pressed="false" title="Expand statechart to fill window">Maximize</button>
+                            <div class="view-toggle" role="tablist" aria-label="Statechart view">
+                                <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (xstate-diagram)</button>
+                                <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="diagramView" class="diagram-panel"></div>
+                    <div class="diagram-hint">Click any highlighted transition arrow in the diagram to trigger it.</div>
+                    <pre id="jsonView" class="json-panel"></pre>
+                </div>
+            </section>
         </div>
     </div>
 
     <script type="module">
-        import init, { setup, assign } from '../lavi-wasm/pkg/lavi.js';
-        import { displayMachine } from './common.js';
+        import init, { setup, createActor, assign } from '../lavi-wasm/pkg/lavi.js';
+        import { initStatechartPanel } from './showcase.js';
 
         await init();
 
-        // Defined inline
+        const PHASE_DURATIONS = {
+            green: 4000,
+            yellow: 1500,
+            red: 4000
+        };
+
+        const STATE_NOTES = {
+            green: 'Traffic is flowing in <strong>green</strong>. An <code>after: { 4000 }</code> timer will advance to <strong>yellow</strong>, or a pedestrian can click <strong>Request Crosswalk</strong> when the <code>canRequestWalk</code> guard is true.',
+            yellow: 'Caution in <strong>yellow</strong>! Notice <code>REQUEST_CROSSWALK</code> is now disabled both on the button and in the SVG diagram because <code>snapshot.can()</code> knows it is only valid from <strong>green</strong>.',
+            red: 'All traffic stopped in <strong>red</strong>. Entering <strong>red</strong> ran <code>incrementCycle</code> and <code>activateCrosswalk</code>; exiting <strong>red</strong> is guaranteed to run <code>clearCrosswalk</code> before cars move again.'
+        };
+
         const machineDef = {
-          "id": "trafficLight",
-          "initial": "green",
-          "states": {
-            "green": {
-              "entry": ["render"],
-              "on": { "TIMER": [{ "target": "yellow" }] }
+            id: 'trafficLight',
+            initial: 'green',
+            context: {
+                cycleCount: 0,
+                walkSignal: 'WAIT',
+                crosswalkEnabled: true
             },
-            "yellow": {
-              "entry": ["render"],
-              "on": { "TIMER": [{ "target": "red" }] }
-            },
-            "red": {
-              "entry": ["render"],
-              "on": { "TIMER": [{ "target": "green", "actions": ["increment_cycle"] }] }
-            }
-          },
-          "context": {
-            "cycle_count": 0
-          }
-        };
-
-        const updateUI = () => {
-            const snapshot = machine.getSnapshot();
-            const state = snapshot.value;
-            const ctx = snapshot.context;
-
-            // Reset lights
-            document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
-            
-            // Activate current light
-            if (state) {
-                const el = document.getElementById(state);
-                if (el) el.classList.add('active');
-            }
-
-            // Update status text
-            const lblState = document.getElementById('lblState');
-            if (lblState) lblState.innerText = state ? state.toUpperCase() : "...";
-
-            // Update context
-            const lblContext = document.getElementById('lblContext');
-            if (lblContext && ctx) lblContext.innerText = JSON.stringify(ctx, null, 2);
-        };
-
-        const config = {
-            actions: {
-                increment_cycle: assign((ctx) => ({ cycle_count: ctx.context.cycle_count + 1 })),
-                render: () => {
-                   setTimeout(() => {
-                       updateUI();
-                   }, 0);
+            states: {
+                green: {
+                    after: {
+                        4000: { target: 'yellow' }
+                    },
+                    on: {
+                        TIMER: { target: 'yellow' },
+                        REQUEST_CROSSWALK: {
+                            target: 'yellow',
+                            guard: 'canRequestWalk'
+                        },
+                        TOGGLE_SENSOR: {
+                            actions: ['toggleCrosswalkSensor']
+                        }
+                    }
+                },
+                yellow: {
+                    after: {
+                        1500: { target: 'red' }
+                    },
+                    on: {
+                        TIMER: { target: 'red' },
+                        TOGGLE_SENSOR: {
+                            actions: ['toggleCrosswalkSensor']
+                        }
+                    }
+                },
+                red: {
+                    entry: ['incrementCycle', 'activateCrosswalk'],
+                    exit: ['clearCrosswalk'],
+                    after: {
+                        4000: { target: 'green' }
+                    },
+                    on: {
+                        TIMER: { target: 'green' },
+                        TOGGLE_SENSOR: {
+                            actions: ['toggleCrosswalkSensor']
+                        }
+                    }
                 }
             }
         };
 
-        // Display code in UI
-        displayMachine(machineDef, config);
+        const config = {
+            guards: {
+                canRequestWalk: ({ context }) => Boolean(context.crosswalkEnabled)
+            },
+            actions: {
+                incrementCycle: assign({
+                    cycleCount: ({ context }) => context.cycleCount + 1
+                }),
+                activateCrosswalk: assign({
+                    walkSignal: 'WALK'
+                }),
+                clearCrosswalk: assign({
+                    walkSignal: 'WAIT'
+                }),
+                toggleCrosswalkSensor: assign({
+                    crosswalkEnabled: ({ context }) => !context.crosswalkEnabled
+                })
+            }
+        };
 
-        // Instantiate machine
-        // Instantiate machine
-        const machine = setup(config).createMachine(machineDef).createActor({}).start();
+        const machine = setup(config).createMachine(machineDef);
+        const actor = createActor(machine);
 
-        // Initialize UI
-        updateUI();
+        let clockRunning = true;
+        let phaseElapsedMs = 0;
+        let lastState = 'green';
 
-        document.getElementById('btnTimer').onclick = () => machine.send("TIMER");
+        const redEl = document.getElementById('red');
+        const yellowEl = document.getElementById('yellow');
+        const greenEl = document.getElementById('green');
+        const btnPedestrian = document.getElementById('btnPedestrian');
+        const btnTimer = document.getElementById('btnTimer');
+        const btnToggleClock = document.getElementById('btnToggleClock');
+        const chkCrosswalkEnabled = document.getElementById('chkCrosswalkEnabled');
+        const phaseProgressBar = document.getElementById('phaseProgressBar');
+
+        function renderDemoUI(snap, { leaf }) {
+            if (leaf !== lastState) {
+                lastState = leaf;
+                phaseElapsedMs = 0;
+            }
+
+            const ctx = snap.context || {};
+
+            redEl.classList.toggle('active', leaf === 'red');
+            yellowEl.classList.toggle('active', leaf === 'yellow');
+            greenEl.classList.toggle('active', leaf === 'green');
+
+            const walkActive = ctx.walkSignal === 'WALK';
+            const crosswalkDisplay = document.getElementById('lblCrosswalkDisplay');
+            crosswalkDisplay.textContent = walkActive ? 'WALK' : "DON'T WALK";
+            crosswalkDisplay.classList.toggle('walk', walkActive);
+
+            document.getElementById('lblState').className =
+                `status-pill-value ${leaf === 'red' ? 'danger' : leaf === 'yellow' ? 'warn' : 'ok'}`;
+
+            document.getElementById('lblCycleCount').textContent = String(ctx.cycleCount ?? 0);
+
+            const walkStatus = document.getElementById('lblWalkStatus');
+            walkStatus.textContent = ctx.walkSignal || 'WAIT';
+            walkStatus.className = `status-pill-value ${walkActive ? 'ok' : 'warn'}`;
+
+            const clockStatus = document.getElementById('lblClockStatus');
+            clockStatus.textContent = clockRunning ? 'Running' : 'Paused';
+            clockStatus.className = `status-pill-value ${clockRunning ? 'ok' : 'off'}`;
+
+            btnPedestrian.disabled = !snap.can({ type: 'REQUEST_CROSSWALK' });
+            chkCrosswalkEnabled.checked = Boolean(ctx.crosswalkEnabled);
+        }
+
+        const panel = await initStatechartPanel({
+            actor,
+            machineDef,
+            svgUrl: './traffic_light.svg',
+            svgLabel: 'Crosswalk Traffic Light Interactive Statechart',
+            stateNotes: STATE_NOTES,
+            onAfterSync: renderDemoUI
+        });
+
+        actor.subscribe(() => {
+            panel.syncStatechart();
+        });
+
+        actor.start();
+        panel.syncStatechart();
+
+        btnPedestrian.addEventListener('click', () => panel.triggerEvent('REQUEST_CROSSWALK'));
+        btnTimer.addEventListener('click', () => panel.triggerEvent('TIMER'));
+
+        chkCrosswalkEnabled.addEventListener('change', () => {
+            actor.send({ type: 'TOGGLE_SENSOR' });
+            panel.syncStatechart();
+        });
+
+        btnToggleClock.addEventListener('click', () => {
+            clockRunning = !clockRunning;
+            btnToggleClock.textContent = clockRunning ? '⏸ Pause Clock' : '▶ Resume Clock';
+            document.getElementById('lblPhaseTimer').textContent = clockRunning
+                ? 'Auto-advancing via after()'
+                : 'Clock paused — trigger events manually';
+            panel.syncStatechart();
+        });
+
+        // Drive Lavi's after() timers at 100ms intervals when clock is running
+        setInterval(() => {
+            if (!clockRunning) return;
+            actor.tick();
+            phaseElapsedMs += 100;
+            const total = PHASE_DURATIONS[lastState] || 4000;
+            const pct = Math.min(100, (phaseElapsedMs / total) * 100);
+            phaseProgressBar.style.width = `${pct}%`;
+        }, 100);
     </script>
 </body>
 </html>

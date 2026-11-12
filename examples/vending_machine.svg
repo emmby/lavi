@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="xstate-diagram" viewBox="0 0 880 320" width="880" height="320" data-machine-id="vendingMachine" data-root-initial="vendingMachine.idle">
+  <defs>
+    <marker id="arrow-transition" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-transition-active" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#0284c7"/>
+    </marker>
+    <marker id="arrow-transition-triggered" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#059669"/>
+    </marker>
+    <style>
+      .vm-box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.75px; }
+      .vm-title { font-family: system-ui, -apple-system, sans-serif; font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .vm-meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #475569; }
+      .vm-divider { stroke: #e2e8f0; stroke-width: 1px; }
+      .edge-path { fill: none; stroke: #94a3b8; stroke-width: 1.8px; marker-end: url(#arrow-transition); }
+      .edge-label-bg { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.25px; }
+      .edge-label-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; font-weight: 600; fill: #334155; }
+      .transition-edge.is-enabled > .edge-path { marker-end: url(#arrow-transition-active); }
+      .transition-edge.is-triggered > .edge-path { marker-end: url(#arrow-transition-triggered); }
+    </style>
+  </defs>
+
+  <!-- Initial -> idle -->
+  <circle cx="34" cy="150" r="6" fill="#0f172a"/>
+  <path d="M 40 150 L 80 150" fill="none" stroke="#0f172a" stroke-width="2" marker-end="url(#arrow-transition)"/>
+
+  <!-- State: idle -->
+  <g class="state-node state-node--atomic" data-state-path="idle">
+    <rect class="state-box vm-box" x="84" y="70" width="230" height="160" rx="10"/>
+    <text class="state-title vm-title" x="199" y="96" text-anchor="middle">idle</text>
+    <line class="vm-divider" x1="84" y1="108" x2="314" y2="108"/>
+    <g class="internal-transition" data-internal-event="INSERT_COIN">
+      <text class="vm-meta" x="98" y="132">INSERT_COIN / addBalance</text>
+    </g>
+    <g class="internal-transition" data-internal-event="REFUND">
+      <text class="vm-meta" x="98" y="154">REFUND [hasBalance] / refundAll</text>
+    </g>
+    <line class="vm-divider" x1="84" y1="170" x2="314" y2="170"/>
+    <text class="vm-meta" x="98" y="192">Parameterized guard:</text>
+    <text class="vm-meta" x="98" y="210">hasEnoughBalance({ price })</text>
+  </g>
+
+  <!-- State: dispensing -->
+  <g class="state-node state-node--atomic" data-state-path="dispensing">
+    <rect class="state-box vm-box" x="590" y="90" width="240" height="120" rx="10"/>
+    <text class="state-title vm-title" x="710" y="116" text-anchor="middle">dispensing</text>
+    <line class="vm-divider" x1="590" y1="128" x2="830" y2="128"/>
+    <text class="vm-meta" x="604" y="150">Pouring selected drink...</text>
+    <text class="vm-meta" x="604" y="172">exit / clearDispensedItem</text>
+  </g>
+
+  <!-- Edge: idle -> dispensing (SELECT_ESPRESSO) -->
+  <g class="transition-edge" data-edge-source-path="idle" data-edge-event="SELECT_ESPRESSO">
+    <path class="edge-path" d="M 314 104 Q 452 54 586 114"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="358" y="54" width="194" height="22" rx="6"/>
+      <text class="edge-label-text" x="455" y="69" text-anchor="middle">SELECT_ESPRESSO [price: 150]</text>
+    </g>
+  </g>
+
+  <!-- Edge: idle -> dispensing (SELECT_MATCHA) -->
+  <g class="transition-edge" data-edge-source-path="idle" data-edge-event="SELECT_MATCHA">
+    <path class="edge-path" d="M 314 144 L 586 144"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="364" y="122" width="182" height="22" rx="6"/>
+      <text class="edge-label-text" x="455" y="137" text-anchor="middle">SELECT_MATCHA [price: 200]</text>
+    </g>
+  </g>
+
+  <!-- Edge: idle -> dispensing (SELECT_COLD_BREW) -->
+  <g class="transition-edge" data-edge-source-path="idle" data-edge-event="SELECT_COLD_BREW">
+    <path class="edge-path" d="M 314 184 Q 452 230 586 176"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="352" y="190" width="206" height="22" rx="6"/>
+      <text class="edge-label-text" x="455" y="205" text-anchor="middle">SELECT_COLD_BREW [price: 250]</text>
+    </g>
+  </g>
+
+  <!-- Edge: dispensing -> idle (after 1200) -->
+  <g class="transition-edge" data-edge-source-path="dispensing" data-edge-event="after(1200)">
+    <path class="edge-path" d="M 710 210 L 710 264 Q 710 282 690 282 L 219 282 Q 199 282 199 264 L 199 234"/>
+    <g class="edge-label">
+      <rect class="edge-label-bg" x="412" y="270" width="84" height="22" rx="6"/>
+      <text class="edge-label-text" x="454" y="285" text-anchor="middle">after(1200)</text>
+    </g>
+  </g>
+</svg>

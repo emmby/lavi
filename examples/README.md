@@ -56,9 +56,7 @@ Then visit [http://localhost:8000/examples/](http://localhost:8000/examples/).
 ### Available Browser Demos
 
 - **Autonomous Robot Vacuum** (`robot_vacuum.html`): Interactive open-floor robot vacuum simulator powered by `lavi-wasm`, featuring nested states, `exit` safety guarantees, `always` low-battery routing, `after` timers, shallow history (`H`), and a live interactive `xstate-diagram` SVG / JSON toggle.
-- **Simple Light Switch** (`simple.html`): Basic state toggling.
-- **Traffic Light** (`traffic_light.html`): Timed transitions and consolidated configuration.
-- **Guards** (`guards.html`): Conditional transitions based on context.
-- **Parameterized Guards** (`parameterized_guards.html`): Reusable guards with declarative parameters.
-- **Actions** (`actions.html`): Executing side-effects and updating functionality.
-- **Dynamic Assignment** (`dynamic_assignment.html`): Modifying extended state (context) with math.
+- **Smart Dimmer** (`smart_dimmer.html`): Core feature guide for `states`, `on` transitions, `context`, and guarded internal events (`DIM` / `BRIGHTEN`).
+- **Crosswalk Traffic Light** (`traffic_light.html`): Core feature guide for `after` delayed transitions, `guard` conditions (`PEDESTRIAN_WAIT`), and `entry` / `exit` actions.
+- **Espresso Vending Machine** (`vending_machine.html`): Core feature guide for `assign` with event payloads (`INSERT_COIN`), parameterized `guards` (`params: { price }`), and `snapshot.can()` UI state syncing.
+- **Checkout Wizard** (`checkout_wizard.html`): Core feature guide for SCXML `entry` / `exit` / transition action ordering, `always` eventless routing, and `enqueueActions`.
