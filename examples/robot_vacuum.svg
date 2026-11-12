@@ -1,0 +1,438 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="xstate-diagram" viewBox="0 0 2445 1824" width="2445" height="1824" data-machine-id="robotVacuum" data-root-initial="robotVacuum.moving">
+  <defs>
+    <style class="xstate-diagram-styles">
+      .xstate-diagram {
+        --xsd-active-stroke: #0284C7;
+        --xsd-active-fill: #F0F9FF;
+        --xsd-active-header-bg: #BAE6FD;
+        --xsd-active-title: #0369A1;
+        --xsd-active-divider: #7DD3FC;
+        --xsd-active-glow: rgba(2, 132, 199, 0.22);
+        --xsd-enabled-stroke: #0284C7;
+        --xsd-enabled-label-bg: #F0F9FF;
+        --xsd-enabled-label-stroke: #38BDF8;
+        --xsd-enabled-label-text: #0369A1;
+        --xsd-enabled-label-meta: #0369A1;
+        --xsd-hover-stroke: #0369A1;
+        --xsd-hover-label-bg: #E0F2FE;
+        --xsd-hover-label-stroke: #0284C7;
+        --xsd-hover-label-text: #0C4A6E;
+        --xsd-triggered-stroke: #059669;
+        --xsd-triggered-label-bg: #ECFDF5;
+        --xsd-triggered-label-stroke: #34D399;
+        --xsd-triggered-label-text: #065F46;
+        --xsd-disabled-opacity: 0.45;
+        --xsd-transition-duration: 0ms;
+      }
+      .state-node > .state-box,
+      .state-node > .state-header-bg,
+      .state-node > .state-divider,
+      .state-node > .state-title,
+      .transition-edge > .edge-path,
+      .transition-edge > .fork-junction,
+      .transition-edge > .edge-label > .edge-label-bg,
+      .transition-edge > .edge-label > .edge-label-text {
+        transition: fill var(--xsd-transition-duration) ease, stroke var(--xsd-transition-duration) ease;
+      }
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-box {
+        stroke: var(--xsd-active-stroke);
+        stroke-width: 2.5px;
+      }
+      .state-node:is(.state-node--atomic, .state-node--final, .state-node--history):is(.is-active, .active, [data-active="true"]) > .state-box {
+        fill: var(--xsd-active-fill);
+        filter: drop-shadow(0 0 6px var(--xsd-active-glow));
+      }
+      .state-node:is(.state-node--compound, .state-node--parallel):is(.is-active, .active, [data-active="true"]) > .state-box {
+        stroke-width: 2.25px;
+      }
+      .state-node:is(.state-node--compound, .state-node--parallel):is(.is-active, .active, [data-active="true"]) > .state-header-bg {
+        fill: var(--xsd-active-header-bg);
+        fill-opacity: 0.9;
+      }
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-title {
+        fill: var(--xsd-active-title);
+      }
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-divider,
+      .state-node:is(.is-active, .active, [data-active="true"]) > .compartment-divider,
+      .state-node:is(.is-active, .active, [data-active="true"]) > .compartment-bottom-divider {
+        stroke: var(--xsd-active-divider);
+      }
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-final-inner,
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-final-badge-outer,
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-parallel-badge rect,
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-parallel-badge line {
+        stroke: var(--xsd-active-stroke);
+      }
+      .state-node:is(.is-active, .active, [data-active="true"]) > .state-final-badge-inner {
+        fill: var(--xsd-active-stroke);
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) {
+        cursor: pointer;
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .edge-path {
+        stroke: var(--xsd-enabled-stroke);
+        stroke-width: 2.5px;
+        marker-end: url(#arrow-transition-active);
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .fork-junction {
+        fill: var(--xsd-enabled-stroke);
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .edge-label > .edge-label-bg {
+        fill: var(--xsd-enabled-label-bg);
+        fill-opacity: 1;
+        stroke: var(--xsd-enabled-label-stroke);
+        stroke-width: 1.5px;
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .edge-label .edge-label-text,
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .edge-label .edge-label-event,
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .edge-label .edge-label-prefix {
+        fill: var(--xsd-enabled-label-text);
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, [data-enabled="true"], [data-active="true"]) > .edge-label .edge-label-meta {
+        fill: var(--xsd-enabled-label-meta);
+      }
+      .transition-edge:is(.is-clickable, .clickable, [data-clickable="true"]) {
+        cursor: pointer;
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover > .edge-path {
+        stroke: var(--xsd-hover-stroke);
+        stroke-width: 3px;
+        marker-end: url(#arrow-transition-hover);
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover > .fork-junction {
+        fill: var(--xsd-hover-stroke);
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover > .edge-label > .edge-label-bg {
+        fill: var(--xsd-hover-label-bg);
+        fill-opacity: 1;
+        stroke: var(--xsd-hover-label-stroke);
+        stroke-width: 1.75px;
+        filter: drop-shadow(0 1px 3px var(--xsd-active-glow));
+      }
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover > .edge-label .edge-label-text,
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover > .edge-label .edge-label-event,
+      .transition-edge:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover > .edge-label .edge-label-prefix {
+        fill: var(--xsd-hover-label-text);
+      }
+      .transition-edge:is(.is-triggered, .is-taken, [data-triggered="true"]) > .edge-path {
+        stroke: var(--xsd-triggered-stroke);
+        stroke-width: 2.75px;
+        marker-end: url(#arrow-transition-triggered);
+      }
+      .transition-edge:is(.is-triggered, .is-taken, [data-triggered="true"]) > .fork-junction {
+        fill: var(--xsd-triggered-stroke);
+      }
+      .transition-edge:is(.is-triggered, .is-taken, [data-triggered="true"]) > .edge-label > .edge-label-bg {
+        fill: var(--xsd-triggered-label-bg);
+        fill-opacity: 1;
+        stroke: var(--xsd-triggered-label-stroke);
+        stroke-width: 1.75px;
+      }
+      .transition-edge:is(.is-triggered, .is-taken, [data-triggered="true"]) > .edge-label .edge-label-text,
+      .transition-edge:is(.is-triggered, .is-taken, [data-triggered="true"]) > .edge-label .edge-label-event,
+      .transition-edge:is(.is-triggered, .is-taken, [data-triggered="true"]) > .edge-label .edge-label-prefix {
+        fill: var(--xsd-triggered-label-text);
+      }
+      .internal-transition:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]) {
+        cursor: pointer;
+        fill: var(--xsd-enabled-label-text);
+      }
+      .internal-transition:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]) .internal-event,
+      .internal-transition:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]) .internal-priority {
+        fill: var(--xsd-enabled-label-text);
+      }
+      .internal-transition:is(.is-enabled, .is-available, .is-active, .enabled, .is-clickable, .clickable, [data-enabled="true"], [data-active="true"], [data-clickable="true"]):hover {
+        fill: var(--xsd-hover-label-text);
+        text-decoration: underline;
+      }
+      .state-node:is(.is-disabled, .is-inactive, [data-disabled="true"]),
+      .transition-edge:is(.is-disabled, .is-inactive, [data-disabled="true"]),
+      .internal-transition:is(.is-disabled, .is-inactive, [data-disabled="true"]) {
+        opacity: var(--xsd-disabled-opacity);
+      }
+      .initial-indicator:is(.is-active, .active, [data-active="true"]) > .initial-dot {
+        fill: var(--xsd-active-stroke);
+      }
+      .initial-indicator:is(.is-active, .active, [data-active="true"]) > .initial-edge {
+        stroke: var(--xsd-active-stroke);
+        marker-end: url(#arrow-transition-active);
+      }
+    </style>
+    <marker id="arrow-transition" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0.5 L 9.5 4 L 0 7.5 L 1.8 4 Z" fill="#475569" />
+    </marker>
+    <marker id="arrow-transition-active" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0.5 L 9.5 4 L 0 7.5 L 1.8 4 Z" fill="#0284C7" />
+    </marker>
+    <marker id="arrow-transition-hover" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0.5 L 9.5 4 L 0 7.5 L 1.8 4 Z" fill="#0369A1" />
+    </marker>
+    <marker id="arrow-transition-triggered" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0.5 L 9.5 4 L 0 7.5 L 1.8 4 Z" fill="#059669" />
+    </marker>
+    <marker id="arrow-initial" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0.5 L 9.5 4 L 0 7.5 L 1.8 4 Z" fill="#0F172A" />
+    </marker>
+    <clipPath id="clip-header-0"><rect x="160" y="316" width="1549" height="1090" rx="10" /></clipPath>
+    <clipPath id="clip-header-1"><rect x="2026" y="1458" width="274" height="231" rx="10" /></clipPath>
+    <clipPath id="clip-header-3"><rect x="337" y="643" width="875" height="491" rx="10" /></clipPath>
+  </defs>
+  <rect class="canvas-bg" x="0" y="0" width="2445" height="1824" fill="#F8FAFC" />
+  <g class="layer-states">
+    <g class="state-node state-node--compound" data-state-id="robotVacuum.moving" data-state-path="moving" data-state-key="moving" data-state-type="compound" data-parent-id="" data-parent-path="" data-initial-target="robotVacuum.moving.cleaning" data-history-kind="">
+      <rect class="state-box" x="160" y="316" width="1549" height="1090" rx="10" fill="#F1F5F9" stroke="#475569" stroke-width="1.5" />
+      <rect class="state-header-bg" x="160" y="316" width="1549" height="32" fill="#E2E8F0" clip-path="url(#clip-header-0)" />
+      <rect class="state-compartment-bg" x="160" y="348" width="1549" height="66" fill="#FFFFFF" fill-opacity="0.72" clip-path="url(#clip-header-0)" />
+      <line class="state-divider" x1="160" y1="348" x2="1709" y2="348" stroke="#475569" stroke-width="1" />
+      <text class="state-title" x="174" y="332" text-anchor="start" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">moving</text>
+      <g class="state-compartment" data-compartment="exit">
+        <text class="compartment-row compartment-exit" data-exit-action="stopAllMotors" x="172" y="364.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="compartment-keyword" font-weight="700" fill="#0F172A">exit</tspan> / stopAllMotors</text>
+      </g>
+      <line class="compartment-divider" x1="160" y1="381" x2="1709" y2="381" stroke="#CBD5E1" stroke-width="1" />
+      <g class="state-compartment" data-compartment="internal">
+        <text class="compartment-row internal-transition" data-internal-event="LOW_BATTERY" data-internal-order="0" data-internal-guard="" data-internal-actions="forceLowBattery" x="172" y="397.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="internal-event" font-weight="700" fill="#0F172A">LOW_BATTERY</tspan> / forceLowBattery</text>
+      </g>
+      <line class="compartment-bottom-divider" x1="160" y1="414" x2="1709" y2="414" stroke="#CBD5E1" stroke-width="1" />
+    </g>
+    <g class="state-node state-node--compound" data-state-id="robotVacuum.stopped" data-state-path="stopped" data-state-key="stopped" data-state-type="compound" data-parent-id="" data-parent-path="" data-initial-target="robotVacuum.stopped.paused" data-history-kind="">
+      <rect class="state-box" x="2026" y="1458" width="274" height="231" rx="10" fill="#F1F5F9" stroke="#475569" stroke-width="1.5" />
+      <rect class="state-header-bg" x="2026" y="1458" width="274" height="32" fill="#E2E8F0" clip-path="url(#clip-header-1)" />
+      <rect class="state-compartment-bg" x="2026" y="1490" width="274" height="33" fill="#FFFFFF" fill-opacity="0.72" clip-path="url(#clip-header-1)" />
+      <line class="state-divider" x1="2026" y1="1490" x2="2300" y2="1490" stroke="#475569" stroke-width="1" />
+      <text class="state-title" x="2040" y="1474" text-anchor="start" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">stopped</text>
+      <g class="state-compartment" data-compartment="internal">
+        <text class="compartment-row internal-transition" data-internal-event="LOW_BATTERY" data-internal-order="0" data-internal-guard="" data-internal-actions="forceLowBattery" x="2038" y="1506.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="internal-event" font-weight="700" fill="#0F172A">LOW_BATTERY</tspan> / forceLowBattery</text>
+      </g>
+      <line class="compartment-bottom-divider" x1="2026" y1="1523" x2="2300" y2="1523" stroke="#CBD5E1" stroke-width="1" />
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.docked" data-state-path="docked" data-state-key="docked" data-state-type="atomic" data-parent-id="" data-parent-path="" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="2026" y="125" width="244" height="117" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <line class="state-divider" x1="2026" y1="157" x2="2270" y2="157" stroke="#CBD5E1" stroke-width="1" />
+      <text class="state-title" x="2148" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">docked</text>
+      <g class="state-compartment" data-compartment="entry">
+        <text class="compartment-row compartment-entry" data-entry-action="setDockedHardware" x="2038" y="173.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="compartment-keyword" font-weight="700" fill="#0F172A">entry</tspan> / setDockedHardware</text>
+      </g>
+      <line class="compartment-divider" x1="2026" y1="190" x2="2270" y2="190" stroke="#CBD5E1" stroke-width="1" />
+      <g class="state-compartment" data-compartment="internal">
+        <text class="compartment-row internal-transition" data-internal-event="CHARGE_TICK" data-internal-order="0" data-internal-guard="" data-internal-actions="chargeBattery" x="2038" y="206.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="internal-event" font-weight="700" fill="#0F172A">CHARGE_TICK</tspan> / chargeBattery</text>
+        <text class="compartment-row internal-transition" data-internal-event="LOW_BATTERY" data-internal-order="0" data-internal-guard="" data-internal-actions="forceLowBattery" x="2038" y="225.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="internal-event" font-weight="700" fill="#0F172A">LOW_BATTERY</tspan> / forceLowBattery</text>
+      </g>
+    </g>
+    <g class="state-node state-node--compound" data-state-id="robotVacuum.moving.cleaning" data-state-path="moving.cleaning" data-state-key="cleaning" data-state-type="compound" data-parent-id="robotVacuum.moving" data-parent-path="moving" data-initial-target="robotVacuum.moving.cleaning.patrol" data-history-kind="">
+      <rect class="state-box" x="337" y="643" width="875" height="491" rx="10" fill="#F8FAFC" stroke="#475569" stroke-width="1.5" />
+      <rect class="state-header-bg" x="337" y="643" width="875" height="32" fill="#E2E8F0" clip-path="url(#clip-header-3)" />
+      <rect class="state-compartment-bg" x="337" y="675" width="875" height="52" fill="#FFFFFF" fill-opacity="0.72" clip-path="url(#clip-header-3)" />
+      <line class="state-divider" x1="337" y1="675" x2="1212" y2="675" stroke="#475569" stroke-width="1" />
+      <text class="state-title" x="351" y="659" text-anchor="start" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">cleaning</text>
+      <g class="state-compartment" data-compartment="internal">
+        <text class="compartment-row internal-transition" data-internal-event="DRAIN_TICK" data-internal-order="0" data-internal-guard="" data-internal-actions="drainBattery" x="349" y="691.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="internal-event" font-weight="700" fill="#0F172A">DRAIN_TICK</tspan> / drainBattery</text>
+        <text class="compartment-row internal-transition" data-internal-event="CRUMB_CLEANED" data-internal-order="0" data-internal-guard="" data-internal-actions="incrementCleaned" x="349" y="710.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="internal-event" font-weight="700" fill="#0F172A">CRUMB_CLEANED</tspan> / incrementCleaned</text>
+      </g>
+      <line class="compartment-bottom-divider" x1="337" y1="727" x2="1212" y2="727" stroke="#CBD5E1" stroke-width="1" />
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.moving.returningToDock" data-state-path="moving.returningToDock" data-state-key="returningToDock" data-state-type="atomic" data-parent-id="robotVacuum.moving" data-parent-path="moving" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="1453" y="1153.5" width="237" height="74" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <line class="state-divider" x1="1453" y1="1185.5" x2="1690" y2="1185.5" stroke="#CBD5E1" stroke-width="1" />
+      <text class="state-title" x="1571.5" y="1169.5" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">returningToDock</text>
+      <g class="state-compartment" data-compartment="entry">
+        <text class="compartment-row compartment-entry" data-entry-action="setReturningHardware" x="1465" y="1202" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="compartment-keyword" font-weight="700" fill="#0F172A">entry</tspan> / setReturningHardware</text>
+      </g>
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.moving.avoidingObstacle" data-state-path="moving.avoidingObstacle" data-state-key="avoidingObstacle" data-state-type="atomic" data-parent-id="robotVacuum.moving" data-parent-path="moving" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="1453" y="462.7" width="230" height="96" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <line class="state-divider" x1="1453" y1="494.7" x2="1683" y2="494.7" stroke="#CBD5E1" stroke-width="1" />
+      <text class="state-title" x="1568" y="478.7" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">avoidingObstacle</text>
+      <g class="state-compartment" data-compartment="entry">
+        <text class="compartment-row compartment-entry" data-entry-action="setAvoidingHardware" x="1465" y="511.2" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="compartment-keyword" font-weight="700" fill="#0F172A">entry</tspan> / setAvoidingHardware</text>
+      </g>
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.stopped.paused" data-state-path="stopped.paused" data-state-key="paused" data-state-type="atomic" data-parent-id="robotVacuum.stopped" data-parent-path="stopped" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="2194" y="1551.67" width="88" height="52" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <text class="state-title" x="2238" y="1577.67" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">paused</text>
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.stopped.stairsAlert" data-state-path="stopped.stairsAlert" data-state-key="stairsAlert" data-state-type="atomic" data-parent-id="robotVacuum.stopped" data-parent-path="stopped" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="2045" y="1629" width="108" height="42" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <text class="state-title" x="2099" y="1650" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">stairsAlert</text>
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.moving.cleaning.patrol" data-state-path="moving.cleaning.patrol" data-state-key="patrol" data-state-type="atomic" data-parent-id="robotVacuum.moving.cleaning" data-parent-path="moving.cleaning" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="517" y="817" width="216" height="216" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <line class="state-divider" x1="517" y1="849" x2="733" y2="849" stroke="#CBD5E1" stroke-width="1" />
+      <text class="state-title" x="625" y="833" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">patrol</text>
+      <g class="state-compartment" data-compartment="entry">
+        <text class="compartment-row compartment-entry" data-entry-action="setPatrolHardware" x="529" y="865.5" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="compartment-keyword" font-weight="700" fill="#0F172A">entry</tspan> / setPatrolHardware</text>
+      </g>
+    </g>
+    <g class="state-node state-node--atomic" data-state-id="robotVacuum.moving.cleaning.spot" data-state-path="moving.cleaning.spot" data-state-key="spot" data-state-type="atomic" data-parent-id="robotVacuum.moving.cleaning" data-parent-path="moving.cleaning" data-initial-target="" data-history-kind="">
+      <rect class="state-box" x="992" y="823.68" width="202" height="110" rx="8" fill="#FFFFFF" stroke="#334155" stroke-width="1.5" />
+      <line class="state-divider" x1="992" y1="855.68" x2="1194" y2="855.68" stroke="#CBD5E1" stroke-width="1" />
+      <text class="state-title" x="1093" y="839.68" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="13" font-weight="700" fill="#0F172A">spot</text>
+      <g class="state-compartment" data-compartment="entry">
+        <text class="compartment-row compartment-entry" data-entry-action="setSpotHardware" x="1004" y="872.18" text-anchor="start" dominant-baseline="central" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" fill="#334155"><tspan class="compartment-keyword" font-weight="700" fill="#0F172A">entry</tspan> / setSpotHardware</text>
+      </g>
+    </g>
+    <g class="state-node state-node--history" data-state-id="robotVacuum.moving.cleaning.hist" data-state-path="moving.cleaning.hist" data-state-key="hist" data-state-type="history" data-parent-id="robotVacuum.moving.cleaning" data-parent-path="moving.cleaning" data-initial-target="" data-history-kind="shallow">
+      <rect class="state-box" x="384" y="955" width="70" height="28" rx="14" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5" />
+      <text class="state-title" x="419" y="969" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="700" fill="#92400E">H: hist</text>
+    </g>
+  </g>
+  <g class="layer-initials">
+    <g class="initial-indicator" data-parent-id="__root__" data-target-id="robotVacuum.moving">
+      <circle class="initial-dot" cx="126" cy="1076" r="5.5" fill="#0F172A" />
+      <path class="initial-edge" d="M 131.5 1076 L 160 1076" fill="none" stroke="#0F172A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-initial)" />
+    </g>
+    <g class="initial-indicator" data-parent-id="robotVacuum.moving" data-target-id="robotVacuum.moving.cleaning">
+      <circle class="initial-dot" cx="303" cy="986" r="5.5" fill="#0F172A" />
+      <path class="initial-edge" d="M 308.5 986 L 337 986" fill="none" stroke="#0F172A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-initial)" />
+    </g>
+    <g class="initial-indicator" data-parent-id="robotVacuum.moving.cleaning" data-target-id="robotVacuum.moving.cleaning.patrol">
+      <circle class="initial-dot" cx="483" cy="852.67" r="5.5" fill="#0F172A" />
+      <path class="initial-edge" d="M 488.5 852.67 L 517 852.67" fill="none" stroke="#0F172A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-initial)" />
+    </g>
+    <g class="initial-indicator" data-parent-id="robotVacuum.stopped" data-target-id="robotVacuum.stopped.paused">
+      <circle class="initial-dot" cx="2160" cy="1586.5" r="5.5" fill="#0F172A" />
+      <path class="initial-edge" d="M 2165.5 1586.5 L 2194 1586.5" fill="none" stroke="#0F172A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-initial)" />
+    </g>
+  </g>
+  <g class="layer-edges">
+    <g class="transition-edge" data-edge-id="robotVacuum.docked__CLEAN__0" data-edge-source="robotVacuum.docked" data-edge-source-path="docked" data-edge-targets="robotVacuum.moving.cleaning.patrol" data-edge-target-paths="moving.cleaning.patrol" data-edge-event="CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.patrol" data-edge-target-path="moving.cleaning.patrol" d="M 2026 138 L 1968 138 Q 1962 138 1962 132 L 1962 109 Q 1962 103 1956 103 L 34 103 Q 28 103 28 109 L 28 1030 Q 28 1036 34 1036 L 462 1036 Q 468 1036 468 1030 L 468 970.08 Q 468 964.08 474 964.08 L 517 964.08" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="962" y="91" width="66" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="995" y="103" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.docked__RESUME__0" data-edge-source="robotVacuum.docked" data-edge-source-path="docked" data-edge-targets="robotVacuum.moving.cleaning.patrol" data-edge-target-paths="moving.cleaning.patrol" data-edge-event="RESUME" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.patrol" data-edge-target-path="moving.cleaning.patrol" d="M 2026 179 L 102 179 Q 96 179 96 185 L 96 910.31 Q 96 916.31 102 916.31 L 517 916.31" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1023" y="167" width="76" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1061" y="179" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">RESUME</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.docked__SPOT_CLEAN__0" data-edge-source="robotVacuum.docked" data-edge-source-path="docked" data-edge-targets="robotVacuum.moving.cleaning.spot" data-edge-target-paths="moving.cleaning.spot" data-edge-event="SPOT_CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.spot" data-edge-target-path="moving.cleaning.spot" d="M 2026 199 L 1968 199 Q 1962 199 1962 205 L 1962 235 Q 1962 241 1956 241 L 136 241 Q 130 241 130 247 L 130 786 Q 130 792 136 792 L 903 792 Q 909 792 909 798 L 909 816.5 Q 909 822.5 915 822.5 L 979.04 822.5 Q 984 822.5 984 827.46 L 984 833.88 Q 984 836.68 986.8 836.68 L 992 836.68" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="992.5" y="229" width="107" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1046" y="241" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">SPOT_CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving__DOCK__0" data-edge-source="robotVacuum.moving" data-edge-source-path="moving" data-edge-targets="robotVacuum.moving.returningToDock" data-edge-target-paths="moving.returningToDock" data-edge-event="DOCK" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.returningToDock" data-edge-target-path="moving.returningToDock" d="M 160 1351 L 1432 1351 Q 1438 1351 1438 1345 L 1438 1219.75 Q 1438 1214.5 1443.25 1214.5 L 1453 1214.5" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="769" y="1339" width="60" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="799" y="1351" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">DOCK</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving__PAUSE__0" data-edge-source="robotVacuum.moving" data-edge-source-path="moving" data-edge-targets="robotVacuum.stopped.paused" data-edge-target-paths="stopped.paused" data-edge-event="PAUSE" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.stopped.paused" data-edge-target-path="stopped.paused" d="M 1709 1213 L 1767 1213 Q 1773 1213 1773 1219 L 1773 1562.83 Q 1773 1568.83 1779 1568.83 L 2194 1568.83" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1950.5" y="1556.8" width="66" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1983.5" y="1568.8" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">PAUSE</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving__STAIRS_DETECTED__0" data-edge-source="robotVacuum.moving" data-edge-source-path="moving" data-edge-targets="robotVacuum.stopped.stairsAlert" data-edge-target-paths="stopped.stairsAlert" data-edge-event="STAIRS_DETECTED" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.stopped.stairsAlert" data-edge-target-path="stopped.stairsAlert" d="M 1709 1236 L 1733 1236 Q 1739 1236 1739 1242 L 1739 1640 Q 1739 1646 1745 1646 L 2045 1646" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1820" y="1634" width="144" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1892" y="1646" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">STAIRS_DETECTED</text>
+      </g>
+    </g>
+    <g class="transition-edge transition-edge--delayed" data-edge-id="robotVacuum.moving.avoidingObstacle__after(1200ms)__0" data-edge-source="robotVacuum.moving.avoidingObstacle" data-edge-source-path="moving.avoidingObstacle" data-edge-targets="robotVacuum.moving.cleaning.hist" data-edge-target-paths="moving.cleaning.hist" data-edge-event="after(1200ms)" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.hist" data-edge-target-path="moving.cleaning.hist" d="M 1453 499.7 L 245 499.7 Q 239 499.7 239 505.7 L 239 932.31 Q 239 938.31 245 938.31 L 373.52 938.31 Q 379.52 938.31 379.52 944.31 L 379.52 956.6 Q 379.52 959.48 382.4 959.48 L 387.74 959.48" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="794" y="487.7" width="104" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="846" y="499.7" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">after(1200ms)</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.avoidingObstacle__CLEAN__0" data-edge-source="robotVacuum.moving.avoidingObstacle" data-edge-source-path="moving.avoidingObstacle" data-edge-targets="robotVacuum.moving.cleaning.patrol" data-edge-target-paths="moving.cleaning.patrol" data-edge-event="CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.patrol" data-edge-target-path="moving.cleaning.patrol" d="M 1453 521.7 L 1410 521.7 Q 1404 521.7 1404 527.7 L 1404 564 Q 1404 570 1398 570 L 313 570 Q 307 570 307 576 L 307 882.83 Q 307 888.83 313 888.83 L 517 888.83" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="822.5" y="558" width="66" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="855.5" y="570" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.avoidingObstacle__SPOT_CLEAN__0" data-edge-source="robotVacuum.moving.avoidingObstacle" data-edge-source-path="moving.avoidingObstacle" data-edge-targets="robotVacuum.moving.cleaning.spot" data-edge-target-paths="moving.cleaning.spot" data-edge-event="SPOT_CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.spot" data-edge-target-path="moving.cleaning.spot" d="M 1453 479.65 L 1410 479.65 Q 1404 479.65 1404 473.65 L 1404 438 Q 1404 432 1398 432 L 279 432 Q 273 432 273 438 L 273 753 Q 273 759 279 759 L 937 759 Q 943 759 943 765 L 943 794.5 Q 943 800.5 949 800.5 L 957.47 800.5 Q 963.47 800.5 963.47 806.5 L 963.47 860.51 Q 963.47 866.51 969.47 866.51 L 992 866.51" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="785" y="420" width="107" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="838.5" y="432" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">SPOT_CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge transition-edge--eventless" data-edge-id="robotVacuum.moving.cleaning__always__0" data-edge-source="robotVacuum.moving.cleaning" data-edge-source-path="moving.cleaning" data-edge-targets="robotVacuum.moving.returningToDock" data-edge-target-paths="moving.returningToDock" data-edge-event="always" data-edge-order="0" data-edge-guard="isBatteryLow" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.returningToDock" data-edge-target-path="moving.returningToDock" d="M 1212 782.5 L 1221.75 782.5 Q 1227 782.5 1227 787.75 L 1227 1167.53 Q 1227 1173.53 1233 1173.53 L 1453 1173.53" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1260.4" y="1178.5" width="123" height="43" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1268.4" y="1195.5" text-anchor="start" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan class="edge-label-line edge-label-event" x="1268.4" dy="0">always </tspan><tspan class="edge-label-line edge-label-meta" x="1268.4" dy="17" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" font-weight="400" fill="#334155">[isBatteryLow]</tspan></text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.cleaning__BUMP__0" data-edge-source="robotVacuum.moving.cleaning" data-edge-source-path="moving.cleaning" data-edge-targets="robotVacuum.moving.avoidingObstacle" data-edge-target-paths="moving.avoidingObstacle" data-edge-event="BUMP" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.avoidingObstacle" data-edge-target-path="moving.avoidingObstacle" d="M 1212 759.5 L 1432 759.5 Q 1438 759.5 1438 753.5 L 1438 547 Q 1438 541.75 1443.25 541.75 L 1453 541.75" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1295" y="747.5" width="60" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1325" y="759.5" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">BUMP</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.cleaning.patrol__SPOT_CLEAN__0" data-edge-source="robotVacuum.moving.cleaning.patrol" data-edge-source-path="moving.cleaning.patrol" data-edge-targets="robotVacuum.moving.cleaning.spot" data-edge-target-paths="moving.cleaning.spot" data-edge-event="SPOT_CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.spot" data-edge-target-path="moving.cleaning.spot" d="M 733 847.68 L 992 847.68" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="788.3" y="835.7" width="107" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="841.8" y="847.7" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">SPOT_CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge transition-edge--delayed" data-edge-id="robotVacuum.moving.cleaning.spot__after(4000ms)__0" data-edge-source="robotVacuum.moving.cleaning.spot" data-edge-source-path="moving.cleaning.spot" data-edge-targets="robotVacuum.moving.cleaning.patrol" data-edge-target-paths="moving.cleaning.patrol" data-edge-event="after(4000ms)" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.patrol" data-edge-target-path="moving.cleaning.patrol" d="M 992 884.18 L 911 884.18 Q 905 884.18 905 890.18 L 905 932.5 Q 905 938.5 899 938.5 L 733 938.5" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="767" y="926.5" width="104" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="819" y="938.5" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">after(4000ms)</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.cleaning.spot__CLEAN__0" data-edge-source="robotVacuum.moving.cleaning.spot" data-edge-source-path="moving.cleaning.spot" data-edge-targets="robotVacuum.moving.cleaning.patrol" data-edge-target-paths="moving.cleaning.patrol" data-edge-event="CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.patrol" data-edge-target-path="moving.cleaning.patrol" d="M 992 920.68 L 986.8 920.68 Q 984 920.68 984 923.48 L 984 931.53 Q 984 937.37 978.16 937.37 L 949.13 937.37 Q 943.13 937.37 943.13 943.37 L 943.13 1002.75 Q 943.13 1008.75 937.13 1008.75 L 754 1008.75 Q 748 1008.75 748 1002.75 L 748 985.75 Q 748 980.5 742.75 980.5 L 733 980.5" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="812.6" y="996.8" width="66" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="845.6" y="1008.8" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.returningToDock__ARRIVED_AT_DOCK__0" data-edge-source="robotVacuum.moving.returningToDock" data-edge-source-path="moving.returningToDock" data-edge-targets="robotVacuum.docked" data-edge-target-paths="docked" data-edge-event="ARRIVED_AT_DOCK" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.docked" data-edge-target-path="docked" d="M 1690 1190.5 L 1990 1190.5 Q 1996 1190.5 1996 1184.5 L 1996 225 Q 1996 219 2002 219 L 2026 219" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1794" y="1178.5" width="147" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1867.5" y="1190.5" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">ARRIVED_AT_DOCK</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.moving.returningToDock__CLEAN__0" data-edge-source="robotVacuum.moving.returningToDock" data-edge-source-path="moving.returningToDock" data-edge-targets="robotVacuum.moving.cleaning.patrol" data-edge-target-paths="moving.cleaning.patrol" data-edge-event="CLEAN" data-edge-order="0" data-edge-guard="hasEnoughBattery" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.patrol" data-edge-target-path="moving.cleaning.patrol" d="M 1453 1194.01 L 1410 1194.01 Q 1404 1194.01 1404 1200.01 L 1404 1257 Q 1404 1263 1398 1263 L 313 1263 Q 307 1263 307 1257 L 307 1075 Q 307 1069 313 1069 L 496 1069 Q 502 1069 502 1063 L 502 1002.58 Q 502 997.33 507.25 997.33 L 517 997.33" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="780" y="1241.5" width="151" height="43" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="788" y="1258.5" text-anchor="start" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A"><tspan class="edge-label-line edge-label-event" x="788" dy="0">CLEAN </tspan><tspan class="edge-label-line edge-label-meta" x="788" dy="17" font-family="Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, &quot;Liberation Mono&quot;, monospace" font-size="11.5" font-weight="400" fill="#334155">[hasEnoughBattery]</tspan></text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.stopped__CLEAN__0" data-edge-source="robotVacuum.stopped" data-edge-source-path="stopped" data-edge-targets="robotVacuum.moving.cleaning.hist" data-edge-target-paths="moving.cleaning.hist" data-edge-event="CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.hist" data-edge-target-path="moving.cleaning.hist" d="M 2300 1589.5 L 2343 1589.5 Q 2349 1589.5 2349 1595.5 L 2349 1709 Q 2349 1715 2343 1715 L 68 1715 Q 62 1715 62 1709 L 62 1015.25 Q 62 1009.25 68 1009.25 L 363 1009.25 Q 369 1009.25 369 1003.25 L 369 984.52 Q 369 978.52 375 978.52 L 387.74 978.52" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1172.5" y="1703" width="66" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1205.5" y="1715" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">CLEAN</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.stopped__DOCK__0" data-edge-source="robotVacuum.stopped" data-edge-source-path="stopped" data-edge-targets="robotVacuum.moving.returningToDock" data-edge-target-paths="moving.returningToDock" data-edge-event="DOCK" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.returningToDock" data-edge-target-path="moving.returningToDock" d="M 2300 1611.5 L 2377 1611.5 Q 2383 1611.5 2383 1605.5 L 2383 1438 Q 2383 1432 2377 1432 L 136 1432 Q 130 1432 130 1426 L 130 1159.09 Q 130 1153.09 136 1153.09 L 1441.81 1153.09 Q 1446.5 1153.09 1446.5 1157.78 L 1446.5 1164.22 Q 1446.5 1166.5 1448.78 1166.5 L 1453 1166.5" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1226.5" y="1420" width="60" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1256.5" y="1432" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">DOCK</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.stopped__RESUME__0" data-edge-source="robotVacuum.stopped" data-edge-source-path="stopped" data-edge-targets="robotVacuum.moving.cleaning.hist" data-edge-target-paths="moving.cleaning.hist" data-edge-event="RESUME" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.hist" data-edge-target-path="moving.cleaning.hist" d="M 2300 1549.38 L 2411 1549.38 Q 2417 1549.38 2417 1543.38 L 2417 46 Q 2417 40 2411 40 L 68 40 Q 62 40 62 46 L 62 947.5 Q 62 953.5 68 953.5 L 201.31 953.5 Q 205 953.5 205 957.19 L 205 960.35 Q 205 964.04 208.69 964.04 L 374.4 964.04 Q 376 964.04 376 962.44 L 376 961.08 Q 376 959.48 377.6 959.48 L 387.74 959.48" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1201.5" y="28" width="76" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1239.5" y="40" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">RESUME</text>
+      </g>
+    </g>
+    <g class="transition-edge" data-edge-id="robotVacuum.stopped__SPOT_CLEAN__0" data-edge-source="robotVacuum.stopped" data-edge-source-path="stopped" data-edge-targets="robotVacuum.moving.cleaning.spot" data-edge-target-paths="moving.cleaning.spot" data-edge-event="SPOT_CLEAN" data-edge-order="0" data-edge-guard="" data-edge-actions="">
+      <path class="edge-path" data-edge-target="robotVacuum.moving.cleaning.spot" data-edge-target-path="moving.cleaning.spot" d="M 2300 1631.63 L 2309.75 1631.63 Q 2315 1631.63 2315 1636.88 L 2315 1778 Q 2315 1784 2309 1784 L 34 1784 Q 28 1784 28 1778 L 28 1108 Q 28 1102 34 1102 L 957.56 1102 Q 963.56 1102 963.56 1096 L 963.56 910.99 Q 963.56 904.99 969.56 904.99 L 992 904.99" fill="none" stroke="#475569" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-transition)" />
+      <g class="edge-label">
+        <rect class="edge-label-bg" x="1118" y="1772" width="107" height="24" rx="4" fill="#FFFFFF" fill-opacity="0.95" stroke="#CBD5E1" stroke-width="1" />
+        <text class="edge-label-text" x="1171.5" y="1784" text-anchor="middle" dominant-baseline="central" font-family="Arial, Helvetica, &quot;Liberation Sans&quot;, &quot;Nimbus Sans L&quot;, sans-serif" font-size="12" font-weight="600" fill="#0F172A">SPOT_CLEAN</text>
+      </g>
+    </g>
+  </g>
+</svg>

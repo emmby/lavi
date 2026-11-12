@@ -244,24 +244,26 @@ test.describe('FSM WASM Examples', () => {
     const vacuumPill = page.locator('#lblVacuum');
     const brushesPill = page.locator('#lblBrushes');
 
-    const patrolNode = page.locator('#state-patrol');
-    const spotNode = page.locator('#state-spot');
-    const movingCluster = page.locator('#state-moving');
-    const stairsNode = page.locator('#state-stairsAlert');
+    const patrolNode = page.locator('#statechartSvg g.state-node[data-state-path="moving.cleaning.patrol"]');
+    const spotNode = page.locator('#statechartSvg g.state-node[data-state-path="moving.cleaning.spot"]');
+    const movingCluster = page.locator('#statechartSvg g.state-node[data-state-path="moving"]');
+    const stairsNode = page.locator('#statechartSvg g.state-node[data-state-path="stopped.stairsAlert"]');
+    const spotTransitionEdge = page.locator('#statechartSvg g.transition-edge[data-edge-source-path="moving.cleaning.patrol"][data-edge-event="SPOT_CLEAN"]');
 
     // Initial state: moving.cleaning.patrol
     await expect(stateBadge).toHaveText('moving.cleaning.patrol');
     await expect(wheelsPill).toHaveText('Driving Forward');
     await expect(vacuumPill).toHaveText('Standard');
     await expect(brushesPill).toHaveText('Spinning');
-    await expect(movingCluster).toHaveClass(/active-parent/);
-    await expect(patrolNode).toHaveClass(/active-leaf/);
+    await expect(movingCluster).toHaveClass(/is-active/);
+    await expect(patrolNode).toHaveClass(/is-active/);
+    await expect(spotTransitionEdge).toHaveClass(/is-enabled/);
 
-    // Switch to Spot Clean -> moving.cleaning.spot
-    await page.locator('#btnSpotClean').click();
+    // Switch to Spot Clean by clicking the interactive transition edge directly in the SVG
+    await spotTransitionEdge.click({ force: true });
     await expect(stateBadge).toHaveText('moving.cleaning.spot');
     await expect(vacuumPill).toHaveText('Turbo Boost');
-    await expect(spotNode).toHaveClass(/active-leaf/);
+    await expect(spotNode).toHaveClass(/is-active/);
 
     // Bump Furniture -> moving.avoidingObstacle, then after 1.2s -> returns to moving.cleaning.spot via History (H)
     await page.locator('#btnBump').click();
@@ -275,7 +277,7 @@ test.describe('FSM WASM Examples', () => {
     await expect(wheelsPill).toHaveText('Off');
     await expect(vacuumPill).toHaveText('Off');
     await expect(brushesPill).toHaveText('Off');
-    await expect(stairsNode).toHaveClass(/active-leaf/);
+    await expect(stairsNode).toHaveClass(/is-active/);
 
     // Resume from Stopped -> returns to moving.cleaning.spot via History (H)
     await page.locator('#btnPauseResume').click();

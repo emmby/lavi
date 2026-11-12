@@ -32,7 +32,7 @@
         }
 
         .page-shell {
-            max-width: 1180px;
+            max-width: 1280px;
             margin: 0 auto;
         }
 
@@ -60,7 +60,7 @@
 
         .demo-grid {
             display: grid;
-            grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+            grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
             gap: 20px;
             align-items: stretch;
         }
@@ -252,7 +252,7 @@
         .btn-battery { background: #7c3aed; }
         .btn-dock { background: #475569; }
 
-        /* Right Panel: Mermaid SVG & JSON Flip */
+        /* Right Panel: Interactive xstate-diagram SVG & JSON Flip */
         .view-toggle {
             display: inline-flex;
             background: #f1f5f9;
@@ -279,6 +279,36 @@
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         }
 
+        .diagram-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .zoom-toggle-btn {
+            border: 1px solid var(--border);
+            background: #f8fafc;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .zoom-toggle-btn:hover {
+            color: var(--text);
+            background: #f1f5f9;
+        }
+
+        .zoom-toggle-btn.active {
+            background: var(--accent-soft);
+            color: #0369a1;
+            border-color: #7dd3fc;
+        }
+
         .state-badge {
             font-size: 12px;
             font-weight: 700;
@@ -293,11 +323,19 @@
             background: #f8fafc;
             border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 10px;
-            min-height: 290px;
+            padding: 8px;
+            min-height: 360px;
+            max-height: 480px;
             display: flex;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
+        }
+
+        .diagram-panel.zoomed {
+            display: block;
+            overflow: auto;
+            height: 460px;
         }
 
         .json-panel {
@@ -306,7 +344,7 @@
             color: #e2e8f0;
             border-radius: 10px;
             padding: 14px;
-            height: 290px;
+            height: 460px;
             width: 100%;
             max-width: 100%;
             overflow: auto;
@@ -318,73 +356,37 @@
             margin: 0;
         }
 
-        /* Mermaid Statechart SVG Styling & Live State Transitions */
+        /* xstate-diagram Interactive SVG Styling */
         #statechartSvg {
             width: 100%;
             height: auto;
-            max-height: 280px;
-            font-family: system-ui, -apple-system, sans-serif;
+            max-height: 460px;
+            display: block;
+            --xsd-transition-duration: 150ms;
         }
 
-        .mermaid-cluster rect {
-            fill: #ffffff;
-            stroke: #cbd5e1;
-            stroke-width: 1.5px;
-            transition: fill 0.2s ease, stroke 0.2s ease, stroke-width 0.2s ease;
+        .diagram-panel.zoomed #statechartSvg {
+            width: 1200px;
+            max-height: none;
         }
 
-        .mermaid-cluster text {
-            fill: #475569;
-            font-weight: 700;
-            transition: fill 0.2s ease;
+        #statechartSvg.is-alert {
+            --xsd-active-stroke: #dc2626;
+            --xsd-active-fill: #fef2f2;
+            --xsd-active-header-bg: #fecaca;
+            --xsd-active-title: #991b1b;
+            --xsd-active-divider: #fca5a5;
+            --xsd-active-glow: rgba(220, 38, 38, 0.25);
         }
 
-        .mermaid-cluster.active-parent > rect {
-            fill: #f0f9ff;
-            stroke: #0284c7;
-            stroke-width: 2.2px;
-        }
-
-        .mermaid-cluster.active-parent > text {
-            fill: #0369a1;
-        }
-
-        .mermaid-node rect,
-        .mermaid-node circle {
-            fill: #ffffff;
-            stroke: #94a3b8;
-            stroke-width: 1.5px;
-            transition: all 0.2s ease;
-        }
-
-        .mermaid-node text {
-            fill: #334155;
-            font-weight: 600;
-            transition: fill 0.2s ease;
-        }
-
-        .mermaid-node.active-leaf rect {
-            fill: #0284c7;
-            stroke: #0369a1;
-            stroke-width: 2px;
-            filter: drop-shadow(0 3px 6px rgba(2, 132, 199, 0.28));
-        }
-
-        .mermaid-node.active-leaf.alert-leaf rect {
-            fill: #dc2626;
-            stroke: #991b1b;
-            filter: drop-shadow(0 3px 6px rgba(220, 38, 38, 0.28));
-        }
-
-        .mermaid-node.active-leaf text {
-            fill: #ffffff;
-            font-weight: 700;
-        }
-
-        .mermaid-node.history-used circle {
-            fill: #fef3c7;
-            stroke: #d97706;
-            stroke-width: 2.2px;
+        .diagram-hint {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
         }
 
         .explanation-box {
@@ -466,122 +468,23 @@
                 </div>
             </section>
 
-            <!-- Right Card: Statechart Diagram (Mermaid SVG) & JSON Flip -->
+            <!-- Right Card: Interactive xstate-diagram & JSON Flip -->
             <section class="card">
                 <div>
                     <div class="card-header">
                         <div class="card-title">Statechart</div>
-                        <div class="view-toggle" role="tablist" aria-label="Statechart view">
-                            <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (Mermaid SVG)</button>
-                            <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
+                        <div class="diagram-controls">
+                            <button type="button" id="btnToggleZoom" class="zoom-toggle-btn" aria-pressed="false" title="Toggle zoomed view">Zoom 100%</button>
+                            <div class="view-toggle" role="tablist" aria-label="Statechart view">
+                                <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (xstate-diagram)</button>
+                                <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Mermaid SVG View -->
-                    <div id="diagramView" class="diagram-panel">
-                        <svg id="statechartSvg" viewBox="0 0 460 275" aria-label="Robot Vacuum Mermaid Statechart">
-                            <defs>
-                                <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b"/>
-                                </marker>
-                                <marker id="arrowHistory" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#d97706"/>
-                                </marker>
-                            </defs>
-
-                            <!-- Docked State -->
-                            <g id="state-docked" data-state="docked" class="mermaid-node">
-                                <rect x="12" y="16" width="96" height="38" rx="8"/>
-                                <text x="60" y="39" text-anchor="middle" font-size="11.5">⚡ Docked</text>
-                            </g>
-
-                            <!-- Moving Compound State -->
-                            <g id="state-moving" data-state="moving" class="mermaid-cluster">
-                                <rect x="136" y="8" width="314" height="202" rx="10"/>
-                                <text x="148" y="25" font-size="11">Moving (exit: turns off wheels, vacuum &amp; brushes)</text>
-
-                                <!-- Cleaning Nested Compound State -->
-                                <g id="state-cleaning" data-state="cleaning" class="mermaid-cluster">
-                                    <rect x="148" y="34" width="182" height="114" rx="8"/>
-                                    <text x="158" y="50" font-size="10.5">Cleaning (low battery → Dock)</text>
-
-                                    <!-- Patrol Leaf -->
-                                    <g id="state-patrol" data-state="patrol" class="mermaid-node">
-                                        <rect x="158" y="60" width="74" height="36" rx="6"/>
-                                        <text x="195" y="82" text-anchor="middle" font-size="11">Patrol</text>
-                                    </g>
-
-                                    <!-- Spot Clean Leaf -->
-                                    <g id="state-spot" data-state="spot" class="mermaid-node">
-                                        <rect x="244" y="60" width="76" height="36" rx="6"/>
-                                        <text x="282" y="82" text-anchor="middle" font-size="10.5">Spot Clean</text>
-                                    </g>
-
-                                    <!-- Shallow History Node (H) -->
-                                    <g id="state-hist" data-state="hist" class="mermaid-node history-used">
-                                        <circle cx="240" cy="124" r="12"/>
-                                        <text x="240" y="128" text-anchor="middle" font-size="10.5">H</text>
-                                    </g>
-                                </g>
-
-                                <!-- Avoiding Obstacle Leaf -->
-                                <g id="state-avoidingObstacle" data-state="avoidingObstacle" class="mermaid-node">
-                                    <rect x="348" y="56" width="90" height="46" rx="6"/>
-                                    <text x="393" y="75" text-anchor="middle" font-size="10.5">Avoiding</text>
-                                    <text x="393" y="90" text-anchor="middle" font-size="10">Obstacle</text>
-                                </g>
-
-                                <!-- Returning to Dock Leaf -->
-                                <g id="state-returningToDock" data-state="returningToDock" class="mermaid-node">
-                                    <rect x="148" y="164" width="182" height="34" rx="6"/>
-                                    <text x="239" y="185" text-anchor="middle" font-size="11">Returning to Dock</text>
-                                </g>
-                            </g>
-
-                            <!-- Stopped Compound State -->
-                            <g id="state-stopped" data-state="stopped" class="mermaid-cluster">
-                                <rect x="12" y="114" width="102" height="148" rx="10"/>
-                                <text x="22" y="131" font-size="10.5">Stopped</text>
-
-                                <!-- Paused Leaf -->
-                                <g id="state-paused" data-state="paused" class="mermaid-node">
-                                    <rect x="22" y="142" width="82" height="36" rx="6"/>
-                                    <text x="63" y="164" text-anchor="middle" font-size="10.5">⏸ Paused</text>
-                                </g>
-
-                                <!-- Stairs Alert Leaf -->
-                                <g id="state-stairsAlert" data-state="stairsAlert" class="mermaid-node alert-leaf">
-                                    <rect x="22" y="192" width="82" height="54" rx="6"/>
-                                    <text x="63" y="214" text-anchor="middle" font-size="10.5">⚠️ Stairs</text>
-                                    <text x="63" y="229" text-anchor="middle" font-size="9.5">Safety Stop</text>
-                                </g>
-                            </g>
-
-                            <!-- Transition Arrows & Labels -->
-                            <!-- Docked <-> Moving -->
-                            <path d="M 108 28 L 136 28" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <path d="M 148 181 L 125 181 L 125 42 L 108 42" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
-
-                            <!-- Patrol <-> Spot Clean -->
-                            <path d="M 232 74 L 244 74" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow)"/>
-                            <path d="M 244 84 L 232 84" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow)"/>
-
-                            <!-- Cleaning -> Avoiding Obstacle (Bump) -->
-                            <path d="M 330 76 L 348 76" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <text x="339" y="51" text-anchor="middle" fill="#64748b" font-size="8.5">bump</text>
-
-                            <!-- Avoiding Obstacle -> History (H) -->
-                            <path d="M 393 102 L 393 124 L 254 124" fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4,2" marker-end="url(#arrowHistory)"/>
-                            <text x="393" y="138" text-anchor="middle" fill="#b45309" font-size="8.5">after 1.2s → H</text>
-
-                            <!-- Cleaning -> Returning to Dock -->
-                            <path d="M 239 148 L 239 164" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-                            <!-- Moving <-> Stopped -->
-                            <path d="M 136 200 L 114 200" fill="none" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrow)"/>
-                            <path d="M 114 156 L 136 156" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-                        </svg>
-                    </div>
+                    <!-- Interactive xstate-diagram SVG View -->
+                    <div id="diagramView" class="diagram-panel"></div>
+                    <div class="diagram-hint">Click any highlighted transition arrow or internal event in the diagram to trigger it.</div>
 
                     <!-- Machine JSON View (Flipped via button) -->
                     <pre id="jsonView" class="json-panel"></pre>
@@ -597,7 +500,13 @@
     <script type="module">
         import init, { setup, createActor, assign } from '../lavi-wasm/pkg/lavi.js';
 
-        await init();
+        const [, svgText] = await Promise.all([
+            init(),
+            fetch('./robot_vacuum.svg').then((res) => {
+                if (!res.ok) throw new Error(`Failed to load robot_vacuum.svg (${res.status})`);
+                return res.text();
+            })
+        ]);
 
         // 1. Declarative XState v5 Machine Definition
         const machineDef = {
@@ -775,14 +684,30 @@
         // Toggle between Diagram SVG and Machine JSON
         const btnShowDiagram = document.getElementById('btnShowDiagram');
         const btnShowJson = document.getElementById('btnShowJson');
+        const btnToggleZoom = document.getElementById('btnToggleZoom');
         const diagramView = document.getElementById('diagramView');
+        diagramView.innerHTML = svgText;
+        const statechartSvg = diagramView.querySelector('svg');
+        statechartSvg.id = 'statechartSvg';
+        statechartSvg.setAttribute('aria-label', 'Robot Vacuum Interactive Statechart');
+
+        btnToggleZoom.addEventListener('click', () => {
+            const zoomed = diagramView.classList.toggle('zoomed');
+            btnToggleZoom.classList.toggle('active', zoomed);
+            btnToggleZoom.setAttribute('aria-pressed', String(zoomed));
+            btnToggleZoom.textContent = zoomed ? 'Fit View' : 'Zoom 100%';
+            if (diagramView.style.display !== 'none') {
+                diagramView.style.display = zoomed ? 'block' : 'flex';
+            }
+        });
 
         btnShowDiagram.addEventListener('click', () => {
             btnShowDiagram.classList.add('active');
             btnShowDiagram.setAttribute('aria-selected', 'true');
             btnShowJson.classList.remove('active');
             btnShowJson.setAttribute('aria-selected', 'false');
-            diagramView.style.display = 'flex';
+            diagramView.style.display = diagramView.classList.contains('zoomed') ? 'block' : 'flex';
+            btnToggleZoom.style.display = '';
             jsonViewEl.style.display = 'none';
         });
 
@@ -792,6 +717,7 @@
             btnShowDiagram.classList.remove('active');
             btnShowDiagram.setAttribute('aria-selected', 'false');
             diagramView.style.display = 'none';
+            btnToggleZoom.style.display = 'none';
             jsonViewEl.style.display = 'block';
         });
 
@@ -866,17 +792,35 @@
             const lblExplanation = document.getElementById('lblExplanation');
             lblExplanation.innerHTML = `<strong>What's happening:</strong> ${STATE_NOTES[leaf] || ''}`;
 
-            // 6. Highlight active nodes in the Mermaid SVG
-            document.querySelectorAll('#statechartSvg [data-state]').forEach((node) => {
-                const stateKey = node.getAttribute('data-state');
-                node.classList.remove('active-parent', 'active-leaf');
-                if (parts.includes(stateKey)) {
-                    if (stateKey === leaf) {
-                        node.classList.add('active-leaf');
-                    } else {
-                        node.classList.add('active-parent');
-                    }
-                }
+            // 6. Highlight active states and enabled/disabled transitions in xstate-diagram SVG
+            const activePaths = new Set();
+            for (let i = 0; i < parts.length; i++) {
+                activePaths.add(parts.slice(0, i + 1).join('.'));
+            }
+
+            statechartSvg.classList.toggle('is-alert', leaf === 'stairsAlert');
+
+            statechartSvg.querySelectorAll('g.state-node[data-state-path]').forEach((node) => {
+                const path = node.getAttribute('data-state-path');
+                node.classList.toggle('is-active', activePaths.has(path));
+            });
+
+            statechartSvg.querySelectorAll('g.transition-edge[data-edge-source-path]').forEach((edge) => {
+                const sourcePath = edge.getAttribute('data-edge-source-path');
+                const eventName = edge.getAttribute('data-edge-event');
+                const isActiveSource = activePaths.has(sourcePath);
+                const canFire = isActiveSource && eventName && !eventName.startsWith('after(') && snap.can({ type: eventName });
+                edge.classList.toggle('is-enabled', Boolean(canFire));
+                edge.classList.toggle('is-disabled', Boolean(isActiveSource && eventName && !eventName.startsWith('after(') && !canFire));
+            });
+
+            statechartSvg.querySelectorAll('.internal-transition[data-internal-event]').forEach((row) => {
+                const stateNode = row.closest('g.state-node[data-state-path]');
+                const statePath = stateNode ? stateNode.getAttribute('data-state-path') : '';
+                const eventName = row.getAttribute('data-internal-event');
+                const isActiveSource = activePaths.has(statePath);
+                const canFire = isActiveSource && eventName && snap.can({ type: eventName });
+                row.classList.toggle('is-enabled', Boolean(canFire));
             });
         }
 
@@ -962,44 +906,78 @@
         }
         updateCrumbStats();
 
+        function flashTriggeredEdge(eventName, sourcePaths) {
+            statechartSvg.querySelectorAll('g.transition-edge[data-edge-event]').forEach((edge) => {
+                if (edge.getAttribute('data-edge-event') === eventName &&
+                    sourcePaths.has(edge.getAttribute('data-edge-source-path'))) {
+                    edge.classList.remove('is-triggered');
+                    void edge.offsetWidth;
+                    edge.classList.add('is-triggered');
+                    setTimeout(() => edge.classList.remove('is-triggered'), 550);
+                }
+            });
+        }
+
+        function triggerEvent(eventName) {
+            const snap = actor.getSnapshot();
+            if (!snap.can({ type: eventName })) return;
+
+            const parts = extractStateParts(snap.value);
+            const activePaths = new Set();
+            for (let i = 0; i < parts.length; i++) {
+                activePaths.add(parts.slice(0, i + 1).join('.'));
+            }
+
+            if (eventName === 'SPOT_CLEAN') {
+                robot.spotCenter = { x: robot.x, y: robot.y };
+                robot.spotAngle = 0;
+            } else if (eventName === 'STAIRS_DETECTED') {
+                robot.x = STAIRS_X - robot.radius - 2;
+                robot.angle = 0;
+            }
+
+            flashTriggeredEdge(eventName, activePaths);
+            actor.send({ type: eventName });
+            updateUI();
+        }
+
+        // Clickable transitions directly inside the xstate-diagram SVG
+        statechartSvg.addEventListener('click', (e) => {
+            const edge = e.target.closest('g.transition-edge.is-enabled[data-edge-event]');
+            if (edge) {
+                triggerEvent(edge.getAttribute('data-edge-event'));
+                return;
+            }
+            const internalRow = e.target.closest('.internal-transition.is-enabled[data-internal-event]');
+            if (internalRow) {
+                triggerEvent(internalRow.getAttribute('data-internal-event'));
+            }
+        });
+
         // Button event handlers
         document.getElementById('btnPauseResume').addEventListener('click', () => {
             const parts = extractStateParts(actor.getSnapshot().value);
-            if (parts[0] === 'moving') {
-                actor.send({ type: 'PAUSE' });
-            } else {
-                actor.send({ type: 'RESUME' });
-            }
-            updateUI();
+            triggerEvent(parts[0] === 'moving' ? 'PAUSE' : 'RESUME');
         });
 
         document.getElementById('btnSpotClean').addEventListener('click', () => {
-            robot.spotCenter = { x: robot.x, y: robot.y };
-            robot.spotAngle = 0;
-            actor.send({ type: 'SPOT_CLEAN' });
-            updateUI();
+            triggerEvent('SPOT_CLEAN');
         });
 
         document.getElementById('btnBump').addEventListener('click', () => {
-            actor.send({ type: 'BUMP' });
-            updateUI();
+            triggerEvent('BUMP');
         });
 
         document.getElementById('btnStairs').addEventListener('click', () => {
-            robot.x = STAIRS_X - robot.radius - 2;
-            robot.angle = 0;
-            actor.send({ type: 'STAIRS_DETECTED' });
-            updateUI();
+            triggerEvent('STAIRS_DETECTED');
         });
 
         document.getElementById('btnLowBattery').addEventListener('click', () => {
-            actor.send({ type: 'LOW_BATTERY' });
-            updateUI();
+            triggerEvent('LOW_BATTERY');
         });
 
         document.getElementById('btnDock').addEventListener('click', () => {
-            actor.send({ type: 'DOCK' });
-            updateUI();
+            triggerEvent('DOCK');
         });
 
         // Periodic battery & timer tick (every 100ms)
