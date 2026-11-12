@@ -472,7 +472,7 @@ System.Diagnostics.Debug.Assert(machine.GetSnapshot().Matches("yellow"));
 | **Shallow & Deep History** | ✅ | ✅ | ✅ *(Plugin/map)* | ✅ | ✅ | — | Shallow only |
 | **Declarative `after` & `SimulatedClock`** | ✅ | ✅ | Manual² | ✅ | Manual² | — | — |
 | **Snapshot Save / Restore** | ✅ | ✅ | — | — | — | — | — |
-| **XState v5 Conformance** | [◐ Core HSM (16/19 suites, 0 feature skips)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
+| **XState v5 Conformance** | [◐ Core HSM (16/19 suites)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
 
 *¹ Via QP's manual "Orthogonal Component" pattern. ² Via user-managed timer events rather than declarative `after` delays. ³ The 16/19 suites rating reflects all 16 onboarded XState 5 test suites running with 0 feature skips (`category: unimplemented-feature`); retained skips are strictly limited to non-JS host runtime constraints or upstream-preserved skips.*
 
