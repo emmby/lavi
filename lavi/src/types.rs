@@ -411,6 +411,8 @@ pub type DelayFunction = Rc<dyn Fn(&Value, &Value) -> u64>;
 pub type LoggerFunction = Rc<dyn Fn(&Option<String>, &Value)>;
 pub type WarnFunction = Rc<dyn Fn(&str)>;
 pub type OutputResolver = Rc<dyn Fn(&Value, &Value) -> Value>;
+pub type InvokeStartFunction = Rc<dyn Fn(&str, &Value, &Option<Value>, &Value, &Value)>;
+pub type InvokeStopFunction = Rc<dyn Fn(&str)>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InspectedTransition {
@@ -1345,6 +1347,71 @@ pub enum Action {
     Cancel(CancelAction),
     Log(LogAction),
     RaiseInvalid(String),
+}
+
+impl Action {
+    pub fn to_value(&self) -> Value {
+        let mut map = IndexMap::new();
+        match self {
+            Action::Named(name) => {
+                map.insert("type".to_string(), Value::String(name.clone()));
+            }
+            Action::Assign(assign) => {
+                map.insert("type".to_string(), Value::String(assign.action_type.clone()));
+                let mut p_map = IndexMap::new();
+                p_map.insert("assignment".to_string(), assign.assignment.clone());
+                map.insert("params".to_string(), Value::Object(p_map));
+            }
+            Action::Generic(gen) => {
+                map.insert("type".to_string(), Value::String(gen.action_type.clone()));
+                if let Some(ref params) = gen.params {
+                    map.insert("params".to_string(), params.clone());
+                }
+            }
+            Action::Raise(ev) => {
+                map.insert("type".to_string(), Value::String("xstate.raise".to_string()));
+                let mut p_map = IndexMap::new();
+                p_map.insert("event".to_string(), ev.clone());
+                map.insert("params".to_string(), Value::Object(p_map));
+            }
+            Action::DelayedRaise(dra) => {
+                map.insert("type".to_string(), Value::String("xstate.raise".to_string()));
+                let mut p_map = IndexMap::new();
+                p_map.insert("event".to_string(), dra.event.clone());
+                match &dra.delay {
+                    Delay::Literal(ms) => {
+                        p_map.insert("delay".to_string(), Value::Number(*ms as f64));
+                    }
+                    Delay::Named(name) => {
+                        p_map.insert("delay".to_string(), Value::String(name.clone()));
+                    }
+                }
+                if let Some(ref id) = dra.id {
+                    p_map.insert("id".to_string(), Value::String(id.clone()));
+                }
+                map.insert("params".to_string(), Value::Object(p_map));
+            }
+            Action::Cancel(cancel) => {
+                map.insert("type".to_string(), Value::String("xstate.cancel".to_string()));
+                let mut p_map = IndexMap::new();
+                p_map.insert("sendId".to_string(), Value::String(cancel.send_id.clone()));
+                map.insert("params".to_string(), Value::Object(p_map));
+            }
+            Action::Log(log) => {
+                map.insert("type".to_string(), Value::String("xstate.log".to_string()));
+                let mut p_map = IndexMap::new();
+                p_map.insert("value".to_string(), log.value.clone());
+                if let Some(ref lbl) = log.label {
+                    p_map.insert("label".to_string(), Value::String(lbl.clone()));
+                }
+                map.insert("params".to_string(), Value::Object(p_map));
+            }
+            Action::RaiseInvalid(s) => {
+                map.insert("type".to_string(), Value::String(s.clone()));
+            }
+        }
+        Value::Object(map)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

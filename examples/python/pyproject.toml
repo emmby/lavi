@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lavi-example-python"
-version = "0.3.0"
+version = "0.4.0"
 description = "Self-contained Python usage example for the Lavi statechart runtime."
 requires-python = ">=3.8"
 dependencies = [

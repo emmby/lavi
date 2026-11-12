@@ -276,4 +276,73 @@ class KotlinMachineTest {
             }
         }
     }
+
+    @Test
+    fun pureTransitionsOutputAndInvokeCallbacks() {
+        val json = """
+            {
+              "id": "td21Kt",
+              "initial": "active",
+              "context": { "total": 12 },
+              "states": {
+                "active": {
+                  "initial": "working",
+                  "invoke": { "id": "ktWorker", "src": "ktTask", "input": { "step": 7 } },
+                  "states": {
+                    "working": {
+                      "entry": ["logWorking"],
+                      "on": { "DONE_LEAF": "leafFinal" }
+                    },
+                    "leafFinal": {
+                      "type": "final",
+                      "output": { "subStatus": "ktLeafDone" }
+                    }
+                  },
+                  "on": { "FINISH_ALL": "completed" }
+                },
+                "completed": { "type": "final" }
+              }
+            }
+        """.trimIndent()
+
+        val started = mutableListOf<String>()
+        val stopped = mutableListOf<String>()
+
+        Machine(json).use { machine ->
+            machine.onOutputResolver("") { ctx, _ ->
+                val total = ctx["total"].asLongOrNull() ?: 0L
+                Value.fromJson("""{"tripled":${total * 3}}""")
+            }
+            machine.onInvoke(
+                onStart = { id, src, inp, _, _ ->
+                    started.add("$id:${src.asStringOrNull()}:${inp["step"].asLongOrNull()}")
+                },
+                onStop = { id ->
+                    stopped.add(id)
+                }
+            )
+
+            val initSnap = machine.initialTransition()
+            assertEquals("working", initSnap["value"]["active"].asStringOrNull())
+            assertTrue(started.isEmpty())
+
+            machine.start()
+            assertEquals(listOf("ktWorker:ktTask:7"), started)
+
+            val liveSnap = machine.getSnapshot()
+            val nextPure = machine.transitionPure(liveSnap, """{"type":"FINISH_ALL"}""")
+            assertEquals("completed", nextPure["value"].asStringOrNull())
+            assertTrue(machine.matches("active.working"))
+            assertTrue(stopped.isEmpty())
+
+            assertTrue(machine.getFinalLeafOutput().isNull)
+            machine.send("DONE_LEAF")
+            assertEquals("ktLeafDone", machine.getFinalLeafOutput()["subStatus"].asStringOrNull())
+
+            machine.send("FINISH_ALL")
+            assertTrue(machine.isDone)
+            assertEquals(listOf("ktWorker"), stopped)
+            assertEquals(36L, machine.getOutput()["tripled"].asLongOrNull())
+        }
+    }
 }

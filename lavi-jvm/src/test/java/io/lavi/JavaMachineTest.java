@@ -285,4 +285,78 @@ class JavaMachineTest {
             assertEquals("success", actionTag.get());
         }
     }
+
+    @Test
+    void pureTransitionsOutputAndInvokeCallbacks() {
+        String json = "{\n" +
+            "  \"id\": \"td21Java\",\n" +
+            "  \"initial\": \"active\",\n" +
+            "  \"context\": { \"total\": 25 },\n" +
+            "  \"states\": {\n" +
+            "    \"active\": {\n" +
+            "      \"initial\": \"working\",\n" +
+            "      \"invoke\": { \"id\": \"javaWorker\", \"src\": \"workerTask\", \"input\": { \"factor\": 4 } },\n" +
+            "      \"states\": {\n" +
+            "        \"working\": {\n" +
+            "          \"entry\": [\"logWorking\"],\n" +
+            "          \"on\": { \"DONE_LEAF\": \"leafFinal\" }\n" +
+            "        },\n" +
+            "        \"leafFinal\": {\n" +
+            "          \"type\": \"final\",\n" +
+            "          \"output\": { \"subStatus\": \"leafDone\" }\n" +
+            "        }\n" +
+            "      },\n" +
+            "      \"on\": { \"FINISH_ALL\": \"completed\" }\n" +
+            "    },\n" +
+            "    \"completed\": { \"type\": \"final\" }\n" +
+            "  }\n" +
+            "}";
+
+        AtomicReference<String> startedInvoke = new AtomicReference<String>();
+        AtomicReference<String> stoppedInvoke = new AtomicReference<String>();
+
+        try (Machine m = new Machine(json)) {
+            m.registerOutputResolver("", (ctx, evt) -> {
+                long total = ctx.getProperty("total").asLong().orElse(0L);
+                return Value.fromJson("{\"doubled\":" + (total * 2) + "}");
+            });
+
+            m.registerInvokeCallbacks(
+                (id, src, inp, ctx, evt) -> {
+                    long factor = inp.getProperty("factor").asLong().orElse(0L);
+                    startedInvoke.set(id + ":" + src.asString().orElse("") + ":" + factor);
+                },
+                id -> stoppedInvoke.set(id)
+            );
+
+            // Pure initialTransition before start()
+            Value initSnap = m.initialTransition();
+            assertEquals("working", initSnap.getProperty("value").getProperty("active").asString().orElse(""));
+            assertNull(startedInvoke.get());
+
+            // Start live machine -> triggers invoke start
+            m.start();
+            assertEquals("javaWorker:workerTask:4", startedInvoke.get());
+
+            // Pure transition from live snapshot + event
+            String liveSnap = m.getSnapshot();
+            Value nextPure = m.transitionPure(liveSnap, "{\"type\":\"FINISH_ALL\"}");
+            assertEquals("completed", nextPure.getProperty("value").asString().orElse(""));
+            assertTrue(m.matches("active.working"));
+            assertNull(stoppedInvoke.get());
+
+            // Final leaf output
+            assertTrue(m.getFinalLeafOutput().isNull());
+            assertNull(m.getFinalLeafOutputJson());
+            m.send("DONE_LEAF");
+            assertTrue(m.matches("active.leafFinal"));
+            assertEquals("leafDone", m.getFinalLeafOutput().getProperty("subStatus").asString().orElse(""));
+
+            // Finish machine -> stops invoke & computes dynamic root output
+            m.send("FINISH_ALL");
+            assertTrue(m.isDone());
+            assertEquals("javaWorker", stoppedInvoke.get());
+            assertEquals(50L, m.getOutput().getProperty("doubled").asLong().orElse(0L));
+        }
+    }
 }

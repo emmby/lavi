@@ -58,13 +58,16 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(pages).toContain('github.event.workflow_run.head_sha');
   });
 
-  it('provides RELEASING.md and scripts/setup-maven-gpg.sh for registry onboarding', () => {
+  it('provides RELEASING.md, CHANGELOG.md, and scripts/setup-maven-gpg.sh for registry onboarding', () => {
     const releasingPath = path.join(rootDir, 'RELEASING.md');
+    const changelogPath = path.join(rootDir, 'CHANGELOG.md');
     const gpgScriptPath = path.join(rootDir, 'scripts', 'setup-maven-gpg.sh');
     expect(fs.existsSync(releasingPath)).toBe(true);
+    expect(fs.existsSync(changelogPath)).toBe(true);
     expect(fs.existsSync(gpgScriptPath)).toBe(true);
 
     const releasing = fs.readFileSync(releasingPath, 'utf8');
+    expect(releasing).toContain('CHANGELOG.md');
     expect(releasing).toContain('crates.io');
     expect(releasing).toContain('PyPI');
     expect(releasing).toContain('lavi-fsm');
@@ -75,5 +78,12 @@ describe('GitHub Actions release pipeline & documentation', () => {
     expect(releasing).toContain('Arduino Library Manager');
     expect(releasing).toContain('ARDUINO_DEPLOY_KEY');
     expect(releasing).toContain('emmby/lavi-arduino');
+
+    const changelog = fs.readFileSync(changelogPath, 'utf8');
+    expect(changelog).toContain('## [0.4.0]');
+    expect(changelog).toContain('## [0.3.0]');
+    expect(changelog).toContain('## [0.2.0]');
+    expect(changelog).toContain('## [0.1.0]');
   });
 });
+

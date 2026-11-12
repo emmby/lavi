@@ -25,16 +25,16 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
    - Bounded $O(1)$ CPU call-stack parsing and traversal via explicit heap work-stacks (`Vec`), fitting comfortably inside an 8 KB ESP32 FreeRTOS `loopTask` stack.
    - Zero-copy `const char*` JSON configuration in C/C++ and bounded runtime memory (pre-start events are safely dropped rather than queued on the heap).
 3. **Idiomatic Target-Language APIs**:
-   - **JS / TS / React / React Native (`lavi-fsm`)**: `createMachine`, `createActor`, `setup`, `assign`, `isMachineSnapshot`, `inspect` / `actor.system.inspect`, `SimulatedClock`, and `lavi-fsm/react` (`useMachine`, `useActor`, `useActorRef`, `useSelector`).
-   - **C (`lavi.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`) and function pointers (`fsm_register_action`, `fsm_register_guard`, `fsm_register_inspector`) with `void* user_data`.
-   - **C++11 (`lavi.hpp`)**: Move-safe RAII classes (`lavi::Machine`, `lavi::SimulatedClock`, `lavi::Value`) supporting both zero-allocation function pointers and `std::function` lambdas.
+   - **JS / TS / React / React Native (`lavi-fsm`)**: `createMachine`, `createActor`, `setup`, `assign`, `initialTransition`, `transition`, `isMachineSnapshot`, `inspect` / `actor.system.inspect`, `SimulatedClock`, and `lavi-fsm/react` (`useMachine`, `useActor`, `useActorRef`, `useSelector`).
+   - **C (`lavi.h`)**: Opaque handles (`MachineContext*`, `SimulatedClock*`, `const fsm_value_t*`), pure transitions (`fsm_initial_transition_json`, `fsm_transition_pure_json`), and function pointers (`fsm_register_action`, `fsm_register_guard`, `fsm_register_output_resolver`, `fsm_register_invoke_callbacks`, `fsm_register_inspector`) with `void* user_data`.
+   - **C++11 (`lavi.hpp`)**: Move-safe RAII classes (`lavi::Machine`, `lavi::SimulatedClock`, `lavi::Value`) with pure transitions (`initialTransitionJson`, `transitionPureJson`), final leaf/root output (`getOutput`, `getFinalLeafOutput`, `registerOutputResolver`), invoke lifecycle hooks (`registerInvokeCallbacks`), and both zero-allocation function pointers and `std::function` lambdas.
    - **Rust (`lavi`)**: Strongly-typed `#![no_std]` `RuntimeMachine`, `MachineDefinition`, `InspectEvent`, and `SimulatedClock`.
-   - **Python (`lavi-py`)**: Idiomatic `Machine`, `SimulatedClock`, `Value`, decorators (`@machine.action`, `@machine.guard`, `@machine.inspector`), context managers (`with Machine(...)`), and dict/list payload interop.
-   - **Java (`lavi-jvm`)**: `AutoCloseable` `Machine` and `SimulatedClock`, fluent registration (`registerAction`, `registerGuard`, `registerInspector`), and zero-GC-leak callback mechanics.
-   - **Kotlin (`lavi-jvm`)**: Trailing lambdas (`onAction`, `onGuard`, `onClock`, `onInspect`), operator indexing (`ctx["key"]`), and `Map<String, Any?>` event payload support.
-   - **Swift (`lavi-swift`)**: ARC-managed `Machine` and `SimulatedClock`, subscript value access (`ctx["key"]`), trailing closures (`registerAction`, `registerGuard`, `registerDelay`, `registerInspector`), and `[String: Any]` payload support.
-   - **Dart / Flutter (`lavi-dart`)**: `Finalizer`-backed `Machine` and `SimulatedClock` with deterministic `.dispose()`, `operator []` value inspection, `registerInspector`, and `Map<String, Object?>` payload support.
-   - **C# / .NET (`lavi-csharp`)**: `IDisposable` `Machine` and `SimulatedClock` (`using var`), fluent overloaded registration (`RegisterAction`, `RegisterGuard`, `RegisterDelay`), XState v5 `MachineSnapshot` (`GetSnapshot()`, `Subscribe`), `TimeSpan` delays, `TryGet*` / `AsInt32` `Value` inspection, and anonymous-object payload support.
+   - **Python (`lavi-py`)**: Idiomatic `Machine`, `SimulatedClock`, `Value`, decorators (`@machine.action`, `@machine.guard`, `@machine.output_resolver`, `@machine.inspector`), pure transitions (`initial_transition`, `transition_pure`), invoke hooks (`register_invoke_callbacks`), context managers (`with Machine(...)`), and dict/list payload interop.
+   - **Java (`lavi-jvm`)**: `AutoCloseable` `Machine` and `SimulatedClock`, fluent registration (`registerAction`, `registerGuard`, `registerOutputResolver`, `registerInvokeCallbacks`, `registerInspector`), pure transitions (`initialTransition`, `transitionPure`), and zero-GC-leak callback mechanics.
+   - **Kotlin (`lavi-jvm`)**: Trailing lambdas (`onAction`, `onGuard`, `onOutputResolver`, `onInvoke`, `onClock`, `onInspect`), operator indexing (`ctx["key"]`), and `Map<String, Any?>` event payload support.
+   - **Swift (`lavi-swift`)**: ARC-managed `Machine` and `SimulatedClock`, subscript value access (`ctx["key"]`), trailing closures (`registerAction`, `registerGuard`, `registerDelay`, `registerOutputResolver`, `registerInvokeCallbacks`, `registerInspector`), pure transitions (`initialTransition`, `transitionPure`), and `[String: Any]` payload support.
+   - **Dart / Flutter (`lavi-dart`)**: `Finalizer`-backed `Machine` and `SimulatedClock` with deterministic `.dispose()`, `operator []` value inspection, `registerOutputResolver`, `registerInvokeCallbacks`, `registerInspector`, `initialTransition`, `transitionPure`, and `Map<String, Object?>` payload support.
+   - **C# / .NET (`lavi-csharp`)**: `IDisposable` `Machine` and `SimulatedClock` (`using var`), fluent overloaded registration (`RegisterAction`, `RegisterGuard`, `RegisterDelay`, `RegisterOutputResolver`, `RegisterInvokeCallbacks`), pure transitions (`InitialTransition`, `TransitionPure`), XState v5 `MachineSnapshot` (`GetSnapshot()`, `Subscribe`), `TimeSpan` delays, `TryGet*` / `AsInt32` `Value` inspection, and anonymous-object payload support.
 
 ## Interactive WASM Demos
 
@@ -58,6 +58,7 @@ Hierarchical statecharts replace fragile `if/else` boolean-flag logic with decla
 * **`lavi-csharp`**: C# / .NET 8.0 P/Invoke library (`Lavi.sln`, `Lavi/Lavi.csproj`) wrapping `liblavi_c_cpp.{dylib,so,dll}` with idiomatic .NET and XState v5 snapshot APIs.
 * **`scripts/build-release-natives.mjs`**: Single-host cross-compilation plan generator, Android AAR packager (16 KB page-alignment check), Apple `LaviFFI.xcframework.zip` packager, and unified Arduino IDE / PlatformIO `.zip` packager (`dist/embedded/lavi-embedded.zip`).
 * **`tests/` & `tests/upstream/`**: XState 5 conformance test suite and pinned upstream reference fixtures verified by `scripts/check-conformance-tests.mjs`.
+* **[`CHANGELOG.md`](./CHANGELOG.md)**: Version history and release notes across all tagged releases.
 * **`AGENTS.md` / `PROCESS.md` / `TECH_DEBT.md`**: Agent engineering guidelines, autonomous swarming workflow, and legacy cleanup queue.
 
 ## Building & Testing
@@ -463,7 +464,7 @@ System.Diagnostics.Debug.Assert(machine.GetSnapshot().Matches("yellow"));
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **License** | MIT | MIT | MIT / Apache-2.0 | Commercial | GPLv3 / Comm. | MIT / Apache-2.0 | Boost |
 | **Execution Model** | Runtime Engine | Runtime Engine | Code Generator | Code Generator | Framework + Codegen | Rust Macro | C++ Template |
-| **Visual Editor** | Stately Studio | Stately Studio | draw.io / PlantUML | itemis IDE | QM Modeler | — | — |
+| **Visual Editor / Diagrams** | Stately Studio / [`xstate-diagram`](https://github.com/emmby/xstate-diagram) | Stately Studio / [`xstate-diagram`](https://github.com/emmby/xstate-diagram) | draw.io / PlantUML | itemis IDE | QM Modeler | — | — |
 | **Languages** | Rust, JS/TS, C, C++, Py, Java, Kotlin, Swift, Dart, C# | JS, TS | C, C++, C#, Py, JS/TS | C, C++, Java, Py, TS, C# | C, C++ | Rust | C++ |
 | **Embedded Support** | `#![no_std]` + `alloc` ($O(1)$ stack) | — | Zero-heap | Zero-heap | Zero-heap | Zero-heap | Zero-heap |
 | **Runtime / OTA Config** | ✅ | ✅ | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* | — *(Compile-time)* |
@@ -474,6 +475,23 @@ System.Diagnostics.Debug.Assert(machine.GetSnapshot().Matches("yellow"));
 | **XState v5 Conformance** | [◐ Core HSM (16/19 suites, 0 feature skips)](./XSTATE_5_FEATURES.md) | Reference | — | — | — | — | — |
 
 *¹ Via QP's manual "Orthogonal Component" pattern. ² Via user-managed timer events rather than declarative `after` delays. ³ The 16/19 suites rating reflects all 16 onboarded XState 5 test suites running with 0 feature skips (`category: unimplemented-feature`); retained skips are strictly limited to non-JS host runtime constraints or upstream-preserved skips.*
+
+## Visualizing Statecharts with `xstate-diagram`
+
+Lavi works seamlessly with **[`xstate-diagram`](https://github.com/emmby/xstate-diagram)** to render your Lavi JSON machine definitions or `lavi-fsm` / XState v5 `createMachine(...)` configs into publication-quality SVG Harel statechart diagrams—via CLI, programmatic API, GitHub Actions, or in the browser:
+
+- **CLI (from JSON or `.ts`/`.js`):**
+  ```bash
+  npx xstate-diagram machine.json -o diagram.svg
+  ```
+- **GitHub Action (auto-update diagrams in CI):**
+  ```yaml
+  - uses: emmby/xstate-diagram@v0.2.0
+    with:
+      input: machine.json
+      output: docs/diagram.svg
+  ```
+- **Interactive Playground:** Paste any Lavi machine config into **[emmby.github.io/xstate-diagram](https://emmby.github.io/xstate-diagram/)** to inspect and export its SVG statechart live.
 
 ## For Contributors: Agentic Development & Parallel Swarming
 

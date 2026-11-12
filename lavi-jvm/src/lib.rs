@@ -107,7 +107,17 @@ impl MachinePeer {
         }
         let guard = self.machine.borrow();
         match guard.as_ref() {
-            Some(m) => Ok(f(m)),
+            Some(m) => {
+                let prev_active = self.active_machine.get();
+                if prev_active.is_null() {
+                    self.active_machine.set(m as *const lavi::RuntimeMachine);
+                }
+                let res = f(m);
+                if prev_active.is_null() {
+                    self.active_machine.set(std::ptr::null());
+                }
+                Ok(res)
+            }
             None => Err("Machine is closed"),
         }
     }
@@ -1186,6 +1196,337 @@ pub extern "system" fn Java_io_lavi_Machine_nativeGetContext(
         }
     });
     res.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeRegisterOutputResolver(
+    mut env: JNIEnv,
+    _class: JClass,
+    machine_handle: jlong,
+    state_path: JString,
+) {
+    let m_peer = unsafe { &*(machine_handle as *const MachinePeer) };
+    if m_peer.is_closed.get() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Machine is closed");
+        return;
+    }
+
+    let path_str: String = match env.get_string(&state_path) {
+        Ok(s) => s.into(),
+        Err(_) => return,
+    };
+
+    let peer_ptr = machine_handle as *const MachinePeer;
+    let path_clone = path_str.clone();
+
+    let resolver_fn: lavi::OutputResolver = alloc::rc::Rc::new(move |ctx, evt| {
+        let peer = unsafe { &*peer_ptr };
+        if peer.is_closed.get() || peer.aborted.get() {
+            return lavi::Value::Null;
+        }
+
+        let env_ptr = peer.active_env.get() as *mut JNIEnv;
+        let obj = peer.active_obj.get();
+        if env_ptr.is_null() || obj.is_null() {
+            return lavi::Value::Null;
+        }
+
+        let env = unsafe { &mut *env_ptr };
+        let _guard = CallbackGuard::new(&peer.callback_depth);
+
+        let res = env.with_local_frame(16, |env| -> Result<lavi::Value, jni::errors::Error> {
+            let ctx_handle = Box::into_raw(Box::new(Arc::new(ctx.clone()))) as jlong;
+            let evt_handle = Box::into_raw(Box::new(Arc::new(evt.clone()))) as jlong;
+            let j_path = env.new_string(&path_clone)?;
+            let target_obj = unsafe { JObject::from_raw(obj) };
+
+            let ret = env.call_method(
+                &target_obj,
+                "dispatchOutputResolver",
+                "(Ljava/lang/String;JJ)Ljava/lang/String;",
+                &[(&j_path).into(), ctx_handle.into(), evt_handle.into()],
+            )?;
+
+            let j_obj = ret.l()?;
+            if j_obj.is_null() {
+                return Ok(lavi::Value::Null);
+            }
+            let j_str = JString::from(j_obj);
+            let out_json: String = env.get_string(&j_str)?.into();
+            Ok(lavi::Value::from_json(&out_json).unwrap_or(lavi::Value::Null))
+        });
+
+        match res {
+            Ok(v) => {
+                if env.exception_check().unwrap_or(false) {
+                    peer.aborted.set(true);
+                    lavi::Value::Null
+                } else {
+                    v
+                }
+            }
+            Err(_) => {
+                peer.aborted.set(true);
+                lavi::Value::Null
+            }
+        }
+    });
+
+    let mut guard = m_peer.machine.borrow_mut();
+    if let Some(ref mut m) = *guard {
+        m.register_output_resolver(&path_str, resolver_fn);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeRegisterInvokeCallbacks(
+    mut env: JNIEnv,
+    _class: JClass,
+    machine_handle: jlong,
+    has_start: jboolean,
+    has_stop: jboolean,
+) {
+    let m_peer = unsafe { &*(machine_handle as *const MachinePeer) };
+    if m_peer.is_closed.get() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Machine is closed");
+        return;
+    }
+
+    let peer_ptr = machine_handle as *const MachinePeer;
+
+    let start_fn_opt: Option<lavi::InvokeStartFunction> = if has_start != JNI_FALSE {
+        Some(alloc::rc::Rc::new(move |id, src, input_opt, ctx, evt| {
+            let peer = unsafe { &*peer_ptr };
+            if peer.is_closed.get() || peer.aborted.get() {
+                return;
+            }
+            let env_ptr = peer.active_env.get() as *mut JNIEnv;
+            let obj = peer.active_obj.get();
+            if env_ptr.is_null() || obj.is_null() {
+                return;
+            }
+            let env = unsafe { &mut *env_ptr };
+            let _guard = CallbackGuard::new(&peer.callback_depth);
+
+            let res = env.with_local_frame(16, |env| -> Result<(), jni::errors::Error> {
+                let j_id = env.new_string(id)?;
+                let src_handle = Box::into_raw(Box::new(Arc::new(src.clone()))) as jlong;
+                let inp_handle = match input_opt {
+                    Some(v) => Box::into_raw(Box::new(Arc::new(v.clone()))) as jlong,
+                    None => 0 as jlong,
+                };
+                let ctx_handle = Box::into_raw(Box::new(Arc::new(ctx.clone()))) as jlong;
+                let evt_handle = Box::into_raw(Box::new(Arc::new(evt.clone()))) as jlong;
+                let target_obj = unsafe { JObject::from_raw(obj) };
+
+                env.call_method(
+                    &target_obj,
+                    "dispatchInvokeStart",
+                    "(Ljava/lang/String;JJJJ)V",
+                    &[
+                        (&j_id).into(),
+                        src_handle.into(),
+                        inp_handle.into(),
+                        ctx_handle.into(),
+                        evt_handle.into(),
+                    ],
+                )?;
+                Ok(())
+            });
+
+            if res.is_err() || env.exception_check().unwrap_or(false) {
+                peer.aborted.set(true);
+            }
+        }))
+    } else {
+        None
+    };
+
+    let stop_fn_opt: Option<lavi::InvokeStopFunction> = if has_stop != JNI_FALSE {
+        Some(alloc::rc::Rc::new(move |id| {
+            let peer = unsafe { &*peer_ptr };
+            if peer.is_closed.get() || peer.aborted.get() {
+                return;
+            }
+            let env_ptr = peer.active_env.get() as *mut JNIEnv;
+            let obj = peer.active_obj.get();
+            if env_ptr.is_null() || obj.is_null() {
+                return;
+            }
+            let env = unsafe { &mut *env_ptr };
+            let _guard = CallbackGuard::new(&peer.callback_depth);
+
+            let res = env.with_local_frame(16, |env| -> Result<(), jni::errors::Error> {
+                let j_id = env.new_string(id)?;
+                let target_obj = unsafe { JObject::from_raw(obj) };
+                env.call_method(
+                    &target_obj,
+                    "dispatchInvokeStop",
+                    "(Ljava/lang/String;)V",
+                    &[(&j_id).into()],
+                )?;
+                Ok(())
+            });
+
+            if res.is_err() || env.exception_check().unwrap_or(false) {
+                peer.aborted.set(true);
+            }
+        }))
+    } else {
+        None
+    };
+
+    let mut guard = m_peer.machine.borrow_mut();
+    if let Some(ref mut m) = *guard {
+        m.register_invoke_callbacks(start_fn_opt, stop_fn_opt);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeGetOutput(
+    mut env: JNIEnv,
+    this_obj: JObject,
+    machine_handle: jlong,
+) -> jlong {
+    let m_peer = unsafe { &*(machine_handle as *const MachinePeer) };
+    if m_peer.is_closed.get() {
+        return 0;
+    }
+    let _scope = ActiveScope::new(m_peer, &mut env, this_obj.as_raw());
+    let res = m_peer.with_machine(|m| {
+        if !m.is_started {
+            0
+        } else {
+            let prev_active = m_peer.active_machine.get();
+            if prev_active.is_null() {
+                m_peer.active_machine.set(m as *const lavi::RuntimeMachine);
+            }
+            let out = m.get_output();
+            if prev_active.is_null() {
+                m_peer.active_machine.set(std::ptr::null());
+            }
+            match out {
+                Some(v) => Box::into_raw(Box::new(Arc::new(v))) as jlong,
+                None => 0,
+            }
+        }
+    });
+    res.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeGetFinalLeafOutput(
+    mut env: JNIEnv,
+    this_obj: JObject,
+    machine_handle: jlong,
+) -> jlong {
+    let m_peer = unsafe { &*(machine_handle as *const MachinePeer) };
+    if m_peer.is_closed.get() {
+        return 0;
+    }
+    let _scope = ActiveScope::new(m_peer, &mut env, this_obj.as_raw());
+    let res = m_peer.with_machine(|m| {
+        if !m.is_started {
+            0
+        } else {
+            let prev_active = m_peer.active_machine.get();
+            if prev_active.is_null() {
+                m_peer.active_machine.set(m as *const lavi::RuntimeMachine);
+            }
+            let out = m.get_final_leaf_output();
+            if prev_active.is_null() {
+                m_peer.active_machine.set(std::ptr::null());
+            }
+            match out {
+                Some(v) => Box::into_raw(Box::new(Arc::new(v))) as jlong,
+                None => 0,
+            }
+        }
+    });
+    res.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeInitialTransitionJson(
+    mut env: JNIEnv,
+    this_obj: JObject,
+    handle: jlong,
+    input_json: JString,
+) -> jstring {
+    let peer = unsafe { &*(handle as *const MachinePeer) };
+    if peer.is_closed.get() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Machine is closed");
+        return std::ptr::null_mut();
+    }
+
+    let _scope = ActiveScope::new(peer, &mut env, this_obj.as_raw());
+
+    let input_str: Option<String> = if !input_json.is_null() {
+        match env.get_string(&input_json) {
+            Ok(s) => Some(s.into()),
+            Err(_) => return std::ptr::null_mut(),
+        }
+    } else {
+        None
+    };
+
+    let res = peer.with_machine(|m| m.initial_transition_pure_json(input_str.as_deref()));
+    match res {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(js) => js.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(e)) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+            std::ptr::null_mut()
+        }
+        Err(e) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_lavi_Machine_nativeTransitionPureJson(
+    mut env: JNIEnv,
+    this_obj: JObject,
+    handle: jlong,
+    snapshot_json: JString,
+    event_json: JString,
+) -> jstring {
+    let peer = unsafe { &*(handle as *const MachinePeer) };
+    if peer.is_closed.get() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Machine is closed");
+        return std::ptr::null_mut();
+    }
+
+    let _scope = ActiveScope::new(peer, &mut env, this_obj.as_raw());
+
+    let snap_str: String = match env.get_string(&snapshot_json) {
+        Ok(s) => s.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let evt_str: String = match env.get_string(&event_json) {
+        Ok(s) => s.into(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let res = peer.with_machine(|m| m.transition_pure_json(&snap_str, &evt_str));
+    match res {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(js) => js.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(e)) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", e);
+            std::ptr::null_mut()
+        }
+        Err(e) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

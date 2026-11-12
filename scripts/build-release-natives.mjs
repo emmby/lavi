@@ -677,12 +677,18 @@ export function packageEmbeddedZip({ rootDir = ROOT_DIR, prebuiltLibsDir, output
   const entries = [];
   const cCppDir = path.join(rootDir, 'lavi-c-cpp');
 
+  const embeddedWorkspaceToml = `[workspace]\nmembers = [\n    "lavi",\n    "lavi-c-cpp",\n]\nresolver = "2"\n\n[workspace.dependencies]\nlavi = { path = "./lavi" }\n`;
+
   const staticFiles = [
     { zipPath: 'lavi/library.properties', srcPath: path.join(cCppDir, 'library.properties') },
     { zipPath: 'lavi/library.json', srcPath: path.join(cCppDir, 'library.json') },
     { zipPath: 'lavi/build_rust.py', srcPath: path.join(cCppDir, 'build_rust.py') },
     { zipPath: 'lavi/LICENSE', srcPath: path.join(rootDir, 'LICENSE') },
     { zipPath: 'lavi/README.md', srcPath: path.join(rootDir, 'README.md') },
+    { zipPath: 'lavi/Cargo.lock', srcPath: path.join(rootDir, 'Cargo.lock') },
+    { zipPath: 'lavi/lavi/Cargo.toml', srcPath: path.join(rootDir, 'lavi', 'Cargo.toml') },
+    { zipPath: 'lavi/lavi-c-cpp/Cargo.toml', srcPath: path.join(cCppDir, 'Cargo.toml') },
+    { zipPath: 'lavi/lavi-c-cpp/src/lib.rs', srcPath: path.join(cCppDir, 'src', 'lib.rs') },
     { zipPath: 'lavi/src/lavi.h', srcPath: path.join(cCppDir, 'include', 'lavi.h') },
     { zipPath: 'lavi/src/lavi.hpp', srcPath: path.join(cCppDir, 'include', 'lavi.hpp') },
     {
@@ -696,6 +702,21 @@ export function packageEmbeddedZip({ rootDir = ROOT_DIR, prebuiltLibsDir, output
       throw new Error(`Missing required embedded static file for zip archive: ${item.srcPath}`);
     }
     entries.push({ path: item.zipPath, data: fs.readFileSync(item.srcPath) });
+  }
+
+  entries.push({ path: 'lavi/Cargo.toml', data: Buffer.from(embeddedWorkspaceToml, 'utf8') });
+
+  const laviSrcDir = path.join(rootDir, 'lavi', 'src');
+  if (fs.existsSync(laviSrcDir)) {
+    const srcFiles = fs.readdirSync(laviSrcDir, { withFileTypes: true });
+    for (const file of srcFiles) {
+      if (file.isFile() && file.name.endsWith('.rs')) {
+        entries.push({
+          path: `lavi/lavi/src/${file.name}`,
+          data: fs.readFileSync(path.join(laviSrcDir, file.name))
+        });
+      }
+    }
   }
 
   if (prebuiltLibsDir && fs.existsSync(prebuiltLibsDir)) {

@@ -54,6 +54,29 @@ typedef NativeInspectCallback = Void Function(
   Pointer<Void> userData,
 );
 
+typedef NativeOutputResolverCallback = Size Function(
+  Pointer<Utf8> statePath,
+  Pointer<NativeFsmValue> context,
+  Pointer<NativeFsmValue> event,
+  Pointer<Uint8> outBuffer,
+  Size outBufferLen,
+  Pointer<Void> userData,
+);
+
+typedef NativeInvokeStartCallback = Void Function(
+  Pointer<Utf8> invokeId,
+  Pointer<Utf8> srcJson,
+  Pointer<NativeFsmValue> input,
+  Pointer<NativeFsmValue> context,
+  Pointer<NativeFsmValue> event,
+  Pointer<Void> userData,
+);
+
+typedef NativeInvokeStopCallback = Void Function(
+  Pointer<Utf8> invokeId,
+  Pointer<Void> userData,
+);
+
 class LaviBindings {
   final DynamicLibrary dylib;
 
@@ -196,6 +219,34 @@ class LaviBindings {
     'fsm_register_delay',
   );
 
+  late final fsmRegisterOutputResolver = dylib.lookupFunction<
+      Int32 Function(
+          Pointer<NativeMachineContext>,
+          Pointer<Utf8>,
+          Pointer<NativeFunction<NativeOutputResolverCallback>>,
+          Pointer<Void>),
+      int Function(
+          Pointer<NativeMachineContext>,
+          Pointer<Utf8>,
+          Pointer<NativeFunction<NativeOutputResolverCallback>>,
+          Pointer<Void>)>(
+    'fsm_register_output_resolver',
+  );
+
+  late final fsmRegisterInvokeCallbacks = dylib.lookupFunction<
+      Int32 Function(
+          Pointer<NativeMachineContext>,
+          Pointer<NativeFunction<NativeInvokeStartCallback>>,
+          Pointer<NativeFunction<NativeInvokeStopCallback>>,
+          Pointer<Void>),
+      int Function(
+          Pointer<NativeMachineContext>,
+          Pointer<NativeFunction<NativeInvokeStartCallback>>,
+          Pointer<NativeFunction<NativeInvokeStopCallback>>,
+          Pointer<Void>)>(
+    'fsm_register_invoke_callbacks',
+  );
+
   late final fsmRegisterClockWithData = dylib.lookupFunction<
       Int32 Function(Pointer<NativeMachineContext>,
           Pointer<NativeFunction<NativeClockWithDataCallback>>, Pointer<Void>),
@@ -263,6 +314,23 @@ class LaviBindings {
       Int32 Function(Pointer<NativeMachineContext>, Pointer<Uint8>, Size),
       int Function(Pointer<NativeMachineContext>, Pointer<Uint8>,
           int)>('fsm_get_output_json');
+
+  late final fsmGetFinalLeafOutputJson = dylib.lookupFunction<
+      Int32 Function(Pointer<NativeMachineContext>, Pointer<Uint8>, Size),
+      int Function(Pointer<NativeMachineContext>, Pointer<Uint8>,
+          int)>('fsm_get_final_leaf_output_json');
+
+  late final fsmInitialTransitionJson = dylib.lookupFunction<
+      Int32 Function(Pointer<NativeMachineContext>, Pointer<Utf8>,
+          Pointer<Uint8>, Size),
+      int Function(Pointer<NativeMachineContext>, Pointer<Utf8>,
+          Pointer<Uint8>, int)>('fsm_initial_transition_json');
+
+  late final fsmTransitionPureJson = dylib.lookupFunction<
+      Int32 Function(Pointer<NativeMachineContext>, Pointer<Utf8>,
+          Pointer<Utf8>, Pointer<Uint8>, Size),
+      int Function(Pointer<NativeMachineContext>, Pointer<Utf8>,
+          Pointer<Utf8>, Pointer<Uint8>, int)>('fsm_transition_pure_json');
 
   late final fsmGetMetaJson = dylib.lookupFunction<
       Int32 Function(Pointer<NativeMachineContext>, Pointer<Uint8>, Size),

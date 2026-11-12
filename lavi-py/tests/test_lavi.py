@@ -459,6 +459,86 @@ def test_inspector_events():
         assert "@xstate.snapshot" in events
 
 
+def test_pure_transitions_output_and_invoke_callbacks():
+    json_config = json.dumps({
+        "id": "td21Py",
+        "initial": "active",
+        "context": {"total": 20},
+        "states": {
+            "active": {
+                "initial": "working",
+                "invoke": {
+                    "id": "pyWorker",
+                    "src": "workerTask",
+                    "input": {"multiplier": 3}
+                },
+                "states": {
+                    "working": {
+                        "entry": ["logWorking"],
+                        "on": {"DONE_LEAF": "leafFinal"}
+                    },
+                    "leafFinal": {
+                        "type": "final",
+                        "output": {"subStatus": "leafDone"}
+                    }
+                },
+                "on": {"FINISH_ALL": "completed"}
+            },
+            "completed": {
+                "type": "final"
+            }
+        }
+    })
 
+    started_invokes = []
+    stopped_invokes = []
 
+    with Machine(json_config) as m:
+        @m.output_resolver("")
+        def resolve_root_out(ctx, evt):
+            return {"doubled": ctx["total"].as_int() * 2}
 
+        m.register_invoke_callbacks(
+            on_start=lambda inv_id, src, inp, ctx, evt: started_invokes.append(
+                (inv_id, src.as_str(), inp["multiplier"].as_int(), ctx["total"].as_int())
+            ),
+            on_stop=lambda inv_id: stopped_invokes.append(inv_id),
+        )
+
+        # Pure initial_transition before start() does not mutate machine or start invokes
+        init_snap = m.initial_transition()
+        assert init_snap["value"].to_python() == {"active": "working"}
+        assert any(a.get("type") == "logWorking" for a in init_snap["actions"].to_python())
+        assert len(started_invokes) == 0
+
+        init_json = json.loads(m.initial_transition_json())
+        assert init_json["value"] == {"active": "working"}
+
+        # Start machine -> triggers on_start
+        m.start()
+        assert started_invokes == [("pyWorker", "workerTask", 3, 20)]
+
+        # Pure transition from live snapshot + event does not mutate live machine
+        live_snap = m.get_snapshot()
+        next_pure = m.transition_pure(live_snap, {"type": "FINISH_ALL"})
+        assert next_pure["value"].as_str() == "completed"
+        assert m.matches("active.working")
+        assert len(stopped_invokes) == 0
+
+        next_pure_json = json.loads(m.transition_pure_json(live_snap, json.dumps({"type": "FINISH_ALL"})))
+        assert next_pure_json["value"] == "completed"
+
+        # Leaf final output
+        assert m.get_final_leaf_output().is_null()
+        assert m.get_final_leaf_output_json() is None
+        m.send("DONE_LEAF")
+        assert m.matches("active.leafFinal")
+        assert m.get_final_leaf_output().to_python() == {"subStatus": "leafDone"}
+        assert json.loads(m.get_final_leaf_output_json()) == {"subStatus": "leafDone"}
+
+        # Finish machine -> stops invoke & computes dynamic root output
+        m.send("FINISH_ALL")
+        assert m.is_done()
+        assert stopped_invokes == ["pyWorker"]
+        assert m.get_output().to_python() == {"doubled": 40}
+        assert json.loads(m.get_output_json()) == {"doubled": 40}

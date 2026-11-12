@@ -247,5 +247,78 @@ void main() {
       machine.close();
       clock.close();
     });
+
+    test('supports pure transitions, output resolver, final leaf output, and invoke callbacks', () {
+      const td21Json = '''
+      {
+        "id": "td21Dart",
+        "initial": "active",
+        "context": { "total": 18 },
+        "states": {
+          "active": {
+            "initial": "working",
+            "invoke": { "id": "dartWorker", "src": "dartTask", "input": { "rate": 9 } },
+            "states": {
+              "working": {
+                "entry": ["logWorking"],
+                "on": { "DONE_LEAF": "leafFinal" }
+              },
+              "leafFinal": {
+                "type": "final",
+                "output": { "subStatus": "dartLeafDone" }
+              }
+            },
+            "on": { "FINISH_ALL": "completed" }
+          },
+          "completed": { "type": "final" }
+        }
+      }
+      ''';
+
+      final machine = Machine(td21Json);
+      final startedInvokes = <String>[];
+      final stoppedInvokes = <String>[];
+
+      machine.registerOutputResolver('', (ctx, evt) {
+        final total = (ctx['total'].numberValue ?? 0).toInt();
+        return '{"doubled":${total * 2}}';
+      });
+      machine.registerInvokeCallbacks(
+        onStart: (id, src, inp, ctx, evt) {
+          final rate = (inp['rate'].numberValue ?? 0).toInt();
+          startedInvokes.add('$id:$src:$rate');
+        },
+        onStop: (id) {
+          stoppedInvokes.add(id);
+        },
+      );
+
+      final initPure = machine.initialTransitionJson();
+      expect(initPure, contains('"value":{"active":"working"}'));
+      expect(startedInvokes, isEmpty);
+      expect(machine.isValid, isFalse);
+
+      expect(machine.start(), isTrue);
+      expect(machine.isValid, isTrue);
+      expect(startedInvokes, equals(['dartWorker:dartTask:9']));
+
+      final liveSnap = machine.getSnapshot();
+      final nextPure = machine.transitionPureJson(liveSnap, '{"type":"FINISH_ALL"}');
+      expect(nextPure, contains('"value":"completed"'));
+      expect(machine.matches('active.working'), isTrue);
+      expect(stoppedInvokes, isEmpty);
+
+      expect(machine.getFinalLeafOutput(), equals(''));
+      machine.send('DONE_LEAF');
+      expect(machine.matches('active.leafFinal'), isTrue);
+      expect(machine.getFinalLeafOutput(), contains('dartLeafDone'));
+
+      machine.send('FINISH_ALL');
+      expect(machine.isDone, isTrue);
+      expect(stoppedInvokes, equals(['dartWorker']));
+      expect(machine.getOutput(), contains('"doubled":36'));
+
+      machine.close();
+    });
   });
 }

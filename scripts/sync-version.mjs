@@ -11,6 +11,7 @@ const SEMVER_REGEX = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
 export const MANIFEST_SPECS = [
   { relPath: 'package.json', kind: 'json' },
+  { relPath: 'library.json', kind: 'json' },
   { relPath: 'lavi-c-cpp/library.json', kind: 'json' },
   { relPath: 'lavi-c-cpp/library.properties', kind: 'properties' },
   { relPath: 'lavi/Cargo.toml', kind: 'toml-section', section: 'package' },

@@ -16,6 +16,9 @@ public sealed class Machine : IDisposable
     private static readonly NativeMethods.NativeGuardCallback GuardThunkDelegate = OnGuardThunk;
     private static readonly NativeMethods.NativeGuardWithParamsCallback GuardWithParamsThunkDelegate = OnGuardWithParamsThunk;
     private static readonly NativeMethods.NativeDelayCallback DelayThunkDelegate = OnDelayThunk;
+    private static readonly NativeMethods.NativeOutputResolverCallback OutputResolverThunkDelegate = OnOutputResolverThunk;
+    private static readonly NativeMethods.NativeInvokeStartCallback InvokeStartThunkDelegate = OnInvokeStartThunk;
+    private static readonly NativeMethods.NativeInvokeStopCallback InvokeStopThunkDelegate = OnInvokeStopThunk;
     private static readonly NativeMethods.NativeClockWithDataCallback ClockThunkDelegate = OnClockThunk;
     private static readonly NativeMethods.NativeInspectCallback InspectThunkDelegate = OnInspectThunk;
 
@@ -23,6 +26,7 @@ public sealed class Machine : IDisposable
     private readonly string? _inputJson;
     private IntPtr _machinePtr;
     private GCHandle _selfHandle;
+    private bool _started;
     private bool _closed;
 
     private readonly Dictionary<string, Action<Value, Value>> _actions = new(StringComparer.Ordinal);
@@ -30,6 +34,9 @@ public sealed class Machine : IDisposable
     private readonly Dictionary<string, Func<Value, Value, bool>> _guards = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<Value, Value, Value, bool>> _guardsWithParams = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<Value, Value, ulong>> _delays = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<Value, Value, string>> _outputResolvers = new(StringComparer.Ordinal);
+    private Action<string, string, Value, Value, Value>? _invokeStartFn;
+    private Action<string>? _invokeStopFn;
     private Func<ulong>? _clockFn;
     private Action<string>? _inspectFn;
     private event Action<string>? _inspected;
@@ -52,7 +59,7 @@ public sealed class Machine : IDisposable
     public static Machine CreateActor(string jsonConfig, object? input = null, SimulatedClock? clock = null) =>
         new(jsonConfig, input, clock);
 
-    public bool IsValid => !_closed && _machinePtr != IntPtr.Zero;
+    public bool IsValid => !_closed && _started && _machinePtr != IntPtr.Zero;
 
     public bool IsDone => _machinePtr != IntPtr.Zero && NativeMethods.fsm_is_done(_machinePtr) == 1;
 
@@ -176,6 +183,20 @@ public sealed class Machine : IDisposable
             NativeMethods.fsm_register_delay(ptr, name, DelayThunkDelegate, userData);
         }
 
+        foreach (var path in _outputResolvers.Keys)
+        {
+            NativeMethods.fsm_register_output_resolver(ptr, path, OutputResolverThunkDelegate, userData);
+        }
+
+        if (_invokeStartFn != null || _invokeStopFn != null)
+        {
+            NativeMethods.fsm_register_invoke_callbacks(
+                ptr,
+                _invokeStartFn != null ? InvokeStartThunkDelegate : null,
+                _invokeStopFn != null ? InvokeStopThunkDelegate : null,
+                userData);
+        }
+
         if (_simClock != null && _simClock.RawPointer != IntPtr.Zero)
         {
             NativeMethods.fsm_register_simulated_clock(ptr, _simClock.RawPointer);
@@ -215,7 +236,7 @@ public sealed class Machine : IDisposable
             return false;
         }
 
-        if (_machinePtr != IntPtr.Zero)
+        if (_started && _machinePtr != IntPtr.Zero)
         {
             return true;
         }
@@ -226,7 +247,13 @@ public sealed class Machine : IDisposable
             return false;
         }
 
-        return NativeMethods.fsm_start(ptr) == 0;
+        if (NativeMethods.fsm_start(ptr) == 0)
+        {
+            _started = true;
+            return true;
+        }
+
+        return false;
     }
 
     public void Stop()
@@ -245,6 +272,7 @@ public sealed class Machine : IDisposable
         }
 
         _closed = true;
+        _started = false;
         var ptr = Interlocked.Exchange(ref _machinePtr, IntPtr.Zero);
         if (ptr != IntPtr.Zero)
         {
@@ -261,7 +289,10 @@ public sealed class Machine : IDisposable
         _guards.Clear();
         _guardsWithParams.Clear();
         _delays.Clear();
+        _outputResolvers.Clear();
         _subscribers.Clear();
+        _invokeStartFn = null;
+        _invokeStopFn = null;
         _clockFn = null;
         _inspectFn = null;
         _inspected = null;
@@ -374,6 +405,45 @@ public sealed class Machine : IDisposable
             var ms = span.TotalMilliseconds;
             return ms <= 0 ? 0UL : (ulong)ms;
         });
+    }
+
+    public Machine RegisterOutputResolver(string statePath, Func<Value, Value, string> callback)
+    {
+        if (_closed || statePath == null || callback == null)
+        {
+            return this;
+        }
+
+        _outputResolvers[statePath] = callback;
+        if (_machinePtr != IntPtr.Zero)
+        {
+            NativeMethods.fsm_register_output_resolver(_machinePtr, statePath, OutputResolverThunkDelegate, SelfUserData);
+        }
+
+        return this;
+    }
+
+    public Machine RegisterInvokeCallbacks(
+        Action<string, string, Value, Value, Value>? onStart = null,
+        Action<string>? onStop = null)
+    {
+        if (_closed)
+        {
+            return this;
+        }
+
+        _invokeStartFn = onStart;
+        _invokeStopFn = onStop;
+        if (_machinePtr != IntPtr.Zero)
+        {
+            NativeMethods.fsm_register_invoke_callbacks(
+                _machinePtr,
+                onStart != null ? InvokeStartThunkDelegate : null,
+                onStop != null ? InvokeStopThunkDelegate : null,
+                SelfUserData);
+        }
+
+        return this;
     }
 
     public Machine RegisterClock(Func<ulong> callback)
@@ -593,6 +663,7 @@ public sealed class Machine : IDisposable
             return false;
         }
 
+        _started = true;
         return true;
     }
 
@@ -602,6 +673,39 @@ public sealed class Machine : IDisposable
     public string GetOutput() => _machinePtr == IntPtr.Zero
         ? string.Empty
         : NativeMethods.ReadBufferString((buf, len) => NativeMethods.fsm_get_output_json(_machinePtr, buf, len));
+
+    public string GetFinalLeafOutput() => _machinePtr == IntPtr.Zero
+        ? string.Empty
+        : NativeMethods.ReadBufferString((buf, len) => NativeMethods.fsm_get_final_leaf_output_json(_machinePtr, buf, len));
+
+    public string InitialTransitionJson(string? inputJson = null)
+    {
+        var ptr = EnsureCreated();
+        if (ptr == IntPtr.Zero)
+        {
+            return string.Empty;
+        }
+
+        return NativeMethods.ReadBufferString(
+            (buf, len) => NativeMethods.fsm_initial_transition_json(ptr, inputJson, buf, len));
+    }
+
+    public string TransitionPureJson(string? snapshotJson, string? eventJson)
+    {
+        if (string.IsNullOrEmpty(snapshotJson) || string.IsNullOrEmpty(eventJson))
+        {
+            return string.Empty;
+        }
+
+        var ptr = EnsureCreated();
+        if (ptr == IntPtr.Zero)
+        {
+            return string.Empty;
+        }
+
+        return NativeMethods.ReadBufferString(
+            (buf, len) => NativeMethods.fsm_transition_pure_json(ptr, snapshotJson, eventJson, buf, len));
+    }
 
     public string GetMeta() => _machinePtr == IntPtr.Zero
         ? string.Empty
@@ -693,6 +797,58 @@ public sealed class Machine : IDisposable
         }
 
         return 0UL;
+    }
+
+    private static UIntPtr OnOutputResolverThunk(
+        IntPtr pathPtr,
+        IntPtr ctxPtr,
+        IntPtr evtPtr,
+        IntPtr outBuf,
+        UIntPtr outBufLen,
+        IntPtr userData)
+    {
+        var self = ResolveSelf(userData);
+        var path = Marshal.PtrToStringUTF8(pathPtr);
+        var maxLen = (int)(ulong)outBufLen;
+        if (self == null || path == null || outBuf == IntPtr.Zero || maxLen <= 0 ||
+            !self._outputResolvers.TryGetValue(path, out var cb))
+        {
+            return UIntPtr.Zero;
+        }
+
+        var json = cb(new Value(ctxPtr), new Value(evtPtr)) ?? "null";
+        var utf8 = System.Text.Encoding.UTF8.GetBytes(json);
+        var copyLen = Math.Min(utf8.Length, maxLen - 1);
+        Marshal.Copy(utf8, 0, outBuf, copyLen);
+        Marshal.WriteByte(outBuf, copyLen, 0);
+        return (UIntPtr)copyLen;
+    }
+
+    private static void OnInvokeStartThunk(
+        IntPtr idPtr,
+        IntPtr srcPtr,
+        IntPtr inputPtr,
+        IntPtr ctxPtr,
+        IntPtr evtPtr,
+        IntPtr userData)
+    {
+        var self = ResolveSelf(userData);
+        var id = Marshal.PtrToStringUTF8(idPtr);
+        var src = Marshal.PtrToStringUTF8(srcPtr);
+        if (self != null && id != null && src != null)
+        {
+            self._invokeStartFn?.Invoke(id, src, new Value(inputPtr), new Value(ctxPtr), new Value(evtPtr));
+        }
+    }
+
+    private static void OnInvokeStopThunk(IntPtr idPtr, IntPtr userData)
+    {
+        var self = ResolveSelf(userData);
+        var id = Marshal.PtrToStringUTF8(idPtr);
+        if (self != null && id != null)
+        {
+            self._invokeStopFn?.Invoke(id);
+        }
     }
 
     private static ulong OnClockThunk(IntPtr userData)

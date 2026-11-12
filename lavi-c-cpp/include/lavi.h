@@ -95,6 +95,29 @@ typedef void (*fsm_inspect_callback_t)(
     void* user_data
 );
 
+typedef int32_t (*fsm_output_resolver_callback_t)(
+    const char* state_path,
+    const fsm_value_t* context,
+    const fsm_value_t* event,
+    char* out_json_buffer,
+    size_t out_buffer_len,
+    void* user_data
+);
+
+typedef void (*fsm_invoke_start_callback_t)(
+    const char* invoke_id,
+    const char* src_json,
+    const fsm_value_t* input,
+    const fsm_value_t* context,
+    const fsm_value_t* event,
+    void* user_data
+);
+
+typedef void (*fsm_invoke_stop_callback_t)(
+    const char* invoke_id,
+    void* user_data
+);
+
 typedef struct SimulatedClock SimulatedClock;
 
 // Registration
@@ -148,6 +171,20 @@ int fsm_register_clock_with_data(
 int fsm_register_inspector(
     MachineContext* ctx,
     fsm_inspect_callback_t callback,
+    void* user_data
+);
+
+int fsm_register_output_resolver(
+    MachineContext* ctx,
+    const char* state_path,
+    fsm_output_resolver_callback_t callback,
+    void* user_data
+);
+
+int fsm_register_invoke_callbacks(
+    MachineContext* ctx,
+    fsm_invoke_start_callback_t on_start,
+    fsm_invoke_stop_callback_t on_stop,
     void* user_data
 );
 
@@ -213,6 +250,62 @@ int32_t fsm_restore_snapshot_json(MachineContext* ctx, const char* json_str);
  * - Returns number of characters written on success (>= 0).
  */
 int32_t fsm_get_output_json(const MachineContext* ctx, char* buffer, size_t buffer_len);
+
+/**
+ * @brief Serialize the output of the currently active final leaf state as JSON.
+ *
+ * Useful inside a root output resolver (`state_path == ""`) to inspect the output produced
+ * by the active final child state.
+ *
+ * Buffer-safe sizing:
+ * - Returns required buffer size (including null terminator) if buffer is NULL or buffer_len is 0.
+ * - Returns -1 if ctx is NULL.
+ * - Returns -2 if buffer_len is insufficient.
+ * - Returns -3 on integer overflow.
+ * - Returns -4 if no active final leaf state has output defined.
+ * - Returns number of characters written on success (>= 0).
+ */
+int32_t fsm_get_final_leaf_output_json(const MachineContext* ctx, char* buffer, size_t buffer_len);
+
+/**
+ * @brief Compute the pure initial transition without starting or mutating the machine.
+ *
+ * Serializes `{"value": ..., "context": ..., "actions": [...]}` as JSON.
+ *
+ * @param ctx The machine context.
+ * @param input_json Optional JSON input string (or NULL to use default input).
+ * @param buffer Output buffer (or NULL for size query).
+ * @param buffer_len Capacity of buffer in bytes.
+ * @return Number of characters written on success (>= 0), required buffer size on query,
+ *         or negative error code (-1: NULL ctx, -2: buffer too small, -3: integer overflow, -4: invalid input JSON).
+ */
+int32_t fsm_initial_transition_json(
+    const MachineContext* ctx,
+    const char* input_json,
+    char* buffer,
+    size_t buffer_len
+);
+
+/**
+ * @brief Compute a pure transition from a state value or snapshot and event without mutating the machine.
+ *
+ * Serializes `{"value": ..., "context": ..., "actions": [...], "historyValue": {...}}` as JSON.
+ *
+ * @param ctx The machine context.
+ * @param state_or_snapshot_json State value (e.g. `"green"` or `{"a":"b"}`) or snapshot JSON.
+ * @param event_json Event name or JSON event object (`{"type":"TIMER"}`).
+ * @param buffer Output buffer (or NULL for size query).
+ * @param buffer_len Capacity of buffer in bytes.
+ * @return Number of characters written on success (>= 0), required buffer size on query,
+ *         or negative error code (-1: NULL ctx/args, -2: buffer too small, -3: integer overflow, -4: invalid state/event JSON).
+ */
+int32_t fsm_transition_pure_json(
+    const MachineContext* ctx,
+    const char* state_or_snapshot_json,
+    const char* event_json,
+    char* buffer,
+    size_t buffer_len
+);
 
 /**
  * @brief Serialize aggregated metadata for all currently active states as a JSON object.

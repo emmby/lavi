@@ -1,6 +1,6 @@
 [package]
 name = "lavi"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 description = "A portable, #![no_std] statechart runtime compatible with the XState v5 specification and JSON format."
