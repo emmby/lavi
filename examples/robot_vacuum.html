@@ -32,7 +32,7 @@
         }
 
         .page-shell {
-            max-width: 1280px;
+            max-width: 1360px;
             margin: 0 auto;
         }
 
@@ -60,13 +60,26 @@
 
         .demo-grid {
             display: grid;
-            grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 20px;
             align-items: stretch;
         }
 
-        @media (max-width: 940px) {
-            .demo-grid {
+        .sim-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+            gap: 20px;
+            align-items: start;
+        }
+
+        .sim-right {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        @media (max-width: 900px) {
+            .sim-layout {
                 grid-template-columns: minmax(0, 1fr);
             }
         }
@@ -323,9 +336,8 @@
             background: #f8fafc;
             border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 8px;
-            min-height: 360px;
-            max-height: 480px;
+            padding: 12px;
+            min-height: 440px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -335,7 +347,7 @@
         .diagram-panel.zoomed {
             display: block;
             overflow: auto;
-            height: 460px;
+            height: 70vh;
         }
 
         .json-panel {
@@ -343,14 +355,14 @@
             background: #0f172a;
             color: #e2e8f0;
             border-radius: 10px;
-            padding: 14px;
-            height: 460px;
+            padding: 16px;
+            height: 520px;
             width: 100%;
             max-width: 100%;
             overflow: auto;
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-            font-size: 11.5px;
-            line-height: 1.45;
+            font-size: 12px;
+            line-height: 1.5;
             white-space: pre-wrap;
             overflow-wrap: anywhere;
             margin: 0;
@@ -360,14 +372,39 @@
         #statechartSvg {
             width: 100%;
             height: auto;
-            max-height: 460px;
             display: block;
             --xsd-transition-duration: 150ms;
         }
 
         .diagram-panel.zoomed #statechartSvg {
-            width: 1200px;
+            width: 1800px;
             max-height: none;
+        }
+
+        .card.maximized {
+            position: fixed;
+            inset: 16px;
+            z-index: 1000;
+            margin: 0;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+            justify-content: flex-start;
+        }
+
+        .card.maximized .diagram-panel {
+            height: calc(100vh - 140px);
+            max-height: none;
+        }
+
+        .card.maximized #statechartSvg {
+            max-height: calc(100vh - 168px);
+        }
+
+        .card.maximized .diagram-panel.zoomed #statechartSvg {
+            max-height: none;
+        }
+
+        .card.maximized .json-panel {
+            height: calc(100vh - 140px);
         }
 
         #statechartSvg.is-alert {
@@ -416,65 +453,74 @@
         </header>
 
         <div class="demo-grid">
-            <!-- Left Card: Living Room Floor & Controls -->
+            <!-- Top Card: Living Room Floor & Controls -->
             <section class="card">
-                <div>
-                    <div class="card-header">
-                        <div class="card-title">
-                            Living Room Floor
-                            <span class="hint-text" id="lblCrumbStats">Sweep up the crumbs!</span>
+                <div class="sim-layout">
+                    <div>
+                        <div class="card-header">
+                            <div class="card-title">
+                                Living Room Floor
+                                <span class="hint-text" id="lblCrumbStats">Sweep up the crumbs!</span>
+                            </div>
+                            <span id="lblBattery" class="badge">🔋 85% Battery</span>
                         </div>
-                        <span id="lblBattery" class="badge">🔋 85% Battery</span>
+
+                        <div class="floor-wrapper" id="floorWrapper">
+                            <canvas id="floorCanvas" width="540" height="270"></canvas>
+                        </div>
+
+                        <div class="floor-toolbar">
+                            <span>Click anywhere on the floor:</span>
+                            <div class="click-mode-group">
+                                <button type="button" id="btnModeCrumbs" class="click-mode-btn active">🍪 Drop Crumbs</button>
+                                <button type="button" id="btnModeObstacle" class="click-mode-btn">📦 Place Toy Obstacle</button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="floor-wrapper" id="floorWrapper">
-                        <canvas id="floorCanvas" width="540" height="270"></canvas>
-                    </div>
+                    <div class="sim-right">
+                        <div class="status-strip" style="margin-top: 0;">
+                            <div class="status-pill">
+                                <span class="status-pill-label">Wheels</span>
+                                <span id="lblWheels" class="status-pill-value on">Driving Forward</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Vacuum Suction</span>
+                                <span id="lblVacuum" class="status-pill-value on">Standard</span>
+                            </div>
+                            <div class="status-pill">
+                                <span class="status-pill-label">Side Brushes</span>
+                                <span id="lblBrushes" class="status-pill-value on">Spinning</span>
+                            </div>
+                        </div>
 
-                    <div class="floor-toolbar">
-                        <span>Click anywhere on the floor:</span>
-                        <div class="click-mode-group">
-                            <button type="button" id="btnModeCrumbs" class="click-mode-btn active">🍪 Drop Crumbs</button>
-                            <button type="button" id="btnModeObstacle" class="click-mode-btn">📦 Place Toy Obstacle</button>
+                        <div>
+                            <div class="controls-label">Try Triggering an Event</div>
+                            <div class="button-row">
+                                <button type="button" id="btnPauseResume" class="ctrl-btn btn-primary">⏸ Pause</button>
+                                <button type="button" id="btnSpotClean" class="ctrl-btn btn-spot">🌀 Spot Clean</button>
+                                <button type="button" id="btnBump" class="ctrl-btn btn-bump">💥 Bump Furniture</button>
+                                <button type="button" id="btnStairs" class="ctrl-btn btn-stairs">⚠️ Reach Stairs</button>
+                                <button type="button" id="btnLowBattery" class="ctrl-btn btn-battery">🪫 Low Battery (14%)</button>
+                                <button type="button" id="btnDock" class="ctrl-btn btn-dock">⚡ Send to Dock</button>
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="status-strip">
-                        <div class="status-pill">
-                            <span class="status-pill-label">Wheels</span>
-                            <span id="lblWheels" class="status-pill-value on">Driving Forward</span>
+                        <div id="lblExplanation" class="explanation-box" style="margin-top: 0;">
+                            <strong>Why statecharts shine here:</strong> While in <strong>Patrol</strong>, the robot sweeps the room. Because <strong>Moving</strong> wraps all driving modes with a single <code>exit: stopAllMotors</code> rule, pausing or hitting the stairs is guaranteed to shut off the wheels and vacuum.
                         </div>
-                        <div class="status-pill">
-                            <span class="status-pill-label">Vacuum Suction</span>
-                            <span id="lblVacuum" class="status-pill-value on">Standard</span>
-                        </div>
-                        <div class="status-pill">
-                            <span class="status-pill-label">Side Brushes</span>
-                            <span id="lblBrushes" class="status-pill-value on">Spinning</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div>
-                    <div class="controls-label">Try Triggering an Event</div>
-                    <div class="button-row">
-                        <button type="button" id="btnPauseResume" class="ctrl-btn btn-primary">⏸ Pause</button>
-                        <button type="button" id="btnSpotClean" class="ctrl-btn btn-spot">🌀 Spot Clean</button>
-                        <button type="button" id="btnBump" class="ctrl-btn btn-bump">💥 Bump Furniture</button>
-                        <button type="button" id="btnStairs" class="ctrl-btn btn-stairs">⚠️ Reach Stairs</button>
-                        <button type="button" id="btnLowBattery" class="ctrl-btn btn-battery">🪫 Low Battery (14%)</button>
-                        <button type="button" id="btnDock" class="ctrl-btn btn-dock">⚡ Send to Dock</button>
                     </div>
                 </div>
             </section>
 
-            <!-- Right Card: Interactive xstate-diagram & JSON Flip -->
-            <section class="card">
+            <!-- Bottom Card: Full-Width Interactive xstate-diagram & JSON Flip -->
+            <section class="card" id="statechartCard">
                 <div>
                     <div class="card-header">
                         <div class="card-title">Statechart</div>
                         <div class="diagram-controls">
                             <button type="button" id="btnToggleZoom" class="zoom-toggle-btn" aria-pressed="false" title="Toggle zoomed view">Zoom 100%</button>
+                            <button type="button" id="btnToggleMaximize" class="zoom-toggle-btn" aria-pressed="false" title="Expand statechart to fill window">Maximize</button>
                             <div class="view-toggle" role="tablist" aria-label="Statechart view">
                                 <button type="button" id="btnShowDiagram" class="view-toggle-btn active" role="tab" aria-selected="true">Diagram (xstate-diagram)</button>
                                 <button type="button" id="btnShowJson" class="view-toggle-btn" role="tab" aria-selected="false">Machine JSON</button>
@@ -488,10 +534,6 @@
 
                     <!-- Machine JSON View (Flipped via button) -->
                     <pre id="jsonView" class="json-panel"></pre>
-                </div>
-
-                <div id="lblExplanation" class="explanation-box">
-                    <strong>Why statecharts shine here:</strong> While in <strong>Patrol</strong>, the robot sweeps the room. Because <strong>Moving</strong> wraps all driving modes with a single <code>exit: stopAllMotors</code> rule, pausing or hitting the stairs is guaranteed to shut off the wheels and vacuum.
                 </div>
             </section>
         </div>
@@ -685,6 +727,8 @@
         const btnShowDiagram = document.getElementById('btnShowDiagram');
         const btnShowJson = document.getElementById('btnShowJson');
         const btnToggleZoom = document.getElementById('btnToggleZoom');
+        const btnToggleMaximize = document.getElementById('btnToggleMaximize');
+        const statechartCard = document.getElementById('statechartCard');
         const diagramView = document.getElementById('diagramView');
         diagramView.innerHTML = svgText;
         const statechartSvg = diagramView.querySelector('svg');
@@ -698,6 +742,23 @@
             btnToggleZoom.textContent = zoomed ? 'Fit View' : 'Zoom 100%';
             if (diagramView.style.display !== 'none') {
                 diagramView.style.display = zoomed ? 'block' : 'flex';
+            }
+        });
+
+        function setMaximized(maximized) {
+            statechartCard.classList.toggle('maximized', maximized);
+            btnToggleMaximize.classList.toggle('active', maximized);
+            btnToggleMaximize.setAttribute('aria-pressed', String(maximized));
+            btnToggleMaximize.textContent = maximized ? 'Exit Fullscreen' : 'Maximize';
+        }
+
+        btnToggleMaximize.addEventListener('click', () => {
+            setMaximized(!statechartCard.classList.contains('maximized'));
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && statechartCard.classList.contains('maximized')) {
+                setMaximized(false);
             }
         });
 
