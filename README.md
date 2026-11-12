@@ -36,7 +36,7 @@ XState v5 and Stately Studio provide an expressive, standardized JSON configurat
    - **Dart / Flutter (`lavi-dart`)**: `Finalizer`-backed `Machine` and `SimulatedClock` with deterministic `.dispose()`, `operator []` value inspection, `registerOutputResolver`, `registerInvokeCallbacks`, `registerInspector`, `initialTransition`, `transitionPure`, and `Map<String, Object?>` payload support.
    - **C# / .NET (`lavi-csharp`)**: `IDisposable` `Machine` and `SimulatedClock` (`using var`), fluent overloaded registration (`RegisterAction`, `RegisterGuard`, `RegisterDelay`, `RegisterOutputResolver`, `RegisterInvokeCallbacks`), pure transitions (`InitialTransition`, `TransitionPure`), XState v5 `MachineSnapshot` (`GetSnapshot()`, `Subscribe`), `TimeSpan` delays, `TryGet*` / `AsInt32` `Value` inspection, and anonymous-object payload support.
 
-## Interactive WASM Demos
+## Interactive Demos (WASM)
 
 Hierarchical statecharts replace fragile `if/else` boolean-flag logic with declarative guarantees—such as parent-state `exit` safety cutoffs, eventless `always` guards, `after` timers, and `history` recovery—that run identically in the browser (WASM) and on microcontrollers (Rust / C / C++).
 
